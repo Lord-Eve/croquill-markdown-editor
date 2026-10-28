@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.2.0] - 2026-10-28
+
 ### 新增
 
 - 粘贴剪贴板图片、拖入本地图片和“段落 → 图片”选择文件，统一保存到文档同目录的“文档名.assets”文件夹，Markdown 写入相对路径，空格等特殊字符按 URI 编码
@@ -60,6 +62,7 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
