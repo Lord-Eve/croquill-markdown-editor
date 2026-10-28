@@ -4,37 +4,107 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
+interface SyntaxNode {
+  type: string;
+  value?: string;
+  children?: SyntaxNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
+}
+export interface PreservedBlock { from: number; to: number; raw: string; categories: string[] }
+export interface MarkdownParts { prefix: string; frontmatter: string; body: string; incomplete: boolean }
 
-/** Ignore syntax inside code: it must remain ordinary code, not trigger protection. */
-export function proseOnly(markdown: string): string {
-  let fence: { char: string; length: number } | undefined;
-  return markdown.split(/\r?\n/).map((line) => {
-    const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (match && match[1][0] === fence.char && match[1].length >= fence.length) fence = undefined;
-      return '';
-    }
-    if (match) {
-      fence = { char: match[1][0], length: match[1].length };
-      return '';
-    }
-    if (/^(?: {4}|\t)/.test(line)) return '';
-    return line.replace(/(`+)(.*?)\1/g, '');
-  }).join('\n');
+/** Only a closed header at the document start is removed from the rich body. */
+export function splitFrontmatter(markdown: string): MarkdownParts {
+  const opening = /^\uFEFF?---[ \t]*(?:\r\n|\n|\r)/.exec(markdown);
+  if (!opening) return { prefix: '', frontmatter: '', body: markdown, incomplete: false };
+  const rest = markdown.slice(opening[0].length);
+  const closing = /^(?:---|\.\.\.)[ \t]*(?=\r?$|\r)/m.exec(rest);
+  if (!closing) {
+    return { prefix: '', frontmatter: '', body: markdown, incomplete: /^[ \t]*[\w\u0080-\uFFFF-]+[ \t]*:/m.test(rest) };
+  }
+  const end = opening[0].length + closing.index + closing[0].length;
+  const separator = /^(?:\r\n|\n|\r)(?:[ \t]*(?:\r\n|\n|\r))*/.exec(markdown.slice(end))?.[0] || '';
+  const prefix = markdown.slice(0, end + separator.length);
+  return { prefix, frontmatter: markdown.slice(0, end), body: markdown.slice(prefix.length), incomplete: false };
 }
 
-/** Known extensions are kept in source until we can reliably edit their structure. */
+function categoriesOf(node: SyntaxNode): Set<string> {
+  const categories = new Set<string>();
+  const text: string[] = [];
+  function visit(child: SyntaxNode): void {
+    if (['code', 'inlineCode', 'math', 'inlineMath'].includes(child.type)) { text.push('\n'); return; }
+    if (child.type === 'html') categories.add('HTML');
+    if (child.type === 'listItem' && !child.children?.length) categories.add('空列表项');
+    if (child.type === 'footnoteDefinition' || child.type === 'footnoteReference') categories.add('脚注');
+    if (child.type === 'text') text.push(child.value || '');
+    child.children?.forEach(visit);
+  }
+  visit(node);
+  const prose = text.join('');
+  if (/\[\^[^\]\n]+\]/.test(prose)) categories.add('脚注');
+  if (/==[^=\n]+==/.test(prose)) categories.add('高亮');
+  if (/\[TOC\]/i.test(prose)) categories.add('目录');
+  if (/!?\[\[[\s\S]+?\]\]/.test(prose)) categories.add('双链');
+  if (/(?:^|\n)\s*:{3,}/.test(prose)) categories.add('容器');
+  if (/\{[.#][^}\n]+\}/.test(prose)) categories.add('属性');
+  if (node.type === 'blockquote' && /^\[![A-Z]+\]/.test(prose)) categories.add('提示块');
+  if (/(?:^|\s)\^[\w-]+\s*$/.test(prose)) categories.add('块引用标识');
+  return categories;
+}
+
+/** Parsed HTML and extension-bearing blocks are opaque locally, never executed. */
+export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
+  const nodes = markdownParser.parse(body).children as SyntaxNode[];
+  const blocks: PreservedBlock[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    const categories = categoriesOf(node);
+    if (!categories.size) continue;
+    let last = i;
+    // CommonMark can split HTML containers around blank lines. Keep the complete
+    // paired region together, including Markdown-like text between the tags.
+    if (node.type === 'html') {
+      const tag = /^\s*<([A-Za-z][\w-]*)(?:\s[^>]*|\s*)>/.exec(node.value || '')?.[1];
+      if (tag && !['br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'embed', 'source', 'wbr'].includes(tag.toLowerCase())) {
+        const tokens = new RegExp(`<(/?)${tag}(?=[\\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>`, 'gi');
+        let balance = 0;
+        for (let j = i; j < nodes.length; j++) {
+          if (nodes[j].type !== 'html') continue;
+          const html = (nodes[j].value || '').replace(/<!--[\s\S]*?-->/g, '');
+          for (const token of html.matchAll(tokens)) {
+            if (token[1]) balance--;
+            else if (!/\/\s*>$/.test(token[0])) balance++;
+          }
+          if (balance <= 0) { last = j; break; }
+        }
+      }
+    }
+    if (categories.has('容器')) {
+      const start = node.position?.start.offset ?? 0, end = node.position?.end.offset ?? start;
+      const raw = body.slice(start, end);
+      if (/^\s*:{3,}\s*\S/.test(raw) && !/\n\s*:{3,}[ \t]*$/.test(raw)) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          if (nodes[j].type === 'paragraph' && /(?:^|\n)\s*:{3,}[ \t]*$/.test(body.slice(nodes[j].position?.start.offset, nodes[j].position?.end.offset))) { last = Math.max(last, j); break; }
+        }
+      }
+    }
+    const from = node.position?.start.offset;
+    let to = nodes[last].position?.end.offset;
+    if (from == null || to == null) continue;
+    for (let j = i + 1; j <= last; j++) categoriesOf(nodes[j]).forEach(value => categories.add(value));
+    // Keep original separator whitespace too (e.g. CRLF between a footnote reference and definition).
+    const nextStart = nodes[last + 1]?.position?.start.offset ?? body.length;
+    if (/^[ \t\r\n]*$/.test(body.slice(to, nextStart))) to = nextStart;
+    blocks.push({ from, to, raw: body.slice(from, to), categories: [...categories] });
+    i = last;
+  }
+  return blocks;
+}
+
+/** Protection is reserved for metadata we cannot safely separate yet. */
 export function detectUnsafeMarkdown(markdown: string): string | null {
-  if (/^\uFEFF?(?:---|\+\+\+)[ \t]*\r?\n/.test(markdown)) {
-    return '文档含 YAML / TOML frontmatter，已启用源码保护';
-  }
-  const prose = proseOnly(markdown);
-  if (/<(?:!--|!DOCTYPE\b|\?xml\b|\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s|\/?\>))/.test(prose)) {
-    return '文档含原始 HTML，已启用源码保护';
-  }
-  if (/\[\^[^\]]+\]|!?\[\[[^\]]+\]\]|^\s*:::+|^\s*\[TOC\]\s*$|\{[.#][^}\n]+\}|==[^=\n]+==|(?:^|\s)\^[\w-]+\s*$|^\s*>\s*\[![A-Z]+\]/m.test(prose)) {
-    return '文档含暂不支持的扩展语法，已启用源码保护';
-  }
+  if (/^\uFEFF?\+\+\+[ \t]*(?:\r\n|\n|\r)/.test(markdown)) return 'TOML 元数据暂未支持原样拆分，已启用源码保护';
+  if (splitFrontmatter(markdown).incomplete) return '文首 YAML 元数据缺少结束标记，已启用源码保护';
   return null;
 }
 
@@ -66,10 +136,12 @@ function semanticTree(value: unknown, source: string): unknown {
   return copy;
 }
 
-/** Formatting normalization is accepted only when CommonMark/GFM structure agrees. */
+/** Keep the semantic last gate, with metadata compared as its literal source. */
 export function hasEquivalentMarkdownStructure(before: string, after: string): boolean {
-  return JSON.stringify(semanticTree(markdownParser.parse(before), before)) ===
-    JSON.stringify(semanticTree(markdownParser.parse(after), after));
+  const a = splitFrontmatter(before), b = splitFrontmatter(after);
+  return a.frontmatter === b.frontmatter &&
+    JSON.stringify(semanticTree(markdownParser.parse(a.body), a.body)) ===
+    JSON.stringify(semanticTree(markdownParser.parse(b.body), b.body));
 }
 
 export function markdownOutline(markdown: string): { level: number; text: string; line: number }[] {

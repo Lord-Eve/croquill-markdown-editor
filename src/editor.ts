@@ -3,7 +3,7 @@ import { uploadConfig } from '@milkdown/kit/plugin/upload';
 import { dropIndicatorPlugin } from '@milkdown/kit/plugin/cursor';
 import { isImageFile } from './images';
 import { hasFileTransfer } from './file-drop';
-import { commandsCtx, editorViewCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import { commandsCtx, editorViewCtx, remarkPluginsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { insertTableCommand } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $prose } from '@milkdown/kit/utils';
@@ -20,7 +20,8 @@ import { markdown } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language';
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
-import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline } from './fidelity';
+import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
+import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
@@ -39,6 +40,8 @@ export class MarkdownSurface {
   private crepe?: Crepe;
   private source?: EditorView;
   private raw = '';
+  private richPrefix = '';
+  private richNotice: string | null = null;
   private richInput?: string;
   private sourceInput?: string;
   private richSnapshot?: RichNode;
@@ -110,12 +113,15 @@ export class MarkdownSurface {
 
   get mode(): EditingMode { return this.currentMode; }
   getSafetyReason(): string | null { return this.safetyReason; }
+  getRichNotice(): string | null { return this.currentMode === 'rich' ? this.richNotice : null; }
 
   async init(markdownText: string): Promise<void> { await this.load(markdownText); }
 
   async load(markdownText: string): Promise<void> {
     this.suppress = true;
     this.raw = markdownText;
+    this.richPrefix = '';
+    this.richNotice = null;
     this.richInput = undefined;
     this.sourceInput = undefined;
     this.richSnapshot = undefined;
@@ -168,7 +174,7 @@ export class MarkdownSurface {
     if (!this.suppress && this.currentMode === 'rich' && this.crepe && this.richSnapshot) {
       const document = this.richView().state.doc;
       if (!document.eq(this.richSnapshot)) {
-        this.raw = this.richOriginDocument?.eq(document) ? this.richOriginText : this.crepe.getMarkdown();
+        this.raw = this.richOriginDocument?.eq(document) ? this.richOriginText : this.serializeRich();
         this.richSnapshot = document;
         this.richInput = this.raw;
       }
@@ -265,6 +271,12 @@ export class MarkdownSurface {
 
   private richView(): RichView { return this.crepe!.editor.action((ctx) => ctx.get(editorViewCtx)); }
 
+  private serializeRich(): string {
+    const body = this.crepe!.getMarkdown();
+    const separator = this.richPrefix && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
+    return this.richPrefix + separator + body;
+  }
+
   private async ensureRich(): Promise<void> {
     if (this.crepe && this.richInput === this.raw) return;
     const oldSuppress = this.suppress;
@@ -272,9 +284,13 @@ export class MarkdownSurface {
     try {
       if (this.crepe) await this.crepe.destroy();
       this.options.richRoot.replaceChildren();
+      const parts = splitFrontmatter(this.raw);
+      this.richPrefix = parts.prefix;
+      const blocks = preservedMarkdownBlocks(parts.body);
+      this.richNotice = [parts.prefix ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       const crepe = new Crepe({
         root: this.options.richRoot,
-        defaultValue: this.raw,
+        defaultValue: parts.body,
         features: {
           [Crepe.Feature.BlockEdit]: false,
           [Crepe.Feature.Toolbar]: false,
@@ -311,13 +327,24 @@ export class MarkdownSurface {
         },
       });
       this.crepe = crepe;
+      crepe.editor.use(rawMarkdownBlock);
+      crepe.editor.config(ctx => ctx.update(remarkPluginsCtx, plugins => [{ plugin: preserveRawMarkdown, options: {} }, ...plugins]));
       // Crepe's block-only drop indicator also handles text selections, snapping
       // them to block boundaries. Keep ProseMirror's native inline/block drops.
       await crepe.editor.remove(dropIndicatorPlugin);
       // Root capture handlers own binary paste/drop, including cancellation. Disable
       // Crepe's fallback uploader so it cannot leave an upload placeholder behind.
       crepe.editor.config((ctx) => ctx.update(uploadConfig.key, (options) => ({ ...options, uploader: async () => [] })));
-      crepe.editor.config((ctx) => ctx.update(remarkStringifyOptionsCtx, (options) => ({ ...options, bullet: '-' as const })));
+      crepe.editor.config((ctx) => ctx.update(remarkStringifyOptionsCtx, (options) => ({
+        ...options, bullet: '-' as const,
+        join: [...(options.join || []), (left) => {
+          if (left.type === 'html' && left.data && 'croquillRaw' in left.data && left.data.croquillRaw) {
+            const tail = /[ \t\r\n]*$/.exec(left.value)![0];
+            const newlines = (tail.match(/\r\n|\n|\r/g) || []).length;
+            return Math.max(-1, 1 - newlines);
+          }
+        }],
+      })));
       // Crepe encodes image-block resize ratios in Markdown alt text by default.
       // Ordinary .md files need their real alternative text retained instead.
       crepe.editor.config((ctx) => ctx.update(imageBlockSchema.key, (previous) => (innerCtx) => {
@@ -365,11 +392,14 @@ export class MarkdownSurface {
         } }),
       })));
       await crepe.create();
+      // Initialize the kernel's trailing caret paragraph before recording the origin.
+      const readyView = this.richView();
+      if (readyView.state.doc.lastChild?.type.name === 'croquill_raw_block') readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
       this.richInput = this.raw;
       this.richSnapshot = this.richView().state.doc;
       this.richOriginDocument = this.richSnapshot;
       this.richOriginText = this.raw;
-      if (!hasEquivalentMarkdownStructure(this.raw, crepe.getMarkdown())) {
+      if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRich())) {
         this.safetyReason = '此文档的部分结构无法可靠往返转换，已保留原文并启用源码保护';
       }
     } finally { this.suppress = oldSuppress; }

@@ -1,15 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline } from '../src/fidelity';
+import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, splitFrontmatter, preservedMarkdownBlocks } from '../src/fidelity';
 
 describe('Markdown protection', () => {
-  it('preserves opaque frontmatter, HTML and extension documents in source', () => {
-    for (const text of [
-      '---\ntitle: 中文\n---\n\n正文',
-      '<details>\n<summary>说明</summary>\n隐藏内容\n</details>',
-      '正文[^note]\n\n[^note]: 注释',
-      '[[双向链接]]',
-      '::: warning\n注意\n:::',
-    ]) expect(detectUnsafeMarkdown(text)).not.toBeNull();
+  it('only protects metadata that cannot yet be separated safely', () => {
+    expect(detectUnsafeMarkdown('+++\ntitle = "text"\n+++')).not.toBeNull();
+    expect(detectUnsafeMarkdown('---\ntitle: unfinished')).not.toBeNull();
+    for (const value of ['a<b', 'x > y', 'Promise<string>', '<br>', '==高亮==', '[TOC]', '正文[^1]\n\n[^1]: 脚注', '[[链接]]', '::: note\n文本\n:::']) {
+      expect(detectUnsafeMarkdown(value)).toBeNull();
+    }
   });
 
   it('does not mistake code samples or CommonMark autolinks for raw HTML', () => {
@@ -27,6 +25,19 @@ describe('Markdown protection', () => {
     expect(hasEquivalentMarkdownStructure('```ts\nconst a = 1\n```', '```\nconst a = 1\n```')).toBe(false);
     expect(hasEquivalentMarkdownStructure('$x^2$\n\n$$\nx^2 + y^2 = 1\n$$', '$x^2$\n\n$$\nx^2 + y^2 = 1\n$$\n')).toBe(true);
     expect(hasEquivalentMarkdownStructure('售价 $5 and $10', '售价 \\$5 and \\$10')).toBe(true);
+  });
+
+  it('uses parsed HTML nodes instead of matching angle brackets in ordinary text', () => {
+    expect(preservedMarkdownBlocks('价格 a<b 和 x > y')).toHaveLength(0);
+    expect(preservedMarkdownBlocks('返回 Promise<string> 类型')[0].categories).toContain('HTML');
+    expect(preservedMarkdownBlocks('第一行<br>第二行')[0].categories).toContain('HTML');
+  });
+
+  it('keeps metadata separators without swallowing indented body code', () => {
+    const header='---\r\ntitle: test\r\n---\r\n\r\n';
+    expect(splitFrontmatter(header+'    code').prefix).toBe(header);
+    expect(splitFrontmatter(header+'    code').body).toBe('    code');
+    expect(hasEquivalentMarkdownStructure(header+'正文',header.replace('test','changed')+'正文')).toBe(false);
   });
 
   it('outline uses real Markdown headings and ignores fenced samples', () => {

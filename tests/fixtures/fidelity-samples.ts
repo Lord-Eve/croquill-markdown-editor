@@ -1,0 +1,28 @@
+export const fidelitySamples = [
+  { name: '嵌套 HTML', syntax: '<div>\n\n<div>\n\n__内部__\n\n</div>\n\n__外层__\n\n</div>' },
+  { name: '空列表项', syntax: '- \r\n\r\n1. ' },
+  { name: '行内 br', syntax: '第一行<br>第二行' },
+  { name: '行内 span', syntax: '这是 <span class="red" data-x="  原样  ">__重点__</span> 内容' },
+  { name: '行内 kbd', syntax: '按 <kbd>Ctrl</kbd> + <kbd>S</kbd> 保存' },
+  { name: 'Promise 类型', syntax: '函数返回 Promise<string> 类型' },
+  { name: 'details', syntax: '<details>\r\n<summary>详情</summary>\r\n\r\n__原样内容__\r\n\r\n</details>' },
+  { name: '居中 div', syntax: '<div align="center">\n\n__居中内容__\n\n</div>' },
+  { name: 'HTML 注释', syntax: '<!-- 注释\r\n  保留空格与换行\r\n-->' },
+  { name: '行内注释', syntax: '前文 <!-- 不显示但原样保存 --> 后文' },
+  { name: '高亮', syntax: '这是重点==高亮==内容' },
+  { name: '带格式高亮', syntax: '这里==**加粗**内容==原样保留' },
+  { name: '目录', syntax: '[TOC]' },
+  { name: '脚注', syntax: '正文[^1]\r\n\r\n[^1]: 注释 __原始写法__\r\n\r\n    第二段落。' },
+  { name: '孤立脚注引用', syntax: '正文[^1] 尚未填写定义' },
+  { name: '双链', syntax: '正文 [[另一篇|显示名]] 与 ![[嵌入]]' },
+  { name: '容器', syntax: '::: warning\r\n注意 __原样__\r\n:::' },
+  { name: '含空行容器', syntax: '::: warning\n\n__保留写法__\n\n最后一段\n\n:::' },
+  { name: '标题属性', syntax: '## 自定义标题 {#id}' },
+  { name: '段落属性', syntax: '一段文字 {.custom #name}' },
+  { name: '提示块', syntax: '> [!NOTE]\r\n> 注意 __原始写法__\r\n>\r\n> 第二段提示' },
+  { name: '列表中的 HTML', syntax: '- 父项 <kbd>Tab</kbd>\r\n  - 子项 __原样__' },
+] as const;
+export const metadataSamples = [
+  '---\ntitle: 中文\ntags: [a, b]\n---\n\n',
+  '\uFEFF---\r\ntitle: "  中文  "\r\n# 注释\r\nitems:\r\n  - 第一项\r\n...\r\n\r\n',
+] as const;

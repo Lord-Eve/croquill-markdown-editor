@@ -123,8 +123,9 @@ function updateMode() {
   const source=surface.mode==='source';
   $('mode-button').innerHTML=`<span class="mode-symbol">${source?'〈/〉':'¶'}</span><span>${source?'源码模式':'所见即所得'}</span><span class="mode-arrow">⌄</span>`;
   const reason=surface.getSafetyReason();
-  $('notice').hidden=!reason;
-  $('notice').textContent=reason?`源码保护 · ${reason}`:'';
+  const richNotice=surface.getRichNotice();
+  $('notice').hidden=!reason&&!richNotice;
+  $('notice').textContent=reason?`源码保护 · ${reason}`:richNotice||'';
   document.body.classList.toggle('source-mode',source);
 }
 async function run(operation:()=>Promise<void>) {
