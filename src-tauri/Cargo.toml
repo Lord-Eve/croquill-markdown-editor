@@ -28,6 +28,11 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Wi
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
+# 第三方依赖不生成调试符号：Windows 上它们会让 target\debug 膨胀到数 GB，
+# 而我们只调试自己的代码。本项目自身的代码仍保留完整调试信息。
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 strip = true
 lto = "thin"

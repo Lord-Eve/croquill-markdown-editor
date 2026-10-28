@@ -30,6 +30,8 @@ Croquill（读作 kro-KWILL）由 croquis（速写）和 crow quill（绘图用�
 | 启动已构建的程序 | 右键 `start.ps1` →“使用 PowerShell 运行” |
 | 改完代码后重新构建 | 右键 `build.ps1` →“使用 PowerShell 运行”，结束后得到 `src-tauri\target\release\croquill.exe` |
 | 开发时实时预览 | 运行 `dev.ps1` |
+| 文件夹占用太大时清理 | 右键 `clean.ps1` →“使用 PowerShell 运行”，只删测试和预览的编译缓存，程序照常能用 |
+| 彻底清理编译缓存 | 右键 `clean-all.ps1` →“使用 PowerShell 运行”，只保留 `croquill.exe`；下次构建会整份重新编译，耗时较长 |
 
 如果提示“禁止运行脚本”，在本文件夹地址栏输入 `powershell` 回车，然后执行：
 
