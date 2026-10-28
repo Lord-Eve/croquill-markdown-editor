@@ -13,6 +13,9 @@ interface SyntaxNode {
 export interface PreservedBlock { from: number; to: number; raw: string; categories: string[] }
 export interface MarkdownParts { prefix: string; frontmatter: string; body: string; incomplete: boolean }
 
+/** Only these attribute-free spellings can be edited as a literal HTML break. */
+export function isBareHtmlBreak(value: string): boolean { return /^<br(?: ?\/)?>$/i.test(value); }
+
 /** Only a closed header at the document start is removed from the rich body. */
 export function splitFrontmatter(markdown: string): MarkdownParts {
   const opening = /^\uFEFF?---[ \t]*(?:\r\n|\n|\r)/.exec(markdown);
@@ -33,7 +36,7 @@ function categoriesOf(node: SyntaxNode): Set<string> {
   const text: string[] = [];
   function visit(child: SyntaxNode): void {
     if (['code', 'inlineCode', 'math', 'inlineMath'].includes(child.type)) { text.push('\n'); return; }
-    if (child.type === 'html') categories.add('HTML');
+    if (child.type === 'html' && !isBareHtmlBreak(child.value || '')) categories.add('HTML');
     if (child.type === 'listItem' && !child.children?.length) categories.add('空列表项');
     if (child.type === 'footnoteDefinition' || child.type === 'footnoteReference') categories.add('脚注');
     if (child.type === 'text') text.push(child.value || '');

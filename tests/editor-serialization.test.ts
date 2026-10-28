@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { type Browser, type Page } from '@playwright/test';
+import { launchTestBrowser } from './browser';
 import { createServer, type ViteDevServer } from 'vite';
 import { fileURLToPath } from 'node:url';
 
@@ -22,7 +23,7 @@ describe('rich editor Markdown serialization', () => {
     const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw new Error('Test server address unavailable');
     baseURL = 'http://127.0.0.1:' + address.port;
-    browser = await chromium.launch({ channel: 'msedge', headless: true });
+    browser = await launchTestBrowser();
   }, 60000);
 
   afterAll(async () => { await browser?.close(); await server?.close(); });

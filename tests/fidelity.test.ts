@@ -30,7 +30,7 @@ describe('Markdown protection', () => {
   it('uses parsed HTML nodes instead of matching angle brackets in ordinary text', () => {
     expect(preservedMarkdownBlocks('价格 a<b 和 x > y')).toHaveLength(0);
     expect(preservedMarkdownBlocks('返回 Promise<string> 类型')[0].categories).toContain('HTML');
-    expect(preservedMarkdownBlocks('第一行<br>第二行')[0].categories).toContain('HTML');
+    expect(preservedMarkdownBlocks('第一行<br>第二行')).toHaveLength(0);
   });
 
   it('keeps metadata separators without swallowing indented body code', () => {

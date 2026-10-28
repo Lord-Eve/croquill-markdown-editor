@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { type Browser, type Page } from '@playwright/test';
+import { launchTestBrowser } from './browser';
 import { createServer, type ViteDevServer } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -11,7 +12,7 @@ import remarkMath from 'remark-math';
 import { fidelitySamples, metadataSamples } from './fixtures/fidelity-samples';
 
 const privateFolder = fileURLToPath(new URL('../examples/private/', import.meta.url));
-const privatePaths = existsSync(privateFolder) ? readdirSync(privateFolder).filter(name => name.endsWith('.md')).map(name => join(privateFolder, name)) : [];
+const privatePaths = process.env.CROQUILL_PRIVATE_SAMPLES === '1' && existsSync(privateFolder) ? readdirSync(privateFolder).filter(name => name.endsWith('.md')).map(name => join(privateFolder, name)) : [];
 
 describe('syntax preservation through the production editor', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
@@ -20,7 +21,7 @@ describe('syntax preservation through the production editor', () => {
     await server.listen(); const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw Error('Test server unavailable');
     baseURL = 'http://127.0.0.1:' + address.port;
-    browser = await chromium.launch({ channel: 'msedge', headless: true });
+    browser = await launchTestBrowser();
   }, 60000);
   afterAll(async () => { await browser?.close(); await server?.close(); });
   beforeEach(async () => {
