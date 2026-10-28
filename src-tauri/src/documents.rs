@@ -147,17 +147,22 @@ pub fn write_document(
         return Err("文件为只读，原文件未修改。请另存为其他文件。".into());
     }
     let parent = path.parent().ok_or("保存路径无效。")?;
+    let temporary = stage_bytes(parent, &bytes)?;
+    replace_file(&temporary, &path, previous.is_some())?;
+    // TempPath cleanup is harmless after its file has atomically moved to the destination.
+    Ok(result)
+}
+
+// Markdown saves and image imports share the same synced, same-directory staging path.
+fn stage_bytes(parent: &Path, bytes: &[u8]) -> Result<tempfile::TempPath, String> {
     let mut temporary = tempfile::Builder::new()
         .prefix(".croquill-save-")
         .suffix(".tmp")
         .tempfile_in(parent)
         .map_err(|e| format!("无法创建保存临时文件，原文件未修改：{e}"))?;
-    temporary.write_all(&bytes).map_err(|e| format!("写入临时文件失败，原文件未修改：{e}"))?;
+    temporary.write_all(bytes).map_err(|e| format!("写入临时文件失败，原文件未修改：{e}"))?;
     temporary.as_file().sync_all().map_err(|e| format!("同步临时文件失败，原文件未修改：{e}"))?;
-    let temporary = temporary.into_temp_path();
-    replace_file(&temporary, &path, previous.is_some())?;
-    // TempPath cleanup is harmless after its file has atomically moved to the destination.
-    Ok(result)
+    Ok(temporary.into_temp_path())
 }
 
 #[cfg(windows)]
@@ -206,6 +211,159 @@ fn replace_file(temporary: &Path, target: &Path, existing: bool) -> Result<(), S
     fs::rename(temporary, target).map_err(|e| format!("原子替换失败：{e}"))
 }
 
+fn image_mime(path: &Path) -> Result<&'static str, String> {
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Ok("image/png"),
+        "jpg" | "jpeg" => Ok("image/jpeg"),
+        "gif" => Ok("image/gif"),
+        "webp" => Ok("image/webp"),
+        "bmp" => Ok("image/bmp"),
+        "svg" => Ok("image/svg+xml"),
+        "avif" => Ok("image/avif"),
+        _ => Err("不支持这种本地图片格式。".into()),
+    }
+}
+
+fn sanitize_image_name(name: &str) -> String {
+    let mut name: String = name.chars().filter(|character| {
+        !character.is_control() && !"<>:\"/\\|?*".contains(*character)
+    }).collect();
+    while name.contains("..") {
+        name = name.replace("..", "");
+    }
+    name = name.trim_matches([' ', '.']).to_owned();
+    if name.is_empty() {
+        return "image.png".into();
+    }
+    let base = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    if matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4 && (base.starts_with("COM") || base.starts_with("LPT"))
+            && matches!(base.as_bytes()[3], b'1'..=b'9'))
+    {
+        name.insert(0, '_');
+    }
+    name
+}
+
+fn encode_image_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for character in value.chars() {
+        if !character.is_ascii() || character.is_ascii_alphanumeric() || "-._~".contains(character) {
+            encoded.push(character);
+        } else {
+            encoded.push_str(&format!("%{:02X}", character as u8));
+        }
+    }
+    encoded
+}
+
+fn image_destination(assets: &Path, name: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(name);
+    if relative.components().count() != 1
+        || !matches!(relative.components().next(), Some(std::path::Component::Normal(_)))
+        || name.contains(['/', '\\'])
+    {
+        return Err("图片目标路径越出附件文件夹，已拒绝写入。".into());
+    }
+    let destination = assets.join(relative);
+    if destination.parent() != Some(assets) {
+        return Err("图片目标路径越出附件文件夹，已拒绝写入。".into());
+    }
+    Ok(destination)
+}
+
+fn validate_assets_directory(assets: &Path, parent: &Path) -> Result<PathBuf, String> {
+    let metadata = fs::symlink_metadata(assets).map_err(|e| format!("无法读取附件文件夹：{e}"))?;
+    #[cfg(windows)]
+    let is_link = {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT includes junctions.
+    };
+    #[cfg(not(windows))]
+    let is_link = metadata.file_type().is_symlink();
+    if is_link || !metadata.is_dir() {
+        return Err("附件位置不是普通文件夹，或路径越出文档目录，已拒绝写入。".into());
+    }
+    let resolved = fs::canonicalize(assets).map_err(|e| format!("无法解析附件文件夹：{e}"))?;
+    if resolved.parent() != Some(parent) {
+        return Err("附件路径越出文档目录，已拒绝写入。".into());
+    }
+    Ok(resolved)
+}
+
+pub fn import_image(
+    document_path: &str,
+    source_path: Option<&str>,
+    data_base64: Option<&str>,
+    file_name: Option<&str>,
+) -> Result<String, String> {
+    let _guard = SAVE_LOCK.lock().map_err(|_| "保存服务不可用，请重新启动编辑器。")?;
+    let document = Path::new(document_path);
+    if !document.is_absolute() {
+        return Err("请先保存文档，再插入图片。".into());
+    }
+    let document = fs::canonicalize(document).map_err(|e| format!("请先保存文档，再插入图片：{e}"))?;
+    if !document.is_file() {
+        return Err("图片所对应文档不是普通文件。".into());
+    }
+    let parent = document.parent().ok_or("文档没有所在文件夹。")?;
+    let assets_name = format!("{}.assets", document.file_stem().ok_or("文档缺少文件名。")?.to_string_lossy());
+    let assets = parent.join(&assets_name);
+    let (name, bytes) = match (source_path, data_base64) {
+        (Some(source), None) => {
+            let source = Path::new(source);
+            if !source.is_absolute() {
+                return Err("图片来源必须是本地绝对路径。".into());
+            }
+            let name = source.file_name().and_then(|name| name.to_str()).ok_or("图片来源缺少有效文件名。")?;
+            let metadata = fs::metadata(source).map_err(|e| format!("无法读取图片信息：{e}"))?;
+            if !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
+                return Err("图片不可用或超过 20 MB。".into());
+            }
+            (sanitize_image_name(name), fs::read(source).map_err(|e| format!("读取图片失败：{e}"))?)
+        }
+        (None, Some(data)) => {
+            if data.len() as u64 > MAX_IMAGE_BYTES.div_ceil(3) * 4 {
+                return Err("图片超过 20 MB。".into());
+            }
+            let bytes = STANDARD.decode(data).map_err(|_| "剪贴板图片编码无效。")?;
+            (sanitize_image_name(file_name.ok_or("剪贴板图片缺少文件名。")?), bytes)
+        }
+        _ => return Err("请提供一种图片来源。".into()),
+    };
+    if bytes.is_empty() || bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err("图片不可用或超过 20 MB。".into());
+    }
+    image_mime(Path::new(&name))?;
+    match fs::create_dir(&assets) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(format!("无法创建附件文件夹：{error}")),
+    }
+    let resolved_assets = validate_assets_directory(&assets, parent)?;
+    let stem = Path::new(&name).file_stem().and_then(|stem| stem.to_str()).ok_or("图片缺少文件名。")?;
+    let extension = Path::new(&name).extension().and_then(|extension| extension.to_str()).ok_or("图片缺少扩展名。")?;
+    for suffix in 0..10000 {
+        let candidate = if suffix == 0 { name.clone() } else { format!("{stem}-{suffix}.{extension}") };
+        let destination = image_destination(&resolved_assets, &candidate)?;
+        // symlink_metadata also counts dangling links as collisions, never replacing them.
+        if fs::symlink_metadata(&destination).is_ok() {
+            continue;
+        }
+        let temporary = stage_bytes(&resolved_assets, &bytes)?;
+        if validate_assets_directory(&assets, parent)? != resolved_assets {
+            return Err("附件文件夹在写入前发生变化，已拒绝写入。".into());
+        }
+        match replace_file(&temporary, &destination, false) {
+            Ok(()) => return Ok(format!("{}/{}", encode_image_component(&assets_name), encode_image_component(&candidate))),
+            Err(_) if fs::symlink_metadata(&destination).is_ok() => continue,
+            Err(error) => return Err(format!("图片未插入：{error}")),
+        }
+    }
+    Err("同名图片过多，请重命名来源图片后重试。".into())
+}
+
 pub fn read_local_image(document_path: &str, src: &str) -> Result<String, String> {
     let path_part = src.split(['?', '#']).next().unwrap_or(src);
     let decoded = percent_decode_str(path_part).decode_utf8().map_err(|_| "图片路径编码无效。")?;
@@ -241,17 +399,7 @@ pub fn read_local_image(document_path: &str, src: &str) -> Result<String, String
     if !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
         return Err("图片不可用或超过 20 MB。".into());
     }
-    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
-    let mime = match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "svg" => "image/svg+xml",
-        "avif" => "image/avif",
-        _ => return Err("不支持这种本地图片格式。".into()),
-    };
+    let mime = image_mime(&path)?;
     let bytes = fs::read(path).map_err(|e| format!("读取图片失败：{e}"))?;
     Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
@@ -335,6 +483,96 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "original");
         drop(held);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn image_import_creates_assets_and_never_overwrites_collisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let document = file_path(&dir, "日记.md");
+        fs::write(&document, "original document").unwrap();
+        for suffix in 0..3 {
+            let bytes = vec![137, 80, 78, 71, suffix];
+            let encoded = STANDARD.encode(&bytes);
+            let relative = import_image(&document, None, Some(&encoded), Some("photo.png")).unwrap();
+            let expected = if suffix == 0 { "photo.png".to_owned() } else { format!("photo-{suffix}.png") };
+            assert_eq!(relative, format!("日记.assets/{expected}"));
+            assert_eq!(fs::read(dir.path().join("日记.assets").join(expected)).unwrap(), bytes);
+        }
+        assert_eq!(fs::read_to_string(&document).unwrap(), "original document");
+        assert_eq!(fs::read_dir(dir.path().join("日记.assets")).unwrap().count(), 3);
+        assert_eq!(fs::read(dir.path().join("日记.assets/photo.png")).unwrap(), [137, 80, 78, 71, 0]);
+    }
+
+    #[test]
+    fn local_image_import_keeps_chinese_name_and_roundtrips_encoded_special_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        let document = file_path(&dir, "日记 # %空格.md");
+        let source = file_path(&dir, "图片 空格%#().png");
+        let bytes = [137, 80, 78, 71];
+        fs::write(&document, "").unwrap();
+        fs::write(&source, bytes).unwrap();
+        let relative = import_image(&document, Some(&source), None, None).unwrap();
+        assert_eq!(relative, "日记%20%23%20%25空格.assets/图片%20空格%25%23%28%29.png");
+        assert_eq!(fs::read(dir.path().join("日记 # %空格.assets/图片 空格%#().png")).unwrap(), bytes);
+        assert_eq!(fs::read(&source).unwrap(), bytes);
+        assert_eq!(read_local_image(&document, &relative).unwrap(), format!("data:image/png;base64,{}", STANDARD.encode(bytes)));
+    }
+
+    #[test]
+    fn image_names_remove_traversal_and_windows_illegal_characters() {
+        assert_eq!(sanitize_image_name(r#"../..\bad<>:"/|?*name.png. "#), "badname.png");
+        assert_eq!(sanitize_image_name("CON.png"), "_CON.png");
+        assert_eq!(sanitize_image_name("lpt9.png"), "_lpt9.png");
+        assert_eq!(sanitize_image_name(".. /\\"), "image.png");
+        let dir = tempfile::tempdir().unwrap();
+        let document = file_path(&dir, "doc.md");
+        fs::write(&document, "").unwrap();
+        let relative = import_image(&document, None, Some("iVBORw=="), Some(r#"../..\bad<>:"/|?*name.png. "#)).unwrap();
+        assert_eq!(relative, "doc.assets/badname.png");
+        assert!(dir.path().join("doc.assets/badname.png").is_file());
+    }
+
+    #[test]
+    fn image_destination_rejects_paths_outside_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets = dir.path().join("doc.assets");
+        for name in ["../outside.png", "..\\outside.png", "/outside.png", "sub/image.png", "..", ".", ""] {
+            assert!(image_destination(&assets, name).is_err(), "accepted {name}");
+        }
+        assert!(image_destination(&assets, "图片 空格.png").is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn image_import_rejects_assets_junction_outside_document_directory() {
+        use std::os::windows::process::CommandExt;
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let document = file_path(&dir, "doc.md");
+        fs::write(&document, "").unwrap();
+        let assets = dir.path().join("doc.assets");
+        let created = std::process::Command::new("cmd.exe")
+            .args(["/C", "mklink", "/J"])
+            .arg(&assets).arg(outside.path()).creation_flags(0x08000000).output().unwrap();
+        assert!(created.status.success(), "junction setup failed: {:?}", created);
+        let result = import_image(&document, None, Some("iVBORw=="), Some("image.png"));
+        // Remove only the junction itself before TempDir cleanup.
+        fs::remove_dir(&assets).unwrap();
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn image_import_rejects_invalid_sources_before_creating_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let document = file_path(&dir, "doc.md");
+        fs::write(&document, "").unwrap();
+        assert!(import_image("", None, Some("iVBORw=="), Some("image.png")).is_err());
+        assert!(import_image(&document, None, None, None).is_err());
+        assert!(import_image(&document, Some(&document), Some("iVBORw=="), Some("image.png")).is_err());
+        assert!(import_image(&document, None, Some("invalid base64!"), Some("image.png")).is_err());
+        assert!(import_image(&document, None, Some("iVBORw=="), Some("file.exe")).is_err());
+        assert!(!dir.path().join("doc.assets").exists());
     }
 
     #[test]

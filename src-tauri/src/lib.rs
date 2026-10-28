@@ -30,6 +30,20 @@ async fn read_local_image(document_path: String, src: String) -> Result<String, 
 }
 
 #[tauri::command]
+async fn import_image(
+    document_path: String,
+    source_path: Option<String>,
+    data_base64: Option<String>,
+    file_name: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        documents::import_image(&document_path, source_path.as_deref(), data_base64.as_deref(), file_name.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn initial_path() -> Option<String> {
     std::env::args().skip(1).find(|argument| !argument.starts_with('-')).and_then(|argument| {
         let path = std::path::PathBuf::from(argument);
@@ -41,7 +55,7 @@ fn initial_path() -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, initial_path])
+        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, initial_path])
         .run(tauri::generate_context!())
         .expect("Croquill 桌面窗口启动失败");
 }

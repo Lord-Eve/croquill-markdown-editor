@@ -19,7 +19,7 @@
 | 表格编辑 | [Table Editing](https://support.typora.io/Table-Editing/) 提供源码输入、菜单插入、Ctrl+Enter 新行、Tab 到末格加行及行列操作 | 当前接入 Crepe/GFM 表格与 3×3 插入命令；未实现全部 Typora 菜单与表格行为等价承诺 | Tab/Shift+Tab、末格 Tab、Ctrl+Enter、中文选区、行列增删分别对照；表格不应因编辑丢失内容 |
 | 链接原位修改 | [Markdown Reference / Links](https://support.typora.io/Markdown-Reference/) 说明点击链接后展开编辑 | 当前使用 Crepe LinkTooltip，Ctrl+K 创建链接；所有普通链接点击被阻止导航；与官方展开方式仍有差距 | 点击链接后修改标签、目标 URL，左右键离开链接；检查界面变化、选区与撤销 |
 | 图片相对路径 | [Images / Relative Path](https://support.typora.io/Images/) 以当前 `.md` 的目录为默认解析基准，包含 `../` 路径 | 当前通过 Rust `read_local_image(documentPath, src)` 解析并显示；保留 Markdown 中的路径文字 | 同目录、子目录、父目录、中文空格文件名各一张；保存重开，再另存到其他目录，记录路径含义是否变化 |
-| 图片编辑与插入 | [Markdown Reference / Images](https://support.typora.io/Markdown-Reference/) 说明点击图片编辑 Markdown；[Images](https://support.typora.io/Images/) 描述本地选择、拖放、剪贴板等方式 | 当前 Crepe 图片表面可编辑地址；已修正图片 alt/title 的 Markdown 映射，避免框架 resize 元数据覆盖替代文本。上传仍读取成 data URL，尚无官方式图片文件拷贝目录策略 | 点击现有图片修改路径与 alt；分别验证文件选择和粘贴。拖放、截图粘贴、文件自动拷贝如未测，明确标记 |
+| 图片编辑与插入 | [Markdown Reference / Images](https://support.typora.io/Markdown-Reference/) 说明点击图片编辑 Markdown；[Images](https://support.typora.io/Images/) 描述本地选择、拖放、剪贴板等方式 | 当前 Crepe 图片表面可编辑地址；已修正图片 alt/title 的 Markdown 映射，避免框架 resize 元数据覆盖替代文本。新插入的本地图片经 Rust 复制到“文档名.assets”，粘贴、菜单与拖放共用流程；网络 URL 与已有 data URL 保留，桌面结果见末节 | 点击现有图片修改路径与 alt；分别验证文件选择和粘贴。拖放、截图粘贴、文件自动拷贝如未测，明确标记 |
 | 撤销 / 重做 | 官方 [Typora 1.6](https://support.typora.io/What's-New-1.6/) 明确自动应用代码语言可撤销；[稳定版记录](https://typora.io/releases/stable.html) 持续记录输入撤销粒度修复。公开快捷键页未给出撤销分组细则 | 富文本采用 ProseMirror history，源码采用 CodeMirror history；该模式文档未变时保留历史，另一模式编辑后重建目标模式历史，未实现共享撤销链 | 技术验证已通过格式变更及程序化中文的撤销重做；真实中文输入分组与官方客户端对照仍待观察 |
 | 大纲 | [Outline](https://support.typora.io/Outline/) 按标题层级展示、点击定位，并在阅读或编辑时标记当前章节 | 当前从 Markdown AST 生成大纲，点击滚动与点选高亮；尚未跟随正文滚动自动更新活跃章节，也未实现各级分支折叠 | 大纲开关、中文标题定位、层级缩进；滚动正文观察活跃项；长文中点击目标应可靠 |
 | 外观与排版 | [官网](https://typora.io/) 展示简洁写作表面；[About Themes](https://support.typora.io/About-Themes/) 说明主题由 CSS 控制；本机官方主题 CSS 参数见下表 | 当前实现浅色 / 深色、居中单栏、字号调整；首版按用户初始范围固定正文最大宽度 860px。与官方 GitHub 大屏扩宽、Night 914px 的宽度规则存在已知差异 | 同一窗口尺寸、同一 Markdown、官方 GitHub/Night 主题分别截图；对照正文实际宽度、边距、行距、标题、引用、代码、表格与底栏密度 |
@@ -138,3 +138,35 @@
 - GitHub 表格 / 代码：`v011-typora-light-code.png`、`v011-croquill-light-final.png`。
 - Night 表格 / 代码：`v011-typora-night-code.png`、`v011-croquill-night-final.png`。
 - 列表符号：`v011-typora-light-top.png`、`v011-croquill-light-top.png`、`v011-croquill-night-top.png`。
+
+## 图片存为文件（2026-10-27 至 2026-10-28）
+
+范围：三种本地图片入口统一保存到当前文档同目录的“文档名.assets”。不迁移已有 data/base64 图片，不调整源码保护、样式、依赖或版本号。Markdown 保存流程保持原样；图片命令复用 `documents.rs` 的同步临时文件阶段和原子移动函数，以不覆盖方式提交图片。
+
+### 自动化结果
+
+- `npx tsc --noEmit` 通过，`npm test` 43 / 43 通过，`cargo test` 12 / 12 通过。
+- 新增 Rust 测试覆盖附件目录创建、连续重名后缀、中文空格及 `%/#/()` 路径编码读回、非法文件名清洗、直接越界路径拒绝、Windows junction 越界拒绝及无效来源失败。
+- 新增前端测试覆盖未保存文档先保存、取消时不写图、保存失败不插图、PNG 命名、富编辑与源码模式实际粘贴后输出相对路径及撤销；HTTP 图片与剪贴板文件同时存在时仍保留网络 URL，已有 data URL 不被迁移。
+- 原有原文、换行、保存错误保护测试继续通过。撤销图片插入只更改文档，导入流程没有删除图片文件的动作。
+- `build.ps1` 构建成功；最终 `croquill.exe` 修改时间晚于全部相关源码，版本仍为 `0.1.1`。
+
+### 真实桌面结果
+
+Windows 11，使用重新构建的 Croquill 与官方 Typora 1.14.15。临时文件位于 Codex 输出目录 `image-acceptance`，没有写入仓库示例。桌面操作由 computer-use 完成；跨窗口拖放由项目所有者手动执行，随后核对磁盘及文档内容。
+
+| 验收项 | 已观察结果 |
+| --- | --- |
+| 已保存文档粘贴截图 | 将已有验收截图放入 Windows 图片剪贴板，正文真实 Ctrl+V 后正常显示；自动创建 `写作 验收.assets/image-20261027235251.png`，保存后是 `![](写作%20验收.assets/image-20261027235251.png)`，没有 base64 正文 |
+| 菜单选择图片 | “段落 → 图片”打开原生对话框，选择 `中文 图片.png` 后复制为 `写作 验收.assets/中文 图片.png` 并正常显示；Markdown 使用 `中文%20图片.png` |
+| 资源管理器拖入 | 项目所有者实际拖入中文、含空格的图片；随后确认 `.assets` 内新增 `中文 图片-1.png`、`-2.png`、`-3.png`，原文件保留；正文显示，保存的 Markdown 中包含 `中文%20图片-3.png` |
+| 新文档取消保存 | 粘贴图片首先出现原生“保存 Markdown 文件”对话框；Escape 取消后正文仍为空、0 字、无未保存标记，并显示“请先保存文档，再插入图片” |
+| 新文档完成保存 | 再次粘贴后保存为 `新建 保存.md`，随后自动创建 `新建 保存.assets/image-20261028000335.png` 并显示图片，Ctrl+S 后保存相对路径 |
+| 保存、关闭、重新打开 | 确认进程关闭后重新启动：新建文档中的截图正常；另行重新打开 `写作 验收.md`，菜单与拖放插入的两张图均显示，正文无未保存标记 |
+| 官方 Typora 兼容 | 官方客户端直接打开同一 `写作 验收.md`，两张中文空格相对路径图片均正常显示；`%20` 目录名及文件名能被两端解析 |
+
+### 官方观察与边界
+
+本机官方 Typora 当前配置下，“格式 → 图像 → 插入本地图片”实际写入的是绝对路径，保存内容保留空格；不能据此宣称所有配置下官方都会主动输出 `%20`。Croquill 按本次确定的产品规则输出编码相对路径，已直接验证官方能够读取显示。
+
+另存为到其他目录后如何同步图片路径留作后续事项，已记入路线图；本次不会自动复制或移动已有附件。单张本地图片沿用当前读取器的 20 MB 限制。

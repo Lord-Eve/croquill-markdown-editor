@@ -1,4 +1,6 @@
 import { Crepe } from '@milkdown/crepe';
+import { uploadConfig } from '@milkdown/kit/plugin/upload';
+import { isImageFile } from './images';
 import { commandsCtx, editorViewCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { insertTableCommand } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
@@ -26,6 +28,8 @@ export interface MarkdownSurfaceOptions {
   sourceRoot: HTMLElement;
   onChange: (markdown: string) => void;
   resolveImage: (src: string) => Promise<string>;
+  onImageFiles?: (files: File[], clipboard: boolean) => void;
+  uploadImage?: (file: File) => Promise<string | null>;
 }
 
 /** Two mature editing surfaces, with the unmodified Markdown kept independently. */
@@ -46,7 +50,59 @@ export class MarkdownSurface {
   private richPending = false;
   private destroyed = false;
 
-  constructor(private readonly options: MarkdownSurfaceOptions) {}
+  constructor(private readonly options: MarkdownSurfaceOptions) {
+    for (const root of [options.richRoot, options.sourceRoot]) {
+      root.addEventListener('paste', this.handleImagePaste, { capture: true });
+      root.addEventListener('drop', this.handleImageDrop, { capture: true });
+      root.addEventListener('dragover', this.handleImageDragOver, { capture: true });
+    }
+  }
+
+  private handleImagePaste = (event: ClipboardEvent): void => {
+    const html = event.clipboardData?.getData('text/html') || '';
+    // A copied web image keeps its URL instead of uploading a browser-provided bitmap.
+    if (/<img\b[^>]*\bsrc=["']https?:/i.test(html)) return;
+    const files = Array.from(event.clipboardData?.files || []).filter(isImageFile);
+    if (!files.length) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!this.isComposing()) this.options.onImageFiles?.(files, true);
+  };
+  private handleImageDrop = (event: DragEvent): void => {
+    const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
+    if (!files.length) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    this.placeImageCursor(event.clientX, event.clientY);
+    if (!this.isComposing()) this.options.onImageFiles?.(files, false);
+  };
+  private handleImageDragOver = (event: DragEvent): void => {
+    if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+  };
+
+  placeImageCursor(x: number, y: number): void {
+    if (this.isComposing()) return;
+    if (this.currentMode === 'source' && this.source) {
+      const pos = this.source.posAtCoords({ x, y });
+      if (pos !== null) this.source.dispatch({ selection: { anchor: pos } });
+    } else if (this.crepe) {
+      const view = this.richView();
+      const pos = view.posAtCoords({ left: x, top: y });
+      if (pos) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos.pos))));
+    }
+  }
+
+  insertImage(src: string): void {
+    if (this.isComposing() || this.destroyed) return;
+    if (this.currentMode === 'source' && this.source) {
+      const { from, to } = this.source.state.selection.main;
+      const text = `![](${src})`;
+      this.source.dispatch({ changes: { from, to, insert: text }, selection: { anchor: from + text.length }, userEvent: 'input' });
+    } else if (this.crepe) {
+      const view = this.richView();
+      const type = view.state.schema.nodes['image-block'];
+      view.dispatch(view.state.tr.replaceSelectionWith(type.create({ src, alt: '' })).scrollIntoView());
+      this.notifyRichChange();
+    }
+  }
 
   get mode(): EditingMode { return this.currentMode; }
   getSafetyReason(): string | null { return this.safetyReason; }
@@ -194,6 +250,11 @@ export class MarkdownSurface {
 
   async destroy(): Promise<void> {
     this.destroyed = true;
+    for (const root of [this.options.richRoot, this.options.sourceRoot]) {
+      root.removeEventListener('paste', this.handleImagePaste, { capture: true });
+      root.removeEventListener('drop', this.handleImageDrop, { capture: true });
+      root.removeEventListener('dragover', this.handleImageDragOver, { capture: true });
+    }
     this.source?.destroy();
     await this.crepe?.destroy();
   }
@@ -228,15 +289,7 @@ export class MarkdownSurface {
             blockUploadButton: '选择图片', blockConfirmButton: '确定',
             blockCaptionPlaceholderText: '图片说明', blockUploadPlaceholderText: '输入图片地址或相对路径',
             proxyDomURL: async (url: string) => this.options.resolveImage(url),
-            onUpload: async (file: File) => {
-              // Embedded images remain portable across reopen and Save As.
-              return new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(String(reader.result));
-                reader.onerror = () => reject(new Error('读取图片失败'));
-                reader.readAsDataURL(file);
-              });
-            },
+            onUpload: async (file: File) => (await this.options.uploadImage?.(file)) || '',
           },
           [Crepe.Feature.CodeMirror]: {
             theme: [syntaxHighlighting(classHighlighter), syntaxHighlighting(tagHighlighter([
@@ -254,6 +307,9 @@ export class MarkdownSurface {
         },
       });
       this.crepe = crepe;
+      // Root capture handlers own binary paste/drop, including cancellation. Disable
+      // Crepe's fallback uploader so it cannot leave an upload placeholder behind.
+      crepe.editor.config((ctx) => ctx.update(uploadConfig.key, (options) => ({ ...options, uploader: async () => [] })));
       crepe.editor.config((ctx) => ctx.update(remarkStringifyOptionsCtx, (options) => ({ ...options, bullet: '-' as const })));
       // Crepe encodes image-block resize ratios in Markdown alt text by default.
       // Ordinary .md files need their real alternative text retained instead.

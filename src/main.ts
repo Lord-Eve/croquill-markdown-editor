@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { createIcons, PanelLeft, Code2, ListTree } from 'lucide';
 import { MarkdownSurface } from './editor';
+import { ImageImporter, type ImageSource } from './images';
 import { DocumentSession, type DocumentFile } from './session';
 import './style.css';
 
@@ -15,7 +16,7 @@ app.innerHTML = `
       <button data-action="save">保存<span>Ctrl+S</span></button><button data-action="saveAs">另存为…<span>Ctrl+Shift+S</span></button>
     </div></details>
     <details><summary>编辑</summary><div class="menu"><button data-format="undo">撤销<span>Ctrl+Z</span></button><button data-format="redo">重做<span>Ctrl+Y</span></button></div></details>
-    <details><summary>段落</summary><div class="menu"><button data-format="heading1">一级标题<span>Ctrl+1</span></button><button data-format="heading2">二级标题<span>Ctrl+2</span></button><button data-format="heading3">三级标题<span>Ctrl+3</span></button><hr><button data-format="bullet">无序列表</button><button data-format="ordered">有序列表</button><button data-format="task">任务列表</button><button data-format="quote">引用</button><button data-format="codeblock">代码块</button><button data-format="table">插入表格</button><button data-format="image">图片</button></div></details>
+    <details><summary>段落</summary><div class="menu"><button data-format="heading1">一级标题<span>Ctrl+1</span></button><button data-format="heading2">二级标题<span>Ctrl+2</span></button><button data-format="heading3">三级标题<span>Ctrl+3</span></button><hr><button data-format="bullet">无序列表</button><button data-format="ordered">有序列表</button><button data-format="task">任务列表</button><button data-format="quote">引用</button><button data-format="codeblock">代码块</button><button data-format="table">插入表格</button><button data-action="image">图片</button></div></details>
     <details><summary>格式</summary><div class="menu"><button data-format="bold">加粗<span>Ctrl+B</span></button><button data-format="italic">斜体<span>Ctrl+I</span></button><button data-format="strike">删除线</button><button data-format="link">链接<span>Ctrl+K</span></button><button data-format="code">行内代码</button></div></details>
     <details><summary>视图</summary><div class="menu"><button data-action="mode">切换源码模式<span>Ctrl+/</span></button><button data-action="outline">大纲侧栏<span>Ctrl+Shift+L</span></button><hr><button data-action="smaller">缩小字号</button><button data-action="larger">放大字号</button></div></details>
     <details><summary>主题</summary><div class="menu"><button data-action="light">GitHub · 浅色</button><button data-action="dark">Night · 深色</button></div></details>
@@ -66,9 +67,21 @@ const session = new DocumentSession({
   write: (path,text,bom,newline,expectedRevision) => invoke('write_document',{path,text,bom,newline,expectedRevision:expectedRevision ?? null}),
   confirmSave: name => modal('保存更改？',`“${name}”有尚未保存的修改。`,[{label:'不保存',value:'discard'},{label:'取消',value:'cancel'},{label:'保存',value:'save',primary:true}]) as Promise<'save'|'discard'|'cancel'>,
 });
+const imageImporter = new ImageImporter({
+  documentPath: () => session.path,
+  saveDocument: () => session.save(),
+  warn: toast,
+  persist: args => invoke<string>('import_image', args),
+});
 const surface = new MarkdownSurface({
   richRoot:$('rich-root'), sourceRoot:$('source-root'),
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
+  onImageFiles: (files, clipboard) => { void insertImages(files.map(file => ({ file, clipboard }))); },
+  uploadImage: async file => {
+    let src: string | null = null;
+    await run(async () => { src = await imageImporter.import({ file }); });
+    return src;
+  },
   resolveImage: src => {
     if (/^(https?:|data:)/i.test(src)) return Promise.resolve(src);
     if (!desktop || !session.path) return Promise.reject(new Error('请先保存文档，再使用相对路径图片。'));
@@ -118,12 +131,30 @@ async function run(operation:()=>Promise<void>) {
   catch(error){await modal('操作未完成',String(error),[{label:'返回文档',value:'cancel',primary:true}]);}
   finally {busy=false;$('editor-scroll').inert=false;updateTitle();updateStats();}
 }
+async function insertImages(sources: ImageSource[]) {
+  await run(async () => {
+    for (const source of sources) {
+      const src = await imageImporter.import(source);
+      if (!src) break;
+      surface.insertImage(src);
+    }
+  });
+  surface.focus();
+}
 async function action(name:string) {
   document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));
   if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
   if(name==='outline'){document.body.classList.toggle('sidebar-hidden');localStorage.setItem('croquill-sidebar',String(!document.body.classList.contains('sidebar-hidden')));return;}
   if(name==='smaller'||name==='larger'){fontSize=Math.min(24,Math.max(12,fontSize+(name==='larger'?1:-1)));document.documentElement.style.setProperty('--editor-font-size',`${fontSize}px`);localStorage.setItem('croquill-font',String(fontSize));toast(`正文字号 ${fontSize}px`);return;}
   await run(async()=>{
+    if(name==='image'){
+      if(!desktop){toast('请在桌面程序中插入本地图片');return;}
+      const selected = await open({title:'选择图片',multiple:false,directory:false,filters:[{name:'图片',extensions:['png','jpg','jpeg','gif','webp','bmp','svg','avif']}]});
+      if(typeof selected==='string'){
+        const src=await imageImporter.import({path:selected});
+        if(src)surface.insertImage(src);
+      }
+    }
     if(name==='new'){if(await session.fresh()){imageCache.clear();await surface.load('');surface.focus();}}
     if(name==='open'){if(!desktop){toast('请在桌面程序中打开本地文件');return;}if(await session.open()){imageCache.clear();await surface.load(session.text);surface.focus();}}
     if(name==='save'||name==='saveAs'){if(!desktop){toast('请在桌面程序中保存本地文件');return;}if(await session.save(name==='saveAs'))toast('已保存到本地');}
@@ -146,6 +177,17 @@ if(localStorage.getItem('croquill-sidebar')==='false')document.body.classList.ad
 await surface.init('');
 updateTitle();updateStats();
 if(desktop){
+  await getCurrentWindow().onDragDropEvent(event=>{
+    if(event.payload.type!=='drop')return;
+    const paths=event.payload.paths.filter(path=>/\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(path));
+    if(!paths.length||busy||surface.isComposing()||$('modal-root').childElementCount)return;
+    const position=event.payload.position;
+    const x=position.x/window.devicePixelRatio, y=position.y/window.devicePixelRatio;
+    const bounds=$('editor-scroll').getBoundingClientRect();
+    if(x<bounds.left||x>bounds.right||y<bounds.top||y>bounds.bottom)return;
+    surface.placeImageCursor(x,y);
+    void insertImages(paths.map(path=>({path})));
+  });
   await getCurrentWindow().onCloseRequested(event=>{event.preventDefault();void run(async()=>{if(await session.mayLeave())await getCurrentWindow().destroy();});});
   const initial=await invoke<string|null>('initial_path').catch(()=>null);
   if(initial)await run(async()=>{if(await session.open(initial))await surface.load(session.text);});
