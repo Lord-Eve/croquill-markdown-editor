@@ -14,7 +14,7 @@ interface BreakTreeNode {
   position?: unknown;
 }
 
-/** Avoid the default command's paragraph splitting in cells and literal BR runs. */
+/** Avoid the default command's paragraph splitting in cells and trailing breaks. */
 export function handleHtmlBreakKey(view: EditorView, event: KeyboardEvent): boolean {
   if (event.key !== 'Enter' || !event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
   const { selection, schema, tr } = view.state;
@@ -24,7 +24,8 @@ export function handleHtmlBreakKey(view: EditorView, event: KeyboardEvent): bool
   for (let depth = $from.depth; depth > 0; depth--) {
     if (['table_cell', 'table_header'].includes($from.node(depth).type.name)) { inCell = true; break; }
   }
-  if (!inCell && !$from.parent.lastChild?.attrs.croquillHtmlBreak) return false;
+  const last = $from.parent.lastChild;
+  if (!inCell && !(last?.type.name === 'hardbreak' && !last.attrs.isInline)) return false;
   // Stop the editor keymaps while leaving the native IME event untouched.
   if (event.isComposing || view.composing) return true;
   event.preventDefault();
@@ -82,8 +83,8 @@ export function configureHtmlBreaks(ctx: Ctx): void {
       },
     };
   });
-  // The stock paragraph writer drops a final hardbreak. A literal HTML break
-  // must survive there too, even at the end of a paragraph.
+  // The stock writer drops a final hardbreak. Encode the trailing run as HTML
+  // so every visible break survives Markdown parsing, including new ones.
   ctx.update(paragraphSchema.key, previous => innerCtx => {
     const schema = previous(innerCtx);
     return {
@@ -91,8 +92,19 @@ export function configureHtmlBreaks(ctx: Ctx): void {
       toMarkdown: {
         ...schema.toMarkdown,
         runner: (state, node) => {
-          if (node.lastChild?.attrs.croquillHtmlBreak) state.openNode('paragraph').next(node.content).closeNode();
-          else schema.toMarkdown.runner(state, node);
+          const last = node.lastChild;
+          if (last?.type.name !== 'hardbreak' || last.attrs.isInline) {
+            schema.toMarkdown.runner(state, node);
+            return;
+          }
+          let content = node.content;
+          for (let index = node.childCount - 1; index >= 0; index--) {
+            const child = node.child(index);
+            if (child.type.name !== 'hardbreak' || child.attrs.isInline) break;
+            if (isBareHtmlBreak(String(child.attrs.croquillHtmlBreak || ''))) continue;
+            content = content.replaceChild(index, child.type.create({ ...child.attrs, croquillHtmlBreak: '<br>' }, null, child.marks));
+          }
+          state.openNode('paragraph').next(content).closeNode();
         },
       },
     };

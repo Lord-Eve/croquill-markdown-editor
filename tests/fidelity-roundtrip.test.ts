@@ -12,7 +12,7 @@ import remarkMath from 'remark-math';
 import { fidelitySamples, metadataSamples } from './fixtures/fidelity-samples';
 
 const privateFolder = fileURLToPath(new URL('../examples/private/', import.meta.url));
-const privatePaths = process.env.CROQUILL_PRIVATE_SAMPLES === '1' && existsSync(privateFolder) ? readdirSync(privateFolder).filter(name => name.endsWith('.md')).map(name => join(privateFolder, name)) : [];
+const privatePaths = existsSync(privateFolder) ? readdirSync(privateFolder).filter(name => name.endsWith('.md')).map(name => join(privateFolder, name)) : [];
 
 describe('syntax preservation through the production editor', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
@@ -96,7 +96,7 @@ describe('syntax preservation through the production editor', () => {
     expect(result).toEqual([true,true,true,true]);
   },30000);
 
-  // Local opt-in fixture only. Never serialize its name/body into test output or snapshots.
+  // Local fixtures run automatically when present. Never print their names/body.
   it.skipIf(privatePaths.length===0)('opens optional private samples, preserves untouched bytes and records load duration',async()=>{
     for(let index=0;index<privatePaths.length;index++){
       const bytes=readFileSync(privatePaths[index]); const original=bytes.toString('utf8');
