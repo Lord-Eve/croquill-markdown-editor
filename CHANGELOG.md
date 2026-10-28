@@ -4,17 +4,21 @@
 
 ## [未发布]
 
+## [0.1.1] - 2026-10-28
+
 ### 变更
 
 - 项目更名为 Croquill（原名 TyporaX），正式全称为 Croquill — Markdown Editor；程序、窗口、帮助和构建产物同步使用新名称
 - 应用标识和本地设置键同步更名，主题、字号等设置会恢复默认；本地 Markdown 文件不受影响
 - GitHub 仓库地址更新为 `Lord-Eve/croquill-markdown-editor`
+- 显式声明代码高亮依赖 `@lezer/highlight`，沿用已安装的精确版本 `1.2.5`
 
 ### 修复
 
 - 所见即所得模式编辑后，无序列表默认输出 `-`；通过 Milkdown 序列化配置实现，未编辑文件仍保留原始列表标记和换行
 - 表格移除单元格内多余的段落间距，按官方 GitHub / Night 主题调整内边距、行高和边框
 - 代码块底色、边框和语义高亮配色按官方 GitHub / Night 主题调整，清除代码块内活动行蓝底和行号栏额外底色
+- Night 主题显式设置代码括号颜色为官方主题的 `#997`
 - 普通列表使用继承正文字号、颜色的原生列表符号，二级空心圆、三级方块；任务复选框保持原样
 
 ## [0.1.0] - 2026-10-27
@@ -38,5 +42,6 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0

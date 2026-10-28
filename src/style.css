@@ -34,6 +34,7 @@
   --syntax-definition: #8d8df0; --syntax-variable: #b8bfc6; --syntax-variable-2: #9fbad5;
   --syntax-type: #1cc685; --syntax-string: #d26b6b; --syntax-string-2: #f50;
   --syntax-operator: #b8bfc6; --syntax-comment: #da924a; --syntax-meta: #b7b3b3;
+  --syntax-bracket: #997;
   --syntax-tag: #7df46a; --syntax-attribute: #7575e4; --syntax-builtin: #f3b3f8;
 }
 * { box-sizing: border-box; }
