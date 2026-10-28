@@ -8,12 +8,33 @@
   --chrome: #fafafa; --hover: #eeeff1; --accent: #4183c4; --soft-accent: #edf4fb;
   --code: #f7f7f7; --quote: #777; --sidebar: #fafafa;
   --editor-font-size: 16px; --editor-width: 860px;
+  /* Official Typora 1.14.15 GitHub theme: table and fenced-code values. */
+  --table-border: #dfe2e5; --table-stripe: #f8f8f8;
+  --table-cell-padding: 6px 13px; --table-line-height: 1.6;
+  --code-block-bg: #f8f8f8; --code-block-border: #e7eaed; --code-block-border-width: 1px;
+  --code-block-padding: 8px 4px 6px; --code-block-font-size: .9em;
+  --syntax-keyword: #708; --syntax-atom: #219; --syntax-number: #164;
+  --syntax-definition: #00f; --syntax-variable: #000; --syntax-variable-2: #05a;
+  --syntax-type: #085; --syntax-string: #a11; --syntax-string-2: #f50;
+  --syntax-operator: #981a1a; --syntax-comment: #a50; --syntax-meta: #555;
+  --syntax-bracket: #997; --syntax-error: red;
+  --syntax-tag: #170; --syntax-attribute: #00c; --syntax-builtin: #30a;
 }
 :root[data-theme='dark'] {
   color-scheme: dark; color: #b8bfc6; background: #363b40;
   --bg: #363b40; --fg: #b8bfc6; --muted: #858d96; --border: #484e54;
   --chrome: #2e3033; --hover: #42494f; --accent: #8db8e3; --soft-accent: #3b4a59;
   --code: #2e3338; --quote: #959da5; --sidebar: #2e3033;
+  /* Official Night theme and night/codeblock.dark.css. */
+  --table-border: #474d54; --table-stripe: transparent;
+  --table-cell-padding: 5px 10px; --table-line-height: 1.625;
+  --code-block-bg: #333; --code-block-border: transparent; --code-block-border-width: 0px;
+  --code-block-padding: 10px 10px 10px 30px; --code-block-font-size: .875em;
+  --syntax-keyword: #c88fd0; --syntax-atom: #84b6cb; --syntax-number: #64ab8f;
+  --syntax-definition: #8d8df0; --syntax-variable: #b8bfc6; --syntax-variable-2: #9fbad5;
+  --syntax-type: #1cc685; --syntax-string: #d26b6b; --syntax-string-2: #f50;
+  --syntax-operator: #b8bfc6; --syntax-comment: #da924a; --syntax-meta: #b7b3b3;
+  --syntax-tag: #7df46a; --syntax-attribute: #7575e4; --syntax-builtin: #f3b3f8;
 }
 * { box-sizing: border-box; }
 html, body, #app { width:100%; height:100%; margin:0; overflow:hidden; }
@@ -72,15 +93,48 @@ summary:hover, details[open] summary { background:var(--hover); color:var(--fg);
 .milkdown .ProseMirror li { padding:0; }
 .milkdown .ProseMirror li p { margin:.25em 0; }
 .milkdown .ProseMirror li ul, .milkdown .ProseMirror li ol { margin:.2em 0; }
+/* Use the same native marker as Typora, without recoloring task checkboxes. */
+.milkdown .ProseMirror .label.bullet { display:list-item; list-style:disc inside; font:inherit; color:var(--fg); }
+.milkdown .ProseMirror ul ul .label.bullet { list-style-type:circle; }
+.milkdown .ProseMirror ul ul ul .label.bullet { list-style-type:square; }
+.milkdown .ProseMirror .label.bullet::marker { font-size:1em; color:inherit; }
+.milkdown .ProseMirror .label.bullet svg { display:none; }
 .milkdown .ProseMirror code { font-family:'Cascadia Code',Consolas,monospace; font-size:.88em; background:var(--code); padding:.14em .35em; border:1px solid var(--border); border-radius:3px; }
 .milkdown .ProseMirror pre { background:var(--code); border:1px solid var(--border); border-radius:5px; padding:15px 18px; overflow:auto; font-family:'Cascadia Code',Consolas,monospace; line-height:1.55; font-size:.88em; }
 .milkdown .ProseMirror pre code { border:0; padding:0; background:transparent; }
-.milkdown .milkdown-code-block { background:var(--code); border:1px solid var(--border); border-radius:5px; margin:1.2em 0; font-size:.88em; }
-.milkdown .milkdown-code-block .cm-editor { background:transparent; }
-.milkdown .ProseMirror table { border-collapse:collapse; width:100%; font-size:.95em; margin:1em 0; }
-.milkdown .ProseMirror table th, .milkdown .ProseMirror table td { border:1px solid var(--border); padding:7px 13px; min-width:65px; }
-.milkdown .ProseMirror table th { font-weight:600; background:var(--chrome); }
-.milkdown .ProseMirror table tr:nth-child(even) { background:var(--chrome); }
+.milkdown .milkdown-code-block { background:var(--code-block-bg); border:var(--code-block-border-width) solid var(--code-block-border); border-radius:3px; margin:1.2em 0; padding:var(--code-block-padding); font-size:var(--code-block-font-size); }
+.milkdown .milkdown-code-block .cm-editor { background:transparent; color:var(--syntax-variable); }
+.milkdown .milkdown-code-block .cm-content { padding:0; }
+.milkdown .milkdown-code-block .cm-gutters { background:var(--code-block-bg); color:#999; }
+.milkdown .milkdown-code-block .cm-activeLine, .milkdown .milkdown-code-block .cm-activeLineGutter { background:transparent; }
+.milkdown .milkdown-code-block .cm-activeLineGutter { color:inherit; }
+.milkdown .milkdown-code-block .cm-line { padding:0 4px; }
+.milkdown .milkdown-code-block .milkdown-code-block-placeholder { padding:0 4px; font-size:inherit; }
+/* CodeMirror 6 semantic classes, using the official CodeMirror 5 palette. */
+.milkdown .milkdown-code-block .tok-keyword { color:var(--syntax-keyword); }
+.milkdown .milkdown-code-block :is(.tok-atom, .tok-bool) { color:var(--syntax-atom); }
+.milkdown .milkdown-code-block .tok-number { color:var(--syntax-number); }
+.milkdown .milkdown-code-block :is(.tok-variableName, .tok-propertyName) { color:var(--syntax-variable); }
+.milkdown .milkdown-code-block :is(.tok-local, .tok-variableName2) { color:var(--syntax-variable-2); }
+.milkdown .milkdown-code-block :is(.tok-typeName, .tok-className, .tok-namespace) { color:var(--syntax-type); }
+.milkdown .milkdown-code-block .tok-definition { color:var(--syntax-definition); }
+.milkdown .milkdown-code-block .tok-string { color:var(--syntax-string); }
+.milkdown .milkdown-code-block .tok-string2 { color:var(--syntax-string-2); }
+.milkdown .milkdown-code-block .tok-operator { color:var(--syntax-operator); }
+.milkdown .milkdown-code-block .tok-comment { color:var(--syntax-comment); }
+.milkdown .milkdown-code-block :is(.tok-meta, .tok-macroName) { color:var(--syntax-meta); }
+.milkdown .milkdown-code-block .tok-bracket { color:var(--syntax-bracket); }
+.milkdown .milkdown-code-block .tok-tagName { color:var(--syntax-tag); }
+.milkdown .milkdown-code-block .tok-attributeName { color:var(--syntax-attribute); }
+.milkdown .milkdown-code-block .tok-builtin { color:var(--syntax-builtin); }
+.milkdown .milkdown-code-block .tok-invalid { color:var(--syntax-error); }
+.milkdown .ProseMirror table { border-collapse:collapse; width:100%; font-size:1em; line-height:var(--table-line-height); margin:1em 0; }
+.milkdown .ProseMirror table th, .milkdown .ProseMirror table td { border:1px solid var(--table-border); padding:var(--table-cell-padding); min-width:65px; }
+.milkdown .ProseMirror table :is(th, td) > p { margin:0; padding:0; line-height:inherit; }
+.milkdown .ProseMirror table th { font-weight:700; background:var(--table-stripe); }
+.milkdown .ProseMirror table tr:nth-child(even) { background:var(--table-stripe); }
+:root[data-theme='dark'] .milkdown .ProseMirror table :is(th, td) { vertical-align:top; }
+:root[data-theme='dark'] .milkdown .ProseMirror table th { color:#dedede; }
 .milkdown .ProseMirror img { max-width:100%; height:auto; }
 .milkdown .ProseMirror hr { border:0; height:1px; background:var(--border); margin:2em 0; }
 .milkdown .ProseMirror .tx-active-block::before { content:attr(data-syntax); position:absolute; right:calc(100% + 10px); color:var(--muted); font-size:12px; font-weight:400; letter-spacing:0; top:.35em; user-select:none; pointer-events:none; }

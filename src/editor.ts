@@ -1,5 +1,5 @@
 import { Crepe } from '@milkdown/crepe';
-import { commandsCtx, editorViewCtx } from '@milkdown/kit/core';
+import { commandsCtx, editorViewCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { insertTableCommand } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $prose } from '@milkdown/kit/utils';
@@ -14,6 +14,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } f
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language';
+import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline } from './fidelity';
 import '@milkdown/crepe/theme/common/style.css';
@@ -238,6 +239,12 @@ export class MarkdownSurface {
             },
           },
           [Crepe.Feature.CodeMirror]: {
+            theme: [syntaxHighlighting(classHighlighter), syntaxHighlighting(tagHighlighter([
+              { tag: tags.bracket, class: 'tok-bracket' },
+              { tag: tags.tagName, class: 'tok-tagName' },
+              { tag: tags.attributeName, class: 'tok-attributeName' },
+              { tag: [tags.standard(tags.variableName), tags.standard(tags.typeName)], class: 'tok-builtin' },
+            ]))],
             searchPlaceholder: '搜索语言', noResultText: '未找到语言',
             copyText: '复制', previewLabel: '预览',
             previewLoading: '正在渲染…', previewOnlyByDefault: true,
@@ -247,6 +254,7 @@ export class MarkdownSurface {
         },
       });
       this.crepe = crepe;
+      crepe.editor.config((ctx) => ctx.update(remarkStringifyOptionsCtx, (options) => ({ ...options, bullet: '-' as const })));
       // Crepe encodes image-block resize ratios in Markdown alt text by default.
       // Ordinary .md files need their real alternative text retained instead.
       crepe.editor.config((ctx) => ctx.update(imageBlockSchema.key, (previous) => (innerCtx) => {
