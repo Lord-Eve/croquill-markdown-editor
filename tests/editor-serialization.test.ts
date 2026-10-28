@@ -29,7 +29,7 @@ describe('rich editor Markdown serialization', () => {
   beforeEach(async () => {
     page = await browser.newPage();
     await page.goto(baseURL + '/tests/harness.html');
-    await page.addScriptTag({ type: 'module', content: 'import { MarkdownSurface } from "/src/editor.ts"; import { ImageImporter } from "/src/images.ts"; window.croqTestSurface = MarkdownSurface; window.croqTestImporter = ImageImporter;' });
+    await page.addScriptTag({ type: 'module', content: 'import { MarkdownSurface } from "/src/editor.ts"; import { ImageImporter } from "/src/images.ts"; window.croqTestSurface = MarkdownSurface; window.croqTestImporter = ImageImporter; import { protectFileDrops } from "/src/file-drop.ts"; window.croqTestProtectDrops = protectFileDrops;' });
     await page.waitForFunction(() => 'croqTestSurface' in window);
   });
   afterEach(async () => { await page?.close(); });
@@ -168,6 +168,150 @@ describe('rich editor Markdown serialization', () => {
     expect(result.text).toContain('https://example.com/copied-photo.png');
     expect(result.text).not.toMatch(/data:|base64/);
     expect(result.placeholder).toBe(false);
+  }, 30000);
+
+
+  it.each(['rich', 'source'] as const)('drops external image bytes near the pointer in %s mode', async (mode) => {
+    const result = await page.evaluate(async mode => {
+      const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
+      document.body.append(richRoot, sourceRoot);
+      (window as any).croqTestProtectDrops(window, [richRoot, sourceRoot]);
+      const calls: any[] = []; let completion = Promise.resolve();
+      const importer = new (window as any).croqTestImporter({ documentPath: () => 'D:\\笔记\\日记.md', saveDocument: async () => true, warn: () => {}, persist: async (args: any) => { calls.push(args); return '日记.assets/中文%20图片.png'; } });
+      const surface = new (window as any).croqTestSurface({ richRoot, sourceRoot, onChange: () => {}, resolveImage: async (src: string) => src, onImageFiles: (files: File[], clipboard: boolean) => {
+        completion = (async () => { const src = await importer.import({ file: files[0], clipboard }); surface.insertImage(src); })();
+      } });
+      try {
+        await surface.init('前段\n\n后段');
+        if (mode === 'source') await surface.setMode('source');
+        const root = mode === 'rich' ? richRoot : sourceRoot;
+        const lines = root.querySelectorAll(mode === 'rich' ? '.ProseMirror > p' : '.cm-line');
+        const last = lines[lines.length - 1].getBoundingClientRect();
+        surface.placeImageCursor(last.left + 10, last.top + 5);
+        const first = lines[0].getBoundingClientRect();
+        const transfer = new DataTransfer(); transfer.items.add(new File(['png'], '中文 图片.png', { type: 'image/png' }));
+        const event = new DragEvent('drop', { dataTransfer: transfer, bubbles: true, cancelable: true, clientX: first.left + 15, clientY: first.top + 5 });
+        lines[0].dispatchEvent(event); await completion;
+        return { text: surface.getMarkdown(), calls, prevented: event.defaultPrevented };
+      } finally { await surface.destroy(); }
+    }, mode);
+    expect(result.prevented).toBe(true);
+    expect(result.text).toContain('![](日记.assets/中文%20图片.png)');
+    expect(result.text.indexOf('![](')).toBeLessThan(result.text.indexOf('后段'));
+    expect(result.text).not.toMatch(/data:|base64/);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0].fileName).toBe('中文 图片.png');
+    expect(result.calls[0].dataBase64).toBe('cG5n');
+  }, 30000);
+
+  it('blocks external files across the page and ignores non-image files inside editors', async () => {
+    const result = await page.evaluate(async () => {
+      const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
+      document.body.append(richRoot, sourceRoot);
+      (window as any).croqTestProtectDrops(window, [richRoot, sourceRoot]);
+      let uploads = 0;
+      const surface = new (window as any).croqTestSurface({ richRoot, sourceRoot, onChange: () => {}, resolveImage: async (s: string) => s, onImageFiles: () => { uploads++; } });
+      try {
+        await surface.init('保留原文');
+        const outcomes = [];
+        for (const tag of ['header', 'aside', 'footer']) {
+          const outside = document.createElement(tag); document.body.append(outside);
+          let reached = false; outside.addEventListener('drop', () => { reached = true; });
+          for (const name of ['中文 图片.png', 'note.txt', 'note.md']) {
+            const data = new DataTransfer(); data.items.add(new File(['test'], name));
+            const over = new DragEvent('dragover', { dataTransfer: data, bubbles: true, cancelable: true });
+            const drop = new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true });
+            outside.dispatchEvent(over); outside.dispatchEvent(drop);
+            outcomes.push(over.defaultPrevented && drop.defaultPrevented && !reached);
+          }
+        }
+        for (const mode of ['rich', 'source']) {
+          await surface.setMode(mode);
+          const root = mode === 'rich' ? richRoot.querySelector('.ProseMirror')! : sourceRoot.querySelector('.cm-content')!;
+          const data = new DataTransfer(); data.items.add(new File(['do not insert'], 'note.txt', { type: 'text/plain' }));
+          const drop = new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }); root.dispatchEvent(drop);
+          outcomes.push(drop.defaultPrevented);
+        }
+        return { outcomes, uploads, text: surface.getMarkdown() };
+      } finally { await surface.destroy(); }
+    });
+    expect(result.outcomes).toHaveLength(11);
+    expect(result.outcomes.every(Boolean)).toBe(true);
+    expect(result.uploads).toBe(0);
+    expect(result.text).toBe('保留原文');
+  }, 30000);
+
+  it('leaves internal text and image HTML drags to the editor', async () => {
+    const result = await page.evaluate(() => {
+      const root = document.createElement('div'); document.body.append(root);
+      (window as any).croqTestProtectDrops(window, [root]);
+      return ['text/plain', 'text/html'].map(type => {
+        const data = new DataTransfer(); data.setData(type, type === 'text/plain' ? '文字' : '<img src="日记.assets/photo.png">');
+        let reached = false; root.addEventListener('drop', () => { reached = true; }, { once: true });
+        const drop = new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }); root.dispatchEvent(drop);
+        return !drop.defaultPrevented && reached;
+      });
+    });
+    expect(result).toEqual([true, true]);
+  });
+
+  it.each(['rich', 'source'] as const)('moves selected text within and between paragraphs in %s mode with undo', async mode => {
+    await page.evaluate(async mode => {
+      const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
+      document.body.append(richRoot, sourceRoot);
+      (window as any).croqTestProtectDrops(window, [richRoot, sourceRoot]);
+      (window as any).dragSurface = new (window as any).croqTestSurface({ richRoot, sourceRoot, onChange: () => {}, resolveImage: async (s: string) => s });
+      await (window as any).dragSurface.init('alpha beta gamma.\n\nsecond paragraph.');
+      if (mode === 'source') await (window as any).dragSurface.setMode('source');
+    }, mode);
+    try {
+      for (const crossParagraph of [false, true]) {
+        const points = await page.evaluate(({ mode, crossParagraph }) => {
+          const lines = document.querySelectorAll(mode === 'rich' ? '.ProseMirror > p' : '.cm-line');
+          const first = document.createRange(); first.selectNodeContents(lines[0]);
+          const target = document.createRange(); target.selectNodeContents(crossParagraph ? lines[lines.length - 1] : lines[0]);
+          const a = first.getBoundingClientRect(), b = target.getBoundingClientRect();
+          return { x: a.left + 15, y: a.top + a.height / 2, toX: b.right - 1, toY: b.top + b.height / 2 };
+        }, { mode, crossParagraph });
+        await page.mouse.click(points.x, points.y);
+        await page.keyboard.press('Home');
+        await page.keyboard.down('Shift');
+        for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(100); // Let DOM selectionchange reach ProseMirror before dragstart.
+        await page.mouse.move(points.x, points.y); await page.mouse.down();
+        await page.waitForTimeout(180);
+        await page.mouse.move(points.toX, points.toY, { steps: 15 }); await page.mouse.up();
+        const text = await page.evaluate(() => (window as any).dragSurface.getMarkdown());
+        expect(text.match(/alpha/g)).toHaveLength(1);
+        expect(text.indexOf('alpha'), JSON.stringify({ mode, crossParagraph, text, points })).toBeGreaterThan(text.indexOf(crossParagraph ? 'second' : 'gamma'));
+        await page.keyboard.press('Control+z');
+        expect(await page.evaluate(() => (window as any).dragSurface.getMarkdown())).toBe('alpha beta gamma.\n\nsecond paragraph.');
+      }
+    } finally { await page.evaluate(() => (window as any).dragSurface.destroy()); }
+  }, 30000);
+
+
+  it('moves an existing image block without importing it as a new file', async () => {
+    await page.evaluate(async () => {
+      document.body.replaceChildren();
+      const richRoot = document.createElement('div'), sourceRoot = document.createElement('div'); document.body.append(richRoot, sourceRoot);
+      (window as any).croqTestProtectDrops(window, [richRoot, sourceRoot]);
+      (window as any).blockUploads = 0;
+      (window as any).blockSurface = new (window as any).croqTestSurface({ richRoot, sourceRoot, onChange: () => {}, onImageFiles: () => { (window as any).blockUploads++; }, resolveImage: async () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lqQAAAAASUVORK5CYII=' });
+      await (window as any).blockSurface.init('![原图](日记.assets/photo.png)\n\n目标段落');
+    });
+    try {
+      const image = page.locator('.milkdown-image-block img').first();
+      await image.waitFor();
+      await image.dragTo(page.locator('.ProseMirror > p').last());
+      const result = await page.evaluate(() => ({ text: (window as any).blockSurface.getMarkdown(), uploads: (window as any).blockUploads }));
+      expect(result.uploads).toBe(0);
+      expect(result.text.match(/日记.assets\/photo.png/g)).toHaveLength(1);
+      expect(result.text.indexOf('日记.assets/photo.png')).toBeGreaterThan(result.text.indexOf('目标段落'));
+      await page.keyboard.press('Control+z');
+      expect(await page.evaluate(() => (window as any).blockSurface.getMarkdown())).toBe('![原图](日记.assets/photo.png)\n\n目标段落');
+    } finally { await page.evaluate(() => (window as any).blockSurface.destroy()); }
   }, 30000);
 
 });

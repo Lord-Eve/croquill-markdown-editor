@@ -5,6 +5,7 @@ import { createIcons, PanelLeft, Code2, ListTree } from 'lucide';
 import { MarkdownSurface } from './editor';
 import { ImageImporter, type ImageSource } from './images';
 import { DocumentSession, type DocumentFile } from './session';
+import { protectFileDrops } from './file-drop';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -90,6 +91,9 @@ const surface = new MarkdownSurface({
     return imageCache.get(key)!;
   },
 });
+
+// Capture external file drops before WebView can navigate, while leaving editor drags alone.
+protectFileDrops(window, [$('rich-root'), $('source-root')]);
 
 function updateTitle() {
   $('filename').textContent=session.name; $('dirty-dot').hidden=!session.dirty;
@@ -177,17 +181,6 @@ if(localStorage.getItem('croquill-sidebar')==='false')document.body.classList.ad
 await surface.init('');
 updateTitle();updateStats();
 if(desktop){
-  await getCurrentWindow().onDragDropEvent(event=>{
-    if(event.payload.type!=='drop')return;
-    const paths=event.payload.paths.filter(path=>/\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i.test(path));
-    if(!paths.length||busy||surface.isComposing()||$('modal-root').childElementCount)return;
-    const position=event.payload.position;
-    const x=position.x/window.devicePixelRatio, y=position.y/window.devicePixelRatio;
-    const bounds=$('editor-scroll').getBoundingClientRect();
-    if(x<bounds.left||x>bounds.right||y<bounds.top||y>bounds.bottom)return;
-    surface.placeImageCursor(x,y);
-    void insertImages(paths.map(path=>({path})));
-  });
   await getCurrentWindow().onCloseRequested(event=>{event.preventDefault();void run(async()=>{if(await session.mayLeave())await getCurrentWindow().destroy();});});
   const initial=await invoke<string|null>('initial_path').catch(()=>null);
   if(initial)await run(async()=>{if(await session.open(initial))await surface.load(session.text);});

@@ -1,6 +1,8 @@
 import { Crepe } from '@milkdown/crepe';
 import { uploadConfig } from '@milkdown/kit/plugin/upload';
+import { dropIndicatorPlugin } from '@milkdown/kit/plugin/cursor';
 import { isImageFile } from './images';
+import { hasFileTransfer } from './file-drop';
 import { commandsCtx, editorViewCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { insertTableCommand } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
@@ -68,14 +70,16 @@ export class MarkdownSurface {
     if (!this.isComposing()) this.options.onImageFiles?.(files, true);
   };
   private handleImageDrop = (event: DragEvent): void => {
-    const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
-    if (!files.length) return;
+    if (!hasFileTransfer(event.dataTransfer)) return;
+    // Ignore non-image files too: neither the browser nor an editor plugin may open them.
     event.preventDefault(); event.stopImmediatePropagation();
+    const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
+    if (!files.length || this.isComposing()) return;
     this.placeImageCursor(event.clientX, event.clientY);
-    if (!this.isComposing()) this.options.onImageFiles?.(files, false);
+    this.options.onImageFiles?.(files, false);
   };
   private handleImageDragOver = (event: DragEvent): void => {
-    if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+    if (hasFileTransfer(event.dataTransfer)) event.preventDefault();
   };
 
   placeImageCursor(x: number, y: number): void {
@@ -307,6 +311,9 @@ export class MarkdownSurface {
         },
       });
       this.crepe = crepe;
+      // Crepe's block-only drop indicator also handles text selections, snapping
+      // them to block boundaries. Keep ProseMirror's native inline/block drops.
+      await crepe.editor.remove(dropIndicatorPlugin);
       // Root capture handlers own binary paste/drop, including cancellation. Disable
       // Crepe's fallback uploader so it cannot leave an upload placeholder behind.
       crepe.editor.config((ctx) => ctx.update(uploadConfig.key, (options) => ({ ...options, uploader: async () => [] })));
