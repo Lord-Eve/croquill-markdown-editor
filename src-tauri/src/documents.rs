@@ -148,7 +148,7 @@ pub fn write_document(
     }
     let parent = path.parent().ok_or("保存路径无效。")?;
     let mut temporary = tempfile::Builder::new()
-        .prefix(".typorax-save-")
+        .prefix(".croquill-save-")
         .suffix(".tmp")
         .tempfile_in(parent)
         .map_err(|e| format!("无法创建保存临时文件，原文件未修改：{e}"))?;
@@ -176,7 +176,7 @@ fn replace_file(temporary: &Path, target: &Path, existing: bool) -> Result<(), S
     }
     // ReplaceFileW preserves the existing file's Windows ACL. A same-directory backup
     // also covers the documented partial-failure cases of ReplaceFileW.
-    let backup = tempfile::Builder::new().prefix(".typorax-backup-").suffix(".tmp")
+    let backup = tempfile::Builder::new().prefix(".croquill-backup-").suffix(".tmp")
         .tempfile_in(target.parent().ok_or("保存路径无效。")?)
         .map_err(|e| format!("无法创建安全备份，原文件未修改：{e}"))?
         .into_temp_path();

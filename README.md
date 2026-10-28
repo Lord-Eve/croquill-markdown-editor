@@ -1,4 +1,8 @@
-# TyporaX
+# Croquill
+
+Croquill — Markdown Editor
+
+Croquill（读作 kro-KWILL）由 croquis（速写）和 crow quill（绘图用的细笔尖）合成。
 
 一款本地 Markdown 写作编辑器，目标是新建、打开、修改都流畅，外观、正文排版和所见即所得交互都向 [官方 Typora](https://typora.io/) 看齐。
 
@@ -24,7 +28,7 @@
 | 你想做什么 | 怎么做 |
 | --- | --- |
 | 启动已构建的程序 | 右键 `start.ps1` →“使用 PowerShell 运行” |
-| 改完代码后重新构建 | 右键 `build.ps1` →“使用 PowerShell 运行”，结束后得到 `src-tauri\target\release\typorax.exe` |
+| 改完代码后重新构建 | 右键 `build.ps1` →“使用 PowerShell 运行”，结束后得到 `src-tauri\target\release\croquill.exe` |
 | 开发时实时预览 | 运行 `dev.ps1` |
 
 如果提示“禁止运行脚本”，在本文件夹地址栏输入 `powershell` 回车，然后执行：

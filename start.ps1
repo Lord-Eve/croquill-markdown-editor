@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-$builtExe = Join-Path $PSScriptRoot 'src-tauri\target\release\typorax.exe'
+$builtExe = Join-Path $PSScriptRoot 'src-tauri\target\release\croquill.exe'
 if (Test-Path -LiteralPath $builtExe) {
     Start-Process -FilePath $builtExe -WorkingDirectory $PSScriptRoot -WindowStyle Normal
 } else {

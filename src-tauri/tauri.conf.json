@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TyporaX",
+  "productName": "Croquill",
   "version": "0.1.0",
-  "identifier": "local.typorax.editor",
+  "identifier": "io.github.lord-eve.croquill",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [{
       "label": "main",
-      "title": "未命名 — TyporaX",
+      "title": "未命名 — Croquill",
       "width": 1200,
       "height": 850,
       "minWidth": 760,

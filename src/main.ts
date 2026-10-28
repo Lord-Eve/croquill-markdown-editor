@@ -35,9 +35,9 @@ const desktop = isTauri();
 let busy = false;
 let toastTimer = 0;
 let statsTimer = 0;
-let fontSize = Math.min(24, Math.max(12, Number(localStorage.getItem('typorax-font')) || 16));
+let fontSize = Math.min(24, Math.max(12, Number(localStorage.getItem('croquill-font')) || 16));
 document.documentElement.style.setProperty('--editor-font-size', `${fontSize}px`);
-document.documentElement.dataset.theme = localStorage.getItem('typorax-theme') || 'light';
+document.documentElement.dataset.theme = localStorage.getItem('croquill-theme') || 'light';
 const imageCache = new Map<string, Promise<string>>();
 
 function toast(message: string) {
@@ -81,7 +81,7 @@ const surface = new MarkdownSurface({
 function updateTitle() {
   $('filename').textContent=session.name; $('dirty-dot').hidden=!session.dirty;
   document.querySelector('.document-label')!.setAttribute('title',session.path||'尚未保存到本地');
-  const title=`${session.dirty?'● ':''}${session.name} — TyporaX`;
+  const title=`${session.dirty?'● ':''}${session.name} — Croquill`;
   document.title=title;
   if(desktop) void getCurrentWindow().setTitle(title).catch(()=>{});
   $('save-status').textContent = session.dirty?'未保存':session.path?'已保存到本地':'准备就绪';
@@ -120,15 +120,15 @@ async function run(operation:()=>Promise<void>) {
 }
 async function action(name:string) {
   document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));
-  if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('typorax-theme',theme);return;}
-  if(name==='outline'){document.body.classList.toggle('sidebar-hidden');localStorage.setItem('typorax-sidebar',String(!document.body.classList.contains('sidebar-hidden')));return;}
-  if(name==='smaller'||name==='larger'){fontSize=Math.min(24,Math.max(12,fontSize+(name==='larger'?1:-1)));document.documentElement.style.setProperty('--editor-font-size',`${fontSize}px`);localStorage.setItem('typorax-font',String(fontSize));toast(`正文字号 ${fontSize}px`);return;}
+  if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
+  if(name==='outline'){document.body.classList.toggle('sidebar-hidden');localStorage.setItem('croquill-sidebar',String(!document.body.classList.contains('sidebar-hidden')));return;}
+  if(name==='smaller'||name==='larger'){fontSize=Math.min(24,Math.max(12,fontSize+(name==='larger'?1:-1)));document.documentElement.style.setProperty('--editor-font-size',`${fontSize}px`);localStorage.setItem('croquill-font',String(fontSize));toast(`正文字号 ${fontSize}px`);return;}
   await run(async()=>{
     if(name==='new'){if(await session.fresh()){imageCache.clear();await surface.load('');surface.focus();}}
     if(name==='open'){if(!desktop){toast('请在桌面程序中打开本地文件');return;}if(await session.open()){imageCache.clear();await surface.load(session.text);surface.focus();}}
     if(name==='save'||name==='saveAs'){if(!desktop){toast('请在桌面程序中保存本地文件');return;}if(await session.save(name==='saveAs'))toast('已保存到本地');}
     if(name==='mode'){await surface.setMode(surface.mode==='rich'?'source':'rich');surface.focus();}
-    if(name==='help')await modal('在 TyporaX 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nTab / Shift+Tab 调整列表层级\n\n文件保存在本地，采用手动保存。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
+    if(name==='help')await modal('在 Croquill 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nTab / Shift+Tab 调整列表层级\n\n文件保存在本地，采用手动保存。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
   });
 }
 app.addEventListener('click',event=>{const target=(event.target as HTMLElement).closest<HTMLElement>('[data-action],[data-format]');if(!target)return;if(target.dataset.action)void action(target.dataset.action);else{document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));surface.format(target.dataset.format!);surface.focus();}});
@@ -142,7 +142,7 @@ document.addEventListener('keydown',event=>{
 }, {capture:true});
 // Keep links inside the document from navigating away from the editor.
 $('rich-root').addEventListener('click',event=>{if((event.target as HTMLElement).closest('a'))event.preventDefault();});
-if(localStorage.getItem('typorax-sidebar')==='false')document.body.classList.add('sidebar-hidden');
+if(localStorage.getItem('croquill-sidebar')==='false')document.body.classList.add('sidebar-hidden');
 await surface.init('');
 updateTitle();updateStats();
 if(desktop){

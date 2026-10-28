@@ -34,7 +34,7 @@
 ## 改完之后必须做
 
 1. `npx tsc --noEmit` 和 `npm test` 全部通过。改了 Rust 就再跑 `cargo test`（在 `src-tauri/` 下）。
-2. **改了前端或 Rust 代码，必须重新运行 `build.ps1`**。`typorax.exe` 不会自动更新，不重建就会测到旧版本。可以对比 exe 和源码的修改时间来确认。
+2. **改了前端或 Rust 代码，必须重新运行 `build.ps1`**。`croquill.exe` 不会自动更新，不重建就会测到旧版本。可以对比 exe 和源码的修改时间来确认。
 3. 在 `CHANGELOG.md` 的“未发布”部分记一笔：改了什么、对用户有什么影响。
 4. 完成或新发现的事项同步到 `docs/roadmap.md`。
 5. 如果做了和官方 Typora 的对照，结果写进 `docs/typora-acceptance.md`。

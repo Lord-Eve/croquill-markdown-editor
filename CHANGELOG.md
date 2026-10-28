@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+### 变更
+
+- 项目更名为 Croquill（原名 TyporaX），正式全称为 Croquill — Markdown Editor；程序、窗口、帮助和构建产物同步使用新名称
+- 应用标识和本地设置键同步更名，主题、字号等设置会恢复默认；本地 Markdown 文件不受影响
+- GitHub 仓库地址更新为 `Lord-Eve/croquill-markdown-editor`
+
 ## [0.1.0] - 2026-10-27
 
 第一个基线版本：能运行，基础功能可用。
@@ -25,5 +31,5 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/TyporaX/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Lord-Eve/TyporaX/releases/tag/v0.1.0
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0

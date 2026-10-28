@@ -43,5 +43,5 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, initial_path])
         .run(tauri::generate_context!())
-        .expect("TyporaX 桌面窗口启动失败");
+        .expect("Croquill 桌面窗口启动失败");
 }
