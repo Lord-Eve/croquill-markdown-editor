@@ -22,6 +22,8 @@ import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
+import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
+import { preserveTableSource } from './table-source';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
@@ -272,7 +274,10 @@ export class MarkdownSurface {
   private richView(): RichView { return this.crepe!.editor.action((ctx) => ctx.get(editorViewCtx)); }
 
   private serializeRich(): string {
-    const body = this.crepe!.getMarkdown();
+    // The previous save also covers removal of the last newly inserted <br>.
+    const previousBody = splitFrontmatter(this.richInput ?? this.raw).body;
+    const serialized = preserveTableSource(previousBody, this.crepe!.getMarkdown());
+    const body = preserveTableSource(splitFrontmatter(this.richOriginText).body, serialized);
     const separator = this.richPrefix && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
     return this.richPrefix + separator + body;
   }
@@ -328,7 +333,13 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       crepe.editor.use(rawMarkdownBlock);
-      crepe.editor.config(ctx => ctx.update(remarkPluginsCtx, plugins => [{ plugin: preserveRawMarkdown, options: {} }, ...plugins]));
+      crepe.editor.config(ctx => {
+        configureHtmlBreaks(ctx);
+        ctx.update(remarkPluginsCtx, plugins => [
+          { plugin: preserveRawMarkdown, options: {} },
+          { plugin: parseHtmlBreaks, options: {} }, ...plugins,
+        ]);
+      });
       // Crepe's block-only drop indicator also handles text selections, snapping
       // them to block boundaries. Keep ProseMirror's native inline/block drops.
       await crepe.editor.remove(dropIndicatorPlugin);
@@ -370,6 +381,7 @@ export class MarkdownSurface {
       }));
       crepe.editor.use($prose(() => new Plugin({
         props: {
+          handleDOMEvents: { keydown: handleHtmlBreakKey },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();
