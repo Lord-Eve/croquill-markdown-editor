@@ -45,7 +45,11 @@ describe('syntax preservation through the production editor', () => {
         session.edit(surface.getMarkdown()); await session.save(); const untouched=saved===original;
         surface.format('heading2'); session.edit(surface.getMarkdown()); await session.save();
         const edited=saved, expected='## 无关编辑段落\r\n\r\n'+syntax+'\r\n';
-        const sameSnippet=edited.includes(syntax), once=edited.split(syntax).length===2;
+        // Inline HTML now protects its own literal range; the surrounding list
+        // uses the normal writer (which can normalize separator line endings).
+        const fragments=Array.from(richRoot.querySelectorAll('[data-croquill-inline-raw]')).map(node=>node.textContent || '');
+        const literals=fragments.length ? fragments : [syntax];
+        const sameSnippet=literals.every(raw=>edited.includes(raw)), once=literals.every(raw=>edited.split(raw).length===2);
         const equivalent=(window as any).syntaxEquivalent(expected,edited);
         await surface.setMode('source'); await surface.setMode('rich');
         const switched=surface.getMarkdown()===edited && surface.mode==='rich';

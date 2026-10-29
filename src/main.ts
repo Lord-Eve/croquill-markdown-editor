@@ -77,6 +77,7 @@ const imageImporter = new ImageImporter({
 const surface = new MarkdownSurface({
   richRoot:$('rich-root'), sourceRoot:$('source-root'),
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
+  onWarning: toast,
   onImageFiles: (files, clipboard) => { void insertImages(files.map(file => ({ file, clipboard }))); },
   uploadImage: async file => {
     let src: string | null = null;

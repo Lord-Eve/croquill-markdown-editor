@@ -2,7 +2,6 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import { isBareHtmlBreak } from './fidelity';
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SourceNode {
@@ -47,8 +46,8 @@ function semantic(node: unknown): unknown {
   return Object.fromEntries(Object.entries(node).filter(([key]) => key !== 'position' && key !== 'data').map(([key, value]) => [key, semantic(value)]));
 }
 
-function hasBareBreak(node: SourceNode): boolean {
-  return node.type === 'html' && isBareHtmlBreak(node.value || '') || !!node.children?.some(hasBareBreak);
+function hasInlineSource(node: SourceNode): boolean {
+  return node.type === 'html' || !!node.children?.some(hasInlineSource);
 }
 
 /** Child positions exclude both pipe delimiters and the cell's padding. */
@@ -84,9 +83,9 @@ function patchTable(original: string, before: SourceNode, serialized: string, af
   return result;
 }
 
-/** Preserve the layout of editable BR tables while applying actual cell edits. */
+/** Preserve the layout of tables with literal HTML or BR while applying cell edits. */
 export function preserveTableSource(original: string, serialized: string): string {
-  if (!/<br(?: ?\/)?>/i.test(original + serialized)) return serialized;
+  if (!original.includes('<') && !serialized.includes('<')) return serialized;
   const before = parser.parse(original) as unknown as SourceNode;
   const after = parser.parse(serialized) as unknown as SourceNode;
   const oldTables = tablesOf(before), newTables = tablesOf(after);
@@ -96,7 +95,7 @@ export function preserveTableSource(original: string, serialized: string): strin
     const { node: left, context: oldContext } = oldTables[index];
     const { node: right, context: newContext } = newTables[index];
     if (oldContext !== newContext) continue;
-    if (!hasBareBreak(left) && !hasBareBreak(right)) continue;
+    if (!hasInlineSource(left) && !hasInlineSource(right)) continue;
     const text = patchTable(original, left, serialized, right);
     const range = tableRange(right, serialized);
     if (text == null || !range) continue;

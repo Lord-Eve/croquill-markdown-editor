@@ -279,12 +279,36 @@ describe('rich editor Markdown serialization', () => {
         await page.keyboard.down('Shift');
         for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
         await page.keyboard.up('Shift');
-        await page.waitForTimeout(100); // Let DOM selectionchange reach ProseMirror before dragstart.
-        await page.mouse.move(points.x, points.y); await page.mouse.down();
-        await page.waitForTimeout(180);
-        await page.mouse.move(points.toX, points.toY, { steps: 15 }); await page.mouse.up();
+        // Keyboard selection can scroll or relayout the editor. Start inside the
+        // actual selected text, after both the DOM and editor received it.
+        await page.waitForFunction(mode => {
+          const surface = (window as any).dragSurface;
+          if (window.getSelection()?.toString() !== 'alpha') return false;
+          if (mode === 'rich') {
+            const { doc, selection } = surface.richView().state;
+            return doc.textBetween(selection.from, selection.to) === 'alpha';
+          }
+          return true;
+        }, mode);
+        const selected = await page.evaluate(({ mode, crossParagraph }) => {
+          const rect = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
+          const lines = document.querySelectorAll(mode === 'rich' ? '.ProseMirror > p' : '.cm-line');
+          const target = document.createRange(); target.selectNodeContents(crossParagraph ? lines[lines.length - 1] : lines[0]);
+          const destination = target.getBoundingClientRect();
+          (window as any).dragEvents = [];
+          for (const type of ['dragstart', 'drop', 'dragend']) {
+            document.addEventListener(type, () => (window as any).dragEvents.push(type), { capture: true, once: true });
+          }
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, toX: destination.right - 1, toY: destination.top + destination.height / 2 };
+        }, { mode, crossParagraph });
+        await page.mouse.move(selected.x, selected.y); await page.mouse.down();
+        await page.mouse.move(selected.x + 8, selected.y + 2, { steps: 3 });
+        await page.waitForFunction(() => (window as any).dragEvents.includes('dragstart'));
+        await page.mouse.move(selected.toX, selected.toY, { steps: 15 }); await page.mouse.up();
+        await page.waitForFunction(() => (window as any).dragEvents.includes('drop') && (window as any).dragEvents.includes('dragend'));
+        await page.waitForFunction(() => (window as any).dragSurface.getMarkdown() !== 'alpha beta gamma.\n\nsecond paragraph.');
         const text = await page.evaluate(() => (window as any).dragSurface.getMarkdown());
-        expect(text.match(/alpha/g)).toHaveLength(1);
+        expect(text.match(/alpha/g) || [], JSON.stringify({ mode, crossParagraph, text, points })).toHaveLength(1);
         expect(text.indexOf('alpha'), JSON.stringify({ mode, crossParagraph, text, points })).toBeGreaterThan(text.indexOf(crossParagraph ? 'second' : 'gamma'));
         await page.keyboard.press('Control+z');
         expect(await page.evaluate(() => (window as any).dragSurface.getMarkdown())).toBe('alpha beta gamma.\n\nsecond paragraph.');

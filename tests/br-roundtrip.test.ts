@@ -19,9 +19,9 @@ describe('bare HTML line break protection', () => {
     expect(preservedMarkdownBlocks('| 内容 |\n| --- |\n| 甲' + br + '乙 |\n')).toEqual([]);
   });
 
-  it.each(['甲<br class="x">乙', '甲<br><span>乙</span>', '甲<br><kbd>乙</kbd>'])('protects the entire table containing %s', cell => {
+  it.each(['甲<br class="x">乙', '甲<br><span>乙</span>', '甲<br><kbd>乙</kbd>'])('allows inline source fragments alongside breaks: %s', cell => {
     const original = '| 内容 | 备注 |\n| --- | --- |\n| ' + cell + ' | 原样 |\n';
-    expect(preservedMarkdownBlocks(original)).toEqual([{ from: 0, to: original.length, raw: original, categories: ['HTML'] }]);
+    expect(preservedMarkdownBlocks(original)).toEqual([]);
   });
 
   it('still distinguishes literal br spellings at the structure gate', () => {
@@ -257,13 +257,13 @@ describe('bare HTML line breaks through the production editor', () => {
     expect(result.tables).toBe(1);
   }, 30000);
 
-  it.each(['甲<br class="x">乙', '甲<br><span>乙</span>'])('keeps a table with other HTML opaque: %s', async cell => {
+  it.each(['甲<br class="x">乙', '甲<br><span>乙</span>'])('keeps other inline HTML as a fragment beside breaks: %s', async cell => {
     const original = '| 内容 |\n| --- |\n| ' + cell + ' |\n';
     const result = await page.evaluate(async original => {
       const h = (window as any).brHarness;
       await h.surface.init(original);
-      return { mode: h.surface.mode, blocks: h.richRoot.querySelectorAll('[data-croquill-raw]').length, tables: h.richRoot.querySelectorAll('table').length, saved: await h.save() };
+      return { mode: h.surface.mode, blocks: h.richRoot.querySelectorAll('[data-croquill-raw]').length, tables: h.richRoot.querySelectorAll('table.children').length, fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length, saved: await h.save() };
     }, original);
-    expect(result).toEqual({ mode: 'rich', blocks: 1, tables: 0, saved: original });
+    expect(result).toEqual({ mode: 'rich', blocks: 0, tables: 1, fragments: 1, saved: original });
   }, 30000);
 });

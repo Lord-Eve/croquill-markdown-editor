@@ -101,6 +101,7 @@ summary:hover, details[open] summary { background:var(--hover); color:var(--fg);
 .milkdown .ProseMirror .label.bullet::marker { font-size:1em; color:inherit; }
 .milkdown .ProseMirror .label.bullet svg { display:none; }
 .milkdown .ProseMirror code { font-family:'Cascadia Code',Consolas,monospace; font-size:.88em; background:var(--code); padding:.14em .35em; border:1px solid var(--border); border-radius:3px; }
+.milkdown .ProseMirror [data-croquill-inline-raw] { font-family:'Cascadia Code',Consolas,monospace; font-size:.88em; color:var(--quote); background:transparent; border-bottom:1px dashed var(--quote); border-radius:0; padding:0 .08em; white-space:pre-wrap; overflow-wrap:anywhere; cursor:default; }
 .milkdown .ProseMirror pre { background:var(--code); border:1px solid var(--border); border-radius:5px; padding:15px 18px; overflow:auto; font-family:'Cascadia Code',Consolas,monospace; line-height:1.55; font-size:.88em; }
 .milkdown .ProseMirror pre code { border:0; padding:0; background:transparent; }
 .milkdown .milkdown-code-block { background:var(--code-block-bg); border:var(--code-block-border-width) solid var(--code-block-border); border-radius:3px; margin:1.2em 0; padding:var(--code-block-padding); font-size:var(--code-block-font-size); }
