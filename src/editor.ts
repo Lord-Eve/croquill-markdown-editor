@@ -24,6 +24,7 @@ import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, 
 import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
 import { preserveTableSource } from './table-source';
+import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml } from './inline-raw';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
@@ -32,6 +33,7 @@ export interface MarkdownSurfaceOptions {
   richRoot: HTMLElement;
   sourceRoot: HTMLElement;
   onChange: (markdown: string) => void;
+  onWarning?: (message: string) => void;
   resolveImage: (src: string) => Promise<string>;
   onImageFiles?: (files: File[], clipboard: boolean) => void;
   uploadImage?: (file: File) => Promise<string | null>;
@@ -40,6 +42,7 @@ export interface MarkdownSurfaceOptions {
 /** Two mature editing surfaces, with the unmodified Markdown kept independently. */
 export class MarkdownSurface {
   private crepe?: Crepe;
+  private inlineRaw?: ReturnType<typeof createInlineRawMarkdown>;
   private source?: EditorView;
   private raw = '';
   private richPrefix = '';
@@ -276,7 +279,7 @@ export class MarkdownSurface {
   private serializeRich(): string {
     // The previous save also covers removal of the last newly inserted <br>.
     const previousBody = splitFrontmatter(this.richInput ?? this.raw).body;
-    const serialized = preserveTableSource(previousBody, this.crepe!.getMarkdown());
+    const serialized = preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.getMarkdown()));
     const body = preserveTableSource(splitFrontmatter(this.richOriginText).body, serialized);
     const separator = this.richPrefix && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
     return this.richPrefix + separator + body;
@@ -332,11 +335,13 @@ export class MarkdownSurface {
         },
       });
       this.crepe = crepe;
-      crepe.editor.use(rawMarkdownBlock);
+      this.inlineRaw = createInlineRawMarkdown();
+      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
           { plugin: preserveRawMarkdown, options: {} },
+          { plugin: preserveInlineHtml, options: {} },
           { plugin: parseHtmlBreaks, options: {} }, ...plugins,
         ]);
       });
@@ -380,8 +385,13 @@ export class MarkdownSurface {
         };
       }));
       crepe.editor.use($prose(() => new Plugin({
+        filterTransaction: transaction => {
+          if (!transaction.docChanged || !hasUnsafeInlineTableContent(transaction.doc)) return true;
+          this.options.onWarning?.('多行或含未转义竖线的原文片段不能放入表格，请在表格外粘贴。');
+          return false;
+        },
         props: {
-          handleDOMEvents: { keydown: handleHtmlBreakKey },
+          handleDOMEvents: { keydown: (view, event) => handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();
@@ -404,9 +414,11 @@ export class MarkdownSurface {
         } }),
       })));
       await crepe.create();
-      // Initialize the kernel's trailing caret paragraph before recording the origin.
+      // Let the kernel initialize its trailing caret paragraph before recording
+      // the origin, including after editable lists and tables. Otherwise undo
+      // retains that later-added paragraph and cannot restore the original bytes.
       const readyView = this.richView();
-      if (readyView.state.doc.lastChild?.type.name === 'croquill_raw_block') readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
+      readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
       this.richInput = this.raw;
       this.richSnapshot = this.richView().state.doc;
       this.richOriginDocument = this.richSnapshot;

@@ -2,6 +2,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
+import { inlineHtmlRanges } from './inline-html-ranges';
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SyntaxNode {
@@ -31,16 +32,19 @@ export function splitFrontmatter(markdown: string): MarkdownParts {
   return { prefix, frontmatter: markdown.slice(0, end), body: markdown.slice(prefix.length), incomplete: false };
 }
 
-function categoriesOf(node: SyntaxNode): Set<string> {
+function categoriesOf(node: SyntaxNode, source: string): Set<string> {
   const categories = new Set<string>();
   const text: string[] = [];
-  function visit(child: SyntaxNode): void {
+  function visit(child: SyntaxNode, ranges: { from: number; to: number }[] = []): void {
+    if (['paragraph', 'heading', 'tableCell'].includes(child.type)) ranges = inlineHtmlRanges(child, source) || [];
     if (['code', 'inlineCode', 'math', 'inlineMath'].includes(child.type)) { text.push('\n'); return; }
-    if (child.type === 'html' && !isBareHtmlBreak(child.value || '')) categories.add('HTML');
+    if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !ranges.some(range =>
+      child.position?.start.offset != null && child.position?.end.offset != null &&
+      child.position.start.offset >= range.from && child.position.end.offset <= range.to)) categories.add('HTML');
     if (child.type === 'listItem' && !child.children?.length) categories.add('空列表项');
     if (child.type === 'footnoteDefinition' || child.type === 'footnoteReference') categories.add('脚注');
     if (child.type === 'text') text.push(child.value || '');
-    child.children?.forEach(visit);
+    child.children?.forEach(nested => visit(nested, ranges));
   }
   visit(node);
   const prose = text.join('');
@@ -61,7 +65,7 @@ export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
   const blocks: PreservedBlock[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    const categories = categoriesOf(node);
+    const categories = categoriesOf(node, body);
     if (!categories.size) continue;
     let last = i;
     // CommonMark can split HTML containers around blank lines. Keep the complete
@@ -94,7 +98,7 @@ export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
     const from = node.position?.start.offset;
     let to = nodes[last].position?.end.offset;
     if (from == null || to == null) continue;
-    for (let j = i + 1; j <= last; j++) categoriesOf(nodes[j]).forEach(value => categories.add(value));
+    for (let j = i + 1; j <= last; j++) categoriesOf(nodes[j], body).forEach(value => categories.add(value));
     // Keep original separator whitespace too (e.g. CRLF between a footnote reference and definition).
     const nextStart = nodes[last + 1]?.position?.start.offset ?? body.length;
     if (/^[ \t\r\n]*$/.test(body.slice(to, nextStart))) to = nextStart;
