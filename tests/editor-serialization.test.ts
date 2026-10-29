@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type Browser, type Page } from '@playwright/test';
 import { launchTestBrowser } from './browser';
-import { createServer, type ViteDevServer } from 'vite';
-import { fileURLToPath } from 'node:url';
+import type { ViteDevServer } from 'vite';
+import { createTestServer } from './server';
 
 // Exercise the production MarkdownSurface in a real DOM with existing dev tools.
 // These tests do not represent native desktop or IME acceptance.
@@ -13,12 +13,7 @@ describe('rich editor Markdown serialization', () => {
   let baseURL: string;
 
   beforeAll(async () => {
-    server = await createServer({
-      configFile: false,
-      root: fileURLToPath(new URL('../', import.meta.url)),
-      logLevel: 'error',
-      server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/.tools/**', '**/src-tauri/**'] } },
-    });
+    server = await createTestServer();
     await server.listen();
     const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw new Error('Test server address unavailable');

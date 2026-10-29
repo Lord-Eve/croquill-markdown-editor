@@ -6,6 +6,7 @@ import { MarkdownSurface } from './editor';
 import { ImageImporter, type ImageSource } from './images';
 import { DocumentSession, type DocumentFile } from './session';
 import { protectFileDrops } from './file-drop';
+import { markdownOutline } from './fidelity';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -77,6 +78,7 @@ const imageImporter = new ImageImporter({
 const surface = new MarkdownSurface({
   richRoot:$('rich-root'), sourceRoot:$('source-root'),
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
+  onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },
   onWarning: toast,
   onImageFiles: (files, clipboard) => { void insertImages(files.map(file => ({ file, clipboard }))); },
   uploadImage: async file => {
@@ -95,6 +97,7 @@ const surface = new MarkdownSurface({
 
 // Capture external file drops before WebView can navigate, while leaving editor drags alone.
 protectFileDrops(window, [$('rich-root'), $('source-root')]);
+$('editor-scroll').addEventListener('scroll', () => surface.deferPendingSerialization(), { passive: true });
 
 function updateTitle() {
   $('filename').textContent=session.name; $('dirty-dot').hidden=!session.dirty;
@@ -112,7 +115,7 @@ function updateStats() {
   const chinese=(text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu)||[]).length;
   const words=(text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu,' ').match(/[\p{L}\p{N}]+/gu)||[]).length;
   $('word-count').textContent=`${(chinese+words).toLocaleString('zh-CN')} 字`;
-  const headings=surface.getOutline();
+  const headings=markdownOutline(text);
   $('heading-count').textContent=String(headings.length||'');
   const frag=document.createDocumentFragment();
   headings.forEach((heading,index)=>{const b=document.createElement('button');b.textContent=heading.text;b.title=heading.text;b.style.setProperty('--level',String(heading.level));b.onclick=()=>{surface.scrollToHeading(index);document.querySelectorAll('#outline .active').forEach(x=>x.classList.remove('active'));b.classList.add('active');};frag.append(b);});

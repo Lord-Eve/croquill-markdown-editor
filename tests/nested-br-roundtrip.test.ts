@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser, Page } from '@playwright/test';
-import { createServer, type ViteDevServer } from 'vite';
-import { fileURLToPath } from 'node:url';
+import type { ViteDevServer } from 'vite';
+import { createTestServer } from './server';
 import { launchTestBrowser } from './browser';
 
 const rows = ['| A | B |', '| :------ | -------: |', '| 一<br/>二<BR>三 |   旧字  |', '| 剩下 | 不动 |'];
@@ -23,7 +23,7 @@ const samples = contexts.flatMap(context => ['LF', 'CRLF'].map(newline => ({
 describe('nested BR tables through the production editor', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
   beforeAll(async () => {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL('../', import.meta.url)), logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/.tools/**', '**/src-tauri/**'] } } });
+    server = await createTestServer();
     await server.listen(); const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw Error('Test server unavailable');
     baseURL = 'http://127.0.0.1:' + address.port;

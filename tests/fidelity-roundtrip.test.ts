@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type Browser, type Page } from '@playwright/test';
 import { launchTestBrowser } from './browser';
-import { createServer, type ViteDevServer } from 'vite';
+import type { ViteDevServer } from 'vite';
+import { createTestServer } from './server';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +18,7 @@ const privatePaths = existsSync(privateFolder) ? readdirSync(privateFolder).filt
 describe('syntax preservation through the production editor', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
   beforeAll(async () => {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL('../', import.meta.url)), logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/.tools/**', '**/src-tauri/**', '**/examples/private/**'] } } });
+    server = await createTestServer();
     await server.listen(); const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw Error('Test server unavailable');
     baseURL = 'http://127.0.0.1:' + address.port;

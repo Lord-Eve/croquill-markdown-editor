@@ -14,10 +14,12 @@ export class DocumentSession {
   bom = false;
   newline: Newline = 'lf';
   revision: string | undefined;
+  private pending = false;
   constructor(readonly port: FilePort) {}
-  get dirty() { return this.text !== this.savedText; }
+  get dirty() { return this.pending || this.text !== this.savedText; }
   get name() { return this.path?.split(/[\\/]/).pop() || '未命名'; }
-  edit(text: string) { this.text = text; }
+  markPending() { this.pending = true; }
+  edit(text: string) { this.text = text; this.pending = false; }
   async save(as = false): Promise<boolean> {
     const path = as || !this.path ? await this.port.savePath(this.path) : this.path;
     if (!path) return false;
@@ -36,7 +38,7 @@ export class DocumentSession {
   }
   async fresh(): Promise<boolean> {
     if (!await this.mayLeave()) return false;
-    this.path = null; this.text = ''; this.savedText = ''; this.bom = false; this.newline = 'lf'; this.revision = undefined;
+    this.pending = false; this.path = null; this.text = ''; this.savedText = ''; this.bom = false; this.newline = 'lf'; this.revision = undefined;
     return true;
   }
   async open(path?: string): Promise<boolean> {
@@ -44,6 +46,7 @@ export class DocumentSession {
     const selected = path ?? await this.port.openPath();
     if (!selected || !await this.mayLeave()) return false;
     const file = await this.port.read(selected);
+    this.pending = false;
     this.path = file.path; this.text = file.text; this.savedText = file.text;
     this.bom = file.bom; this.newline = file.newline; this.revision = file.revision;
     return true;

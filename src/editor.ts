@@ -34,6 +34,7 @@ export interface MarkdownSurfaceOptions {
   richRoot: HTMLElement;
   sourceRoot: HTMLElement;
   onChange: (markdown: string) => void;
+  onDirty?: () => void;
   onWarning?: (message: string) => void;
   resolveImage: (src: string) => Promise<string>;
   onImageFiles?: (files: File[], clipboard: boolean) => void;
@@ -58,7 +59,7 @@ export class MarkdownSurface {
   private currentMode: EditingMode = 'rich';
   private safetyReason: string | null = null;
   private suppress = false;
-  private richPending = false;
+  private richTimer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
@@ -124,6 +125,7 @@ export class MarkdownSurface {
   async init(markdownText: string): Promise<void> { await this.load(markdownText); }
 
   async load(markdownText: string): Promise<void> {
+    this.cancelRichTimer();
     this.suppress = true;
     this.raw = markdownText;
     this.richPrefix = '';
@@ -183,6 +185,8 @@ export class MarkdownSurface {
         this.raw = this.richOriginDocument?.eq(document) ? this.richOriginText : this.serializeRich();
         this.richSnapshot = document;
         this.richInput = this.raw;
+        this.cancelRichTimer();
+        this.options.onChange(this.raw);
       }
     }
     return this.raw;
@@ -266,6 +270,7 @@ export class MarkdownSurface {
 
   async destroy(): Promise<void> {
     this.destroyed = true;
+    this.cancelRichTimer();
     for (const root of [this.options.richRoot, this.options.sourceRoot]) {
       root.removeEventListener('paste', this.handleImagePaste, { capture: true });
       root.removeEventListener('drop', this.handleImageDrop, { capture: true });
@@ -431,13 +436,38 @@ export class MarkdownSurface {
     } finally { this.suppress = oldSuppress; }
   }
 
+  private cancelRichTimer(): void {
+    if (this.richTimer !== undefined) clearTimeout(this.richTimer);
+    this.richTimer = undefined;
+  }
+
+  private scheduleRichSerialization(): void {
+    this.cancelRichTimer();
+    this.richTimer = setTimeout(() => {
+      this.richTimer = undefined;
+      if (this.suppress || this.destroyed || this.currentMode !== 'rich') return;
+      if (this.isComposing()) { this.scheduleRichSerialization(); return; }
+      this.getMarkdown();
+    }, 300);
+  }
+
+  /** Keep pending full-document work off an active wheel/scroll sequence. */
+  deferPendingSerialization(): void {
+    if (this.richTimer !== undefined) this.scheduleRichSerialization();
+  }
+
   private notifyRichChange(): void {
-    if (this.suppress || this.destroyed || this.currentMode !== 'rich' || this.richPending) return;
-    this.richPending = true;
-    queueMicrotask(() => {
-      this.richPending = false;
-      if (!this.suppress && !this.destroyed && this.currentMode === 'rich') this.options.onChange(this.getMarkdown());
-    });
+    if (this.suppress || this.destroyed || this.currentMode !== 'rich') return;
+    if (this.richSnapshot?.eq(this.richView().state.doc)) {
+      if (this.richTimer !== undefined) {
+        this.cancelRichTimer();
+        this.options.onChange(this.raw);
+      }
+      return;
+    }
+    const firstPendingChange = this.richTimer === undefined;
+    this.scheduleRichSerialization();
+    if (firstPendingChange) this.options.onDirty?.();
   }
 
   private ensureSource(): void {
