@@ -25,8 +25,8 @@ describe('bare HTML line break protection', () => {
   });
 
   it('still distinguishes literal br spellings at the structure gate', () => {
-    expect(hasEquivalentMarkdownStructure('甲<br/>乙', '甲<br>乙')).toBe(false);
-    expect(hasEquivalentMarkdownStructure('甲<BR>乙', '甲<br>乙')).toBe(false);
+    expect(hasEquivalentMarkdownStructure('甲<br/>乙', '甲<br />乙')).toBe(false);
+    expect(hasEquivalentMarkdownStructure('甲<BR>乙', '甲<br />乙')).toBe(false);
   });
 });
 
@@ -121,7 +121,7 @@ describe('bare HTML line breaks through the production editor', () => {
     expect(result.saved).toBe('第一行' + br + '新第二行\n');
   }, 30000);
 
-  it('saves Shift+Enter inside a cell as <br> and removes it with Backspace', async () => {
+  it('saves Shift+Enter inside a cell as <br /> and removes it with Backspace', async () => {
     const original = '| 内容 | 备注 |\n| --- | --- |\n| 甲乙 | 不动 |\n';
     await page.evaluate(async original => {
       const h = (window as any).brHarness;
@@ -132,10 +132,21 @@ describe('bare HTML line breaks through the production editor', () => {
       const h = (window as any).brHarness;
       return { saved: await h.save(), breaks: h.richRoot.querySelectorAll('td br').length };
     });
-    expect(inserted).toEqual({ saved: original.replace('甲乙', '甲<br>乙'), breaks: 1 });
+    expect(inserted).toEqual({ saved: original.replace('甲乙', '甲<br />乙'), breaks: 1 });
     await page.keyboard.press('Backspace');
     expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original);
     expect(await page.locator('td br').count()).toBe(0);
+  }, 30000);
+
+  it.each(['甲乙\n', '# 甲乙\n'])('saves a newly inserted paragraph or heading break with Typora spelling: %s', async original => {
+    await page.evaluate(async original => {
+      const h = (window as any).brHarness;
+      await h.surface.init(original); h.selectText('甲乙', 1);
+    }, original);
+    await page.keyboard.press('Shift+Enter');
+    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original.replace('甲乙', '甲<br />乙'));
+    await page.keyboard.press('Backspace');
+    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original);
   }, 30000);
 
   it('deletes an existing original <br/> from the saved cell', async () => {
@@ -179,7 +190,7 @@ describe('bare HTML line breaks through the production editor', () => {
     }, original);
     await page.keyboard.press('Shift+Enter');
     await page.keyboard.press('Shift+Enter');
-    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original.replace('甲乙', '甲<br><br>乙'));
+    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original.replace('甲乙', '甲<br /><br />乙'));
     await page.evaluate(() => (window as any).brHarness.selectText('内容', 1));
     await page.keyboard.press('Shift+Enter');
     const result = await page.evaluate(async () => {
@@ -188,7 +199,7 @@ describe('bare HTML line breaks through the production editor', () => {
       await h.surface.setMode('source'); await h.surface.setMode('rich');
       return { saved, switched: await h.save(), mode: h.surface.mode };
     });
-    expect(result.saved).toBe(original.replace('甲乙', '甲<br><br>乙').replace('内容', '内<br>容'));
+    expect(result.saved).toBe(original.replace('甲乙', '甲<br /><br />乙').replace('内容', '内<br />容'));
     expect(result.switched).toBe(result.saved);
     expect(result.mode).toBe('rich');
   }, 30000);
@@ -206,7 +217,7 @@ describe('bare HTML line breaks through the production editor', () => {
       await h.surface.setMode('source'); await h.surface.setMode('rich');
       return { saved, switched: await h.save(), mode: h.surface.mode };
     });
-    expect(hasEquivalentMarkdownStructure('甲\\\n乙<br/>\n', result.saved)).toBe(true);
+    expect(result.saved).toBe('甲<br />乙<br/>\n');
     expect(result.saved).toContain('<br/>');
     expect(result.switched).toBe(result.saved);
     expect(result.mode).toBe('rich');
@@ -252,7 +263,7 @@ describe('bare HTML line breaks through the production editor', () => {
       await h.surface.setMode('source'); await h.surface.setMode('rich');
       return { saved, switched: await h.save(), tables: h.richRoot.querySelectorAll('.milkdown-table-block table.children').length };
     });
-    expect(result.saved).toBe(original.replace('<br/>', '<br/><br><br>'));
+    expect(result.saved).toBe(original.replace('<br/>', '<br/><br /><br />'));
     expect(result.switched).toBe(result.saved);
     expect(result.tables).toBe(1);
   }, 30000);

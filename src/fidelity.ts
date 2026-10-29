@@ -41,7 +41,6 @@ function categoriesOf(node: SyntaxNode, source: string): Set<string> {
     if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !ranges.some(range =>
       child.position?.start.offset != null && child.position?.end.offset != null &&
       child.position.start.offset >= range.from && child.position.end.offset <= range.to)) categories.add('HTML');
-    if (child.type === 'listItem' && !child.children?.length) categories.add('空列表项');
     if (child.type === 'footnoteDefinition' || child.type === 'footnoteReference') categories.add('脚注');
     if (child.type === 'text') text.push(child.value || '');
     child.children?.forEach(nested => visit(nested, ranges));

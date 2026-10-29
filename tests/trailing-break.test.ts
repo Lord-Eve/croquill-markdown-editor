@@ -7,7 +7,7 @@ import { launchTestBrowser } from './browser';
 describe('saving trailing hard breaks', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
   beforeAll(async () => {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL('../', import.meta.url)), logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL('../', import.meta.url)), logLevel: 'error', server: { host: '127.0.0.1', port: 0, watch: { ignored: ['**/.tools/**', '**/src-tauri/**'] } } });
     await server.listen();
     const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw Error('Test server unavailable');
@@ -51,7 +51,7 @@ describe('saving trailing hard breaks', () => {
         surface.richView().state.doc.descendants((node: any) => { if (node.type.name === 'hardbreak' && !node.attrs.isInline) count++; });
         return { saved, switched, reopened: surface.getMarkdown(), count, mode: surface.mode };
       });
-      expect(result.saved).toBe(original.replace('内容' + originalBreak, '内容' + originalBreak + '<br>'.repeat(presses)));
+      expect(result.saved).toBe(original.replace('内容' + originalBreak, '内容' + originalBreak + '<br />'.repeat(presses)));
       expect(result.switched).toBe(result.saved);
       expect(result.reopened).toBe(result.saved);
       expect(result.count).toBe(presses + (originalBreak ? 1 : 0));

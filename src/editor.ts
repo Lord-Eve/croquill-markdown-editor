@@ -24,6 +24,7 @@ import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, 
 import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
 import { preserveTableSource } from './table-source';
+import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
 import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml } from './inline-raw';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
@@ -280,7 +281,7 @@ export class MarkdownSurface {
     // The previous save also covers removal of the last newly inserted <br>.
     const previousBody = splitFrontmatter(this.richInput ?? this.raw).body;
     const serialized = preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.getMarkdown()));
-    const body = preserveTableSource(splitFrontmatter(this.richOriginText).body, serialized);
+    const body = preserveEmptyListSource(splitFrontmatter(this.richOriginText).body, preserveTableSource(splitFrontmatter(this.richOriginText).body, serialized));
     const separator = this.richPrefix && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
     return this.richPrefix + separator + body;
   }
@@ -339,6 +340,7 @@ export class MarkdownSurface {
       crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
+        configureEmptyListItems(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
           { plugin: preserveRawMarkdown, options: {} },
           { plugin: preserveInlineHtml, options: {} },

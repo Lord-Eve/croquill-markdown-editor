@@ -24,12 +24,11 @@ export function handleHtmlBreakKey(view: EditorView, event: KeyboardEvent): bool
   for (let depth = $from.depth; depth > 0; depth--) {
     if (['table_cell', 'table_header'].includes($from.node(depth).type.name)) { inCell = true; break; }
   }
-  const last = $from.parent.lastChild;
-  if (!inCell && !(last?.type.name === 'hardbreak' && !last.attrs.isInline)) return false;
+  if (!inCell && !['paragraph', 'heading'].includes($from.parent.type.name)) return false;
   // Stop the editor keymaps while leaving the native IME event untouched.
   if (event.isComposing || view.composing) return true;
   event.preventDefault();
-  view.dispatch(tr.setMeta('hardbreak', true).replaceSelectionWith(schema.nodes.hardbreak.create(), false).scrollIntoView());
+  view.dispatch(tr.setMeta('hardbreak', true).replaceSelectionWith(schema.nodes.hardbreak.create({ croquillHtmlBreak: '<br />' }), false).scrollIntoView());
   return true;
 }
 
@@ -77,7 +76,7 @@ export function configureHtmlBreaks(ctx: Ctx): void {
         runner: (state, node) => {
           const raw = String(node.attrs.croquillHtmlBreak || '');
           if (isBareHtmlBreak(raw)) state.addNode('html', undefined, raw);
-          else if (!node.attrs.isInline && state.top()?.type === 'tableCell') state.addNode('html', undefined, '<br>');
+          else if (!node.attrs.isInline && state.top()?.type === 'tableCell') state.addNode('html', undefined, '<br />');
           else schema.toMarkdown.runner(state, node);
         },
       },
@@ -102,7 +101,7 @@ export function configureHtmlBreaks(ctx: Ctx): void {
             const child = node.child(index);
             if (child.type.name !== 'hardbreak' || child.attrs.isInline) break;
             if (isBareHtmlBreak(String(child.attrs.croquillHtmlBreak || ''))) continue;
-            content = content.replaceChild(index, child.type.create({ ...child.attrs, croquillHtmlBreak: '<br>' }, null, child.marks));
+            content = content.replaceChild(index, child.type.create({ ...child.attrs, croquillHtmlBreak: '<br />' }, null, child.marks));
           }
           state.openNode('paragraph').next(content).closeNode();
         },
