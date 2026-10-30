@@ -1,4 +1,5 @@
 mod documents;
+mod folders;
 
 #[tauri::command]
 async fn read_document(path: String) -> Result<documents::Document, String> {
@@ -44,6 +45,12 @@ async fn import_image(
 }
 
 #[tauri::command]
+async fn list_document_folder(root: String, path: Option<String>) -> Result<folders::FolderListing, String> {
+    tauri::async_runtime::spawn_blocking(move || folders::list_document_folder(&root, path.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 fn initial_path() -> Option<String> {
     std::env::args().skip(1).find(|argument| !argument.starts_with('-')).and_then(|argument| {
         let path = std::path::PathBuf::from(argument);
@@ -55,7 +62,7 @@ fn initial_path() -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, initial_path])
+        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path])
         .run(tauri::generate_context!())
         .expect("Croquill 桌面窗口启动失败");
 }

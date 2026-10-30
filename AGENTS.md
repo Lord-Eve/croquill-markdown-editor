@@ -5,7 +5,7 @@
 ## 产品目标
 
 - 一款本地 Markdown 编辑器：新建、打开、修改都要流畅。
-- **唯一的体验参照是官方 Typora**（https://typora.io/ 和 https://support.typora.io/），包括外观、正文排版和所见即所得交互。Typora Next 等第三方项目不作为设计或验收依据。
+- **正文排版与编辑交互的体验参照是官方 Typora**（https://typora.io/ 和 https://support.typora.io/），包括外观、正文排版和所见即所得交互。Typora Next 等第三方项目不作为设计或验收依据。2026-10-30 项目所有者明确允许文件导航参考其提供的 Obsidian 截图：单行紧凑文件树，侧栏可调宽和收起。
 - 拿不准 Typora 的某个行为时，以本机官方客户端为准：`E:\软件工具\Typora\Typora.exe`（1.14.15）。主题 CSS 也在该安装目录里。
 - 样式和交互都是原创实现，不复制 Typora 或其他项目的源码。
 
