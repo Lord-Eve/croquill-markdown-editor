@@ -128,9 +128,12 @@ describe('file sidebar in the application shell', () => {
     expect(result).toEqual({ text: '原文界面操作\n', dirty: true, confirmations: 0, writes: [] });
   });
 
-  it('keeps the shell within a 760px window in both themes', async () => {
-    await page.setViewportSize({ width: 760, height: 540 });
-    for (const theme of ['light', 'dark']) {
+  it('contains long writing content at narrow window widths in both themes', async () => {
+    const longWord = 'LongUnbrokenHeadingOrPath'.repeat(12);
+    const original = `# ${longWord}\n\n[长路径](https://example.com/${longWord}) 与 \`${longWord}\`\n\n| 一 | 二 | 三 | 四 | 五 | 六 | 七 | 八 |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| 甲 | 乙 | 丙 | 丁 | 戊 | 己 | 庚 | 辛 |\n\n\`\`\`text\n${longWord}\n\`\`\`\n`;
+    await page.evaluate(async original => { await (window as any).shellTest.surface.load(original); }, original);
+    for (const width of [760, 960]) for (const theme of ['light', 'dark']) {
+      await page.setViewportSize({ width, height: 540 });
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       const layout = await page.evaluate(() => {
         const workspace = document.querySelector('.workspace')!;
@@ -143,7 +146,25 @@ describe('file sidebar in the application shell', () => {
           editor: editor.scrollWidth <= editor.clientWidth,
         };
       });
-      expect(layout).toEqual({ body: true, workspace: true, status: true, editor: true });
+      expect(layout, `${width}px ${theme}`).toEqual({ body: true, workspace: true, status: true, editor: true });
+      const tableScroll = await page.locator('.milkdown-table-block .table-wrapper').evaluate(element => {
+        const cell = element.querySelector('table.children tr:last-child td:last-child')!;
+        const before = element.scrollLeft;
+        element.scrollLeft = element.scrollWidth;
+        return { available: element.scrollWidth > element.clientWidth, moved: element.scrollLeft > before, lastCell: cell.textContent, visible: cell.getBoundingClientRect().right <= element.getBoundingClientRect().right + 1 };
+      });
+      expect(tableScroll.lastCell).toBe('辛');
+      expect(tableScroll.visible).toBe(true);
+      if (tableScroll.available) expect(tableScroll.moved).toBe(true);
+      const codeScroll = await page.locator('.milkdown-code-block .cm-scroller').evaluate(element => {
+        element.scrollLeft = element.scrollWidth;
+        return { available: element.scrollWidth > element.clientWidth, moved: element.scrollLeft > 0 };
+      });
+      expect(codeScroll).toEqual({ available: true, moved: true });
+      expect(await page.evaluate(() => (window as any).shellTest.surface.getMarkdown())).toBe(original);
+      await page.evaluate(async () => { await (window as any).shellTest.surface.setMode('source'); });
+      expect(await page.locator('#editor-scroll').evaluate(element => element.scrollWidth <= element.clientWidth), `source ${width}px ${theme}`).toBe(true);
+      await page.evaluate(async () => { await (window as any).shellTest.surface.setMode('rich'); });
     }
   });
 });

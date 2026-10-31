@@ -24,7 +24,6 @@ const protectedSamples = [
   { name: 'unclosed inline tag', original: '前<span>未闭合\n' },
   { name: 'tag crossing paragraphs', original: '前<span>第一段\n\n第二段</span>后\n' },
   { name: 'tag crossing cells', original: '| 一 | 二 |\n| --- | --- |\n| 前<span>第一格 | 第二格</span>后 |\n' },
-  { name: 'inline HTML plus highlighting', original: '前<kbd>Ctrl</kbd>与==高亮==后\n' },
   { name: 'inline HTML plus TOC', original: '前<kbd>Ctrl</kbd>与[TOC]后\n' },
   { name: 'inline HTML plus footnote', original: '前<kbd>Ctrl</kbd>与[^a]后\n\n[^a]: 脚注\n' },
 ];
@@ -104,6 +103,17 @@ describe('inline HTML source fragments through the production editor', () => {
     expect(result).toMatchObject({ mode: 'rich', reason: null, blocks: 0, literals: snippets, editable: snippets.map(() => 'false'), liveHTML: false });
     expect(result.saved).toBe(original);
   }, 30000);
+
+  it('renders highlighting beside an inline HTML fragment without protecting the paragraph', async () => {
+    const original = '前<kbd>Ctrl</kbd>与==高亮==后\n';
+    const result = await page.evaluate(async original => {
+      const h = (window as any).inlineHarness; await h.surface.init(original);
+      return { raw: h.richRoot.querySelectorAll('[data-croquill-raw]').length,
+        fragment: h.richRoot.querySelector('[data-croquill-inline-raw]')?.textContent,
+        highlight: h.richRoot.querySelector('mark')?.textContent, saved: await h.save() };
+    }, original);
+    expect(result).toEqual({ raw: 0, fragment: '<kbd>Ctrl</kbd>', highlight: '高亮', saved: original });
+  });
 
   it('styles source fragments as gray monospace with a distinct appearance from inline code', async () => {
     await page.addStyleTag({ url: baseURL + '/src/style.css' });

@@ -25,7 +25,11 @@ import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
-import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml } from './inline-raw';
+import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml, parseHtmlComments } from './inline-raw';
+import { alertBlock, configureAlerts, parseAlerts } from './alerts';
+import { configureHighlights, highlightInputRule, highlightMark, parseHighlights } from './highlight';
+import { preserveRenderedSource } from './rendered-source';
+import './rendered-syntax.css';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
@@ -285,9 +289,10 @@ export class MarkdownSurface {
   private serializeRich(): string {
     // The previous save also covers removal of the last newly inserted <br>.
     const previousBody = splitFrontmatter(this.richInput ?? this.raw).body;
-    const serialized = preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.getMarkdown()));
-    const body = preserveEmptyListSource(splitFrontmatter(this.richOriginText).body, preserveTableSource(splitFrontmatter(this.richOriginText).body, serialized));
-    const separator = this.richPrefix && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
+    const serialized = preserveRenderedSource(previousBody, preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.getMarkdown())));
+    const originBody = splitFrontmatter(this.richOriginText).body;
+    const body = preserveRenderedSource(originBody, preserveEmptyListSource(originBody, preserveTableSource(originBody, serialized)));
+    const separator = this.richPrefix && this.richPrefix !== '\uFEFF' && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
     return this.richPrefix + separator + body;
   }
 
@@ -301,7 +306,7 @@ export class MarkdownSurface {
       const parts = splitFrontmatter(this.raw);
       this.richPrefix = parts.prefix;
       const blocks = preservedMarkdownBlocks(parts.body);
-      this.richNotice = [parts.prefix ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
+      this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       const crepe = new Crepe({
         root: this.options.richRoot,
         defaultValue: parts.body,
@@ -342,14 +347,19 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       this.inlineRaw = createInlineRawMarkdown();
-      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node);
+      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use(highlightInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
+        configureHighlights(ctx);
+        configureAlerts(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
           { plugin: preserveRawMarkdown, options: {} },
+          { plugin: parseHtmlComments, options: {} },
           { plugin: preserveInlineHtml, options: {} },
-          { plugin: parseHtmlBreaks, options: {} }, ...plugins,
+          { plugin: parseHtmlBreaks, options: {} },
+          { plugin: parseHighlights, options: {} },
+          { plugin: parseAlerts, options: {} }, ...plugins,
         ]);
       });
       // Crepe's block-only drop indicator also handles text selections, snapping

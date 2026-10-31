@@ -38,6 +38,11 @@ describe('Markdown protection', () => {
     expect(splitFrontmatter(header+'    code').prefix).toBe(header);
     expect(splitFrontmatter(header+'    code').body).toBe('    code');
     expect(hasEquivalentMarkdownStructure(header+'正文',header.replace('test','changed')+'正文')).toBe(false);
+    expect(splitFrontmatter('\uFEFF正文')).toEqual({ prefix: '\uFEFF', frontmatter: '', body: '正文', incomplete: false });
+    expect(splitFrontmatter('\uFEFF---\n\n正文')).toEqual({ prefix: '\uFEFF', frontmatter: '', body: '---\n\n正文', incomplete: false });
+    const source='\uFEFF正文\r\n\r\n[TOC]\r\n';
+    const block=preservedMarkdownBlocks(source)[0];
+    expect(source.slice(block.from,block.to)).toBe('[TOC]\r\n');
   });
 
   it('outline uses real Markdown headings and ignores fenced samples', () => {

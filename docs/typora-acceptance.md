@@ -317,3 +317,19 @@ Windows 11，新版 Croquill 打开 Codex 输出目录 `dragdrop-acceptance/拖�
 
 
 桌面补测：`build.ps1` 成功生成新版 `croquill.exe`，exe 修改时间晚于本轮全部源码。Windows 本机启动正常；Ctrl+Shift+O 调起原生文件夹选择器，选择验收专用中文目录成功；单击中文含空格文件名显示正文、表格、列表与代码，展开子目录后切换另一篇成功；实际鼠标拖动分隔边调宽、切换大纲、Ctrl+Shift+L 收起 / 恢复均正常。使用输出目录里的公开人工样本，没有改写私人样本。文件切换的三种未保存选择与失败处理由上述应用级自动测试验证，本轮桌面未重复写盘验收。`src-tauri/target` 为 4.89 GiB，保留缓存。
+
+## 2026-10-31：按官方文档实现高亮、提示块和注释
+
+本轮在 Linux 云端开发。项目所有者明确将 Windows 构建和桌面验收留给云端 Windows；本记录是官方文档依据与浏览器技术验证记录，**未做 Windows 构建、未做桌面实测、未做本机 Typora 对照**。标题标记交互和真实中文输入法手感仍待回本机后另做，不在本轮。
+
+| 官方依据 | 文档说明 | 本轮实现及边界 |
+| --- | --- | --- |
+| [Markdown Reference / Highlight](https://support.typora.io/Markdown-Reference/#highlight) | 用 `==` 包住需要高亮的内容；官方客户端需在 Markdown 设置中启用 | 所见即所得显示可编辑的黄色底色，保存使用 `==`；支持已有加粗、斜体及行内代码等子内容。没有宣称已实现官方全部标记显隐交互 |
+| [Typora 1.8 / Github Style Alert](https://support.typora.io/What's-New-1.8/#github-style-alert--callouts) | 引用首行使用 `[!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`、`[!CAUTION]`；示例以英文显示标题 | 原创图标、英文标题及五种颜色的左边框，正文、多段落和列表正常编辑；保存写回引用及原标记。不支持的提示类型继续保护 |
+| [HTML / Comments](https://support.typora.io/HTML/#comments) | 支持单行和多行 `<!-- -->` 注释；导出或打印时不可见 | 按本轮要求，在编辑界面淡化显示字面原文，行内及独占注释均保留；不执行其中的 HTML。当前注释是原文片段，可整体删除和复制，内部文字在源码模式修改；本轮未新增导出或打印功能 |
+
+上述三类语法不再单独使所属块进入源码保护；同一顶层块仍含脚注、目录、双链等其他保护类别时，继续整块保留。未编辑保存仍保留原始字节；编辑别处时恢复未改语法所在范围的原写法与换行。示例为 [highlight-alert.md](../examples/highlight-alert.md)。
+
+窄窗口问题在应用级浏览器测试中已先重现：Crepe 将行内代码显示为 `inline-block`，超长代码路径会撑宽编辑区。修复对行内代码设置宽度约束并允许换行，保留代码块自身的横向滚动；没有靠隐藏编辑区溢出来裁掉内容。浏览器回归覆盖 760 / 960 CSS px、浅深色、长标题和链接、宽表格、代码块及源码模式。
+
+最终自动检查：`npx tsc --noEmit`、默认 `npm test` 和 `npm run build` 均通过。Linux 无头 Chromium 回归共 20 个测试文件，370 项通过；1 项私人样本测试因目录不存在自动跳过。覆盖 LF / CRLF / BOM、异处修改及增删段落后的原文保留、提示块和注释复制重开、高亮内输入字面等号、删除撤销、模拟组词、旧有换行及窄窗口回归。修复了没有 YAML 或以分割线开头的 BOM 文档原文位置偏移问题。`src-tauri/target` 未生成。模拟 composition 事件的检查不等于真实中文输入法验收；Windows 构建、桌面实测和本机官方 Typora 对照均未做。

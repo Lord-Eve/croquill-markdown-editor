@@ -1,0 +1,5 @@
+.milkdown .ProseMirror mark { color:inherit; background:#fff3a3; padding:0; }
+:root[data-theme='dark'] .milkdown .ProseMirror mark { background:#756013; color:#fff2bb; }
+.milkdown .ProseMirror [data-croquill-comment] { color:var(--muted); opacity:.7; }
+.milkdown .ProseMirror pre[data-croquill-comment] { background:transparent; border:0; border-radius:0; padding:.4em 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.milkdown .ProseMirror [data-croquill-inline-raw][data-croquill-comment] { border-bottom:0; }

@@ -4,6 +4,28 @@ import { NodeSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import type { Node as RichNode } from '@milkdown/kit/prose/model';
 import { inlineHtmlRanges, type InlineSyntaxNode } from './inline-html-ranges';
+import { isHtmlComment } from './html-comments';
+
+/** Comments parsed as flow HTML get their own dimmed literal block. */
+export function parseHtmlComments() {
+  return (tree: Root, file: { value: unknown }) => {
+    const source = String(file.value ?? '');
+    function visit(parent: InlineSyntaxNode): void {
+      parent.children = parent.children?.map(child => {
+        if (!['paragraph', 'heading', 'tableCell'].includes(parent.type) && child.type === 'html' && isHtmlComment(child.value || '')) {
+          const from = child.position?.start.offset, to = child.position?.end.offset;
+          if (from != null && to != null) return {
+            type: 'croquillHtmlComment', value: source.slice(from, to), logicalValue: child.value || '', position: child.position,
+          };
+        }
+        visit(child);
+        return child;
+      });
+    }
+    visit(tree as unknown as InlineSyntaxNode);
+    return tree;
+  };
+}
 
 /** A GFM cell cannot contain physical newlines or an unescaped pipe. */
 function fitsTableCell(raw: string): boolean {
@@ -85,6 +107,7 @@ export function createInlineRawMarkdown() {
     attrs: { value: { default: '', validate: 'string' } },
     toDOM: node => ['span', {
       'data-croquill-inline-raw': '', 'data-croquill-inline-value': JSON.stringify(String(node.attrs.value)),
+      ...(isHtmlComment(String(node.attrs.value)) ? { 'data-croquill-comment': 'inline' } : {}),
       contenteditable: 'false', 'aria-label': '行内原文片段',
     }, String(node.attrs.value)],
     parseDOM: [{ tag: 'span[data-croquill-inline-raw]', getAttrs: dom => {
@@ -114,8 +137,44 @@ export function createInlineRawMarkdown() {
       },
     },
   }));
+  const commentNode = $node('croquill_html_comment', () => ({
+    group: 'block', atom: true, selectable: true, draggable: true,
+    attrs: {
+      value: { default: '', validate: 'string' },
+      logicalValue: { default: '', validate: 'string' },
+    },
+    toDOM: node => ['pre', {
+      'data-croquill-comment': 'block', 'data-croquill-comment-value': JSON.stringify(String(node.attrs.value)),
+      'data-croquill-comment-logical': JSON.stringify(String(node.attrs.logicalValue || node.attrs.value)),
+      'aria-label': 'HTML 注释',
+    }, String(node.attrs.value)],
+    parseDOM: [{ tag: 'pre[data-croquill-comment="block"]', priority: 100, getAttrs: dom => {
+      try {
+        const value: unknown = JSON.parse(dom.getAttribute('data-croquill-comment-value') || 'null');
+        const logicalValue: unknown = JSON.parse(dom.getAttribute('data-croquill-comment-logical') || 'null');
+        if (typeof value === 'string') return { value, logicalValue: typeof logicalValue === 'string' ? logicalValue : value };
+      } catch { /* Keep ordinary copied source text when the metadata is absent. */ }
+      return { value: dom.textContent || '', logicalValue: dom.textContent || '' };
+    } }],
+    leafText: node => String(node.attrs.value),
+    parseMarkdown: {
+      match: node => node.type === 'croquillHtmlComment',
+      runner: (state, node, type) => {
+        state.addNode(type, { value: String(node.value ?? ''), logicalValue: String(node.logicalValue ?? node.value ?? '') });
+      },
+    },
+    toMarkdown: {
+      match: node => node.type.name === 'croquill_html_comment',
+      runner: (state, node) => {
+        // Container prefixes belong to the current location. Copying a comment
+        // across a quote/list boundary must not retain its old continuation
+        // markers or omit the new ones. The normal HTML writer preserves CRLF.
+        state.addNode('html', undefined, String(node.attrs.logicalValue || node.attrs.value));
+      },
+    },
+  }));
   return {
-    node,
+    node, commentNode,
     serialize(write: () => string): string {
       replacements.clear();
       serializing = true;

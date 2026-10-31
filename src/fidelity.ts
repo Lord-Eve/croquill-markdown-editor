@@ -3,6 +3,8 @@ import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { inlineHtmlRanges } from './inline-html-ranges';
+import { isHtmlComment } from './html-comments';
+import { alertTypeOf } from './alert-types';
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SyntaxNode {
@@ -17,14 +19,14 @@ export interface MarkdownParts { prefix: string; frontmatter: string; body: stri
 /** Only these attribute-free spellings can be edited as a literal HTML break. */
 export function isBareHtmlBreak(value: string): boolean { return /^<br(?: ?\/)?>$/i.test(value); }
 
-/** Only a closed header at the document start is removed from the rich body. */
+/** Keep a transport BOM and a closed header outside the rich body. */
 export function splitFrontmatter(markdown: string): MarkdownParts {
   const opening = /^\uFEFF?---[ \t]*(?:\r\n|\n|\r)/.exec(markdown);
-  if (!opening) return { prefix: '', frontmatter: '', body: markdown, incomplete: false };
+  if (!opening) return { prefix: markdown.startsWith('\uFEFF') ? '\uFEFF' : '', frontmatter: '', body: markdown.replace(/^\uFEFF/, ''), incomplete: false };
   const rest = markdown.slice(opening[0].length);
   const closing = /^(?:---|\.\.\.)[ \t]*(?=\r?$|\r)/m.exec(rest);
   if (!closing) {
-    return { prefix: '', frontmatter: '', body: markdown, incomplete: /^[ \t]*[\w\u0080-\uFFFF-]+[ \t]*:/m.test(rest) };
+    return { prefix: markdown.startsWith('\uFEFF') ? '\uFEFF' : '', frontmatter: '', body: markdown.replace(/^\uFEFF/, ''), incomplete: /^[ \t]*[\w\u0080-\uFFFF-]+[ \t]*:/m.test(rest) };
   }
   const end = opening[0].length + closing.index + closing[0].length;
   const separator = /^(?:\r\n|\n|\r)(?:[ \t]*(?:\r\n|\n|\r))*/.exec(markdown.slice(end))?.[0] || '';
@@ -38,28 +40,29 @@ function categoriesOf(node: SyntaxNode, source: string): Set<string> {
   function visit(child: SyntaxNode, ranges: { from: number; to: number }[] = []): void {
     if (['paragraph', 'heading', 'tableCell'].includes(child.type)) ranges = inlineHtmlRanges(child, source) || [];
     if (['code', 'inlineCode', 'math', 'inlineMath'].includes(child.type)) { text.push('\n'); return; }
-    if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !ranges.some(range =>
+    if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !isHtmlComment(child.value || '') && !ranges.some(range =>
       child.position?.start.offset != null && child.position?.end.offset != null &&
       child.position.start.offset >= range.from && child.position.end.offset <= range.to)) categories.add('HTML');
     if (child.type === 'footnoteDefinition' || child.type === 'footnoteReference') categories.add('脚注');
+    if (child.type === 'blockquote' && /^\[![A-Z]+\]/.test(child.children?.[0]?.children?.[0]?.value || '') && !alertTypeOf(child, source)) categories.add('提示块');
     if (child.type === 'text') text.push(child.value || '');
     child.children?.forEach(nested => visit(nested, ranges));
   }
   visit(node);
   const prose = text.join('');
   if (/\[\^[^\]\n]+\]/.test(prose)) categories.add('脚注');
-  if (/==[^=\n]+==/.test(prose)) categories.add('高亮');
   if (/\[TOC\]/i.test(prose)) categories.add('目录');
   if (/!?\[\[[\s\S]+?\]\]/.test(prose)) categories.add('双链');
   if (/(?:^|\n)\s*:{3,}/.test(prose)) categories.add('容器');
   if (/\{[.#][^}\n]+\}/.test(prose)) categories.add('属性');
-  if (node.type === 'blockquote' && /^\[![A-Z]+\]/.test(prose)) categories.add('提示块');
   if (/(?:^|\s)\^[\w-]+\s*$/.test(prose)) categories.add('块引用标识');
   return categories;
 }
 
 /** Parsed HTML and extension-bearing blocks are opaque locally, never executed. */
 export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
+  // remark treats a leading BOM as transport metadata, excluding it from offsets.
+  if (body.startsWith('\uFEFF')) return preservedMarkdownBlocks(body.slice(1)).map(block => ({ ...block, from: block.from + 1, to: block.to + 1 }));
   const nodes = markdownParser.parse(body).children as SyntaxNode[];
   const blocks: PreservedBlock[] = [];
   for (let i = 0; i < nodes.length; i++) {
