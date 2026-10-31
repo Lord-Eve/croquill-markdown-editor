@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.3.0] - 2026-10-30
+
 ### 新增
 
 - 左侧增加“文件 / 大纲”切换和紧凑文件树；通过“打开文件夹”或 Ctrl+Shift+O 选择目录，按需展开子目录、单击 Markdown 文件切换，继续使用现有未保存确认流程
@@ -89,7 +91,9 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.2.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.3.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
+
+[0.3.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.2.0...v0.3.0
