@@ -25,7 +25,7 @@ const protectedSamples = [
   { name: 'tag crossing paragraphs', original: '前<span>第一段\n\n第二段</span>后\n' },
   { name: 'tag crossing cells', original: '| 一 | 二 |\n| --- | --- |\n| 前<span>第一格 | 第二格</span>后 |\n' },
   { name: 'inline HTML plus TOC', original: '前<kbd>Ctrl</kbd>与[TOC]后\n' },
-  { name: 'inline HTML plus footnote', original: '前<kbd>Ctrl</kbd>与[^a]后\n\n[^a]: 脚注\n' },
+  { name: 'inline HTML plus unsupported wikilink', original: '前<kbd>Ctrl</kbd>与[[双链]]后\n' },
 ];
 
 describe('inline HTML protection boundaries', () => {

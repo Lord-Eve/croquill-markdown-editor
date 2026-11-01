@@ -196,7 +196,7 @@ describe('dimmed HTML comments through the production editor', () => {
     expect(result).toMatchObject({ comments: 1, mode: 'rich' });
   });
 
-  it.each(['<!-- 未闭合', '前<!-- 备注 -->与[TOC]后\n', '> <!-- 备注 -->\n> 内容[^a]\n\n[^a]: 脚注\n'])('keeps unsupported or mixed protected syntax opaque: %s', async original => {
+  it.each(['<!-- 未闭合', '前<!-- 备注 -->与[TOC]后\n', '> <!-- 备注 -->\n> 内容[^a]与[[双链]]\n\n[^a]: 脚注\n'])('keeps unsupported or mixed protected syntax opaque: %s', async original => {
     const result = await page.evaluate(async original => {
       const h = (window as any).commentHarness;
       await h.surface.init(original);

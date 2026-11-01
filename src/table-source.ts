@@ -47,7 +47,7 @@ function semantic(node: unknown): unknown {
 }
 
 function hasInlineSource(node: SourceNode): boolean {
-  return node.type === 'html' || node.type === 'text' && !!node.value?.includes('==') || !!node.children?.some(hasInlineSource);
+  return node.type === 'html' || node.type === 'footnoteReference' || node.type === 'text' && /==|\[\^/.test(node.value || '') || !!node.children?.some(hasInlineSource);
 }
 
 /** Child positions exclude both pipe delimiters and the cell's padding. */
@@ -85,7 +85,7 @@ function patchTable(original: string, before: SourceNode, serialized: string, af
 
 /** Preserve tables with literal HTML, BR or highlights while applying cell edits. */
 export function preserveTableSource(original: string, serialized: string): string {
-  if (!/[<]|==/.test(original) && !/[<]|==/.test(serialized)) return serialized;
+  if (!/[<]|==|\[\^/.test(original) && !/[<]|==|\[\^/.test(serialized)) return serialized;
   const before = parser.parse(original) as unknown as SourceNode;
   const after = parser.parse(serialized) as unknown as SourceNode;
   const oldTables = tablesOf(before), newTables = tablesOf(after);

@@ -5,6 +5,7 @@ import remarkMath from 'remark-math';
 import { inlineHtmlRanges } from './inline-html-ranges';
 import { isHtmlComment } from './html-comments';
 import { alertTypeOf } from './alert-types';
+import { tocMarkerOf } from './document-syntax';
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SyntaxNode {
@@ -38,19 +39,18 @@ function categoriesOf(node: SyntaxNode, source: string): Set<string> {
   const categories = new Set<string>();
   const text: string[] = [];
   function visit(child: SyntaxNode, ranges: { from: number; to: number }[] = []): void {
+    if (tocMarkerOf(child, source)) return;
     if (['paragraph', 'heading', 'tableCell'].includes(child.type)) ranges = inlineHtmlRanges(child, source) || [];
     if (['code', 'inlineCode', 'math', 'inlineMath'].includes(child.type)) { text.push('\n'); return; }
     if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !isHtmlComment(child.value || '') && !ranges.some(range =>
       child.position?.start.offset != null && child.position?.end.offset != null &&
       child.position.start.offset >= range.from && child.position.end.offset <= range.to)) categories.add('HTML');
-    if (child.type === 'footnoteDefinition' || child.type === 'footnoteReference') categories.add('脚注');
     if (child.type === 'blockquote' && /^\[![A-Z]+\]/.test(child.children?.[0]?.children?.[0]?.value || '') && !alertTypeOf(child, source)) categories.add('提示块');
     if (child.type === 'text') text.push(child.value || '');
     child.children?.forEach(nested => visit(nested, ranges));
   }
   visit(node);
   const prose = text.join('');
-  if (/\[\^[^\]\n]+\]/.test(prose)) categories.add('脚注');
   if (/\[TOC\]/i.test(prose)) categories.add('目录');
   if (/!?\[\[[\s\S]+?\]\]/.test(prose)) categories.add('双链');
   if (/(?:^|\n)\s*:{3,}/.test(prose)) categories.add('容器');

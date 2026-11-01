@@ -26,6 +26,7 @@ interface InlineNode {
 function contentValue(node: InlineNode): unknown {
   if (node.type === 'croquillInlineRaw') return { type: 'html', value: node.value };
   if (node.type === 'break' && node.data?.croquillHtmlBreak) return { type: 'html', value: node.data.croquillHtmlBreak };
+  if (node.type === 'footnoteReference' && node.data?.croquillFootnoteRaw) return { type: 'html', value: node.data.croquillFootnoteRaw };
   return Object.fromEntries(Object.keys(node).sort().filter(key =>
     node[key] !== undefined && !(key === 'children' && !node.children?.length) &&
     !['position', 'data', 'marker', 'isMark', 'originalSource', 'originalSignature'].includes(key)

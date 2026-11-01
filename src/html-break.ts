@@ -42,7 +42,7 @@ export function parseHtmlBreaks() {
             type: 'break', data: { croquillHtmlBreak: child.value }, position: child.position,
           };
           // A bare tag on its own line is an HTML block in CommonMark.
-          return ['root', 'blockquote', 'listItem'].includes(parent.type)
+          return ['root', 'blockquote', 'listItem', 'footnoteDefinition'].includes(parent.type)
             ? { type: 'paragraph', children: [lineBreak], position: child.position }
             : lineBreak;
         }

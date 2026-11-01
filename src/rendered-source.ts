@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { alertTypeOf } from './alert-types';
 import { isHtmlComment } from './html-comments';
+import { tocMarkerOf } from './document-syntax';
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SourceNode {
@@ -28,6 +29,8 @@ function proseOf(node: SourceNode): string {
   return node.children?.map(proseOf).join('') || '';
 }
 function hasRenderedSyntax(node: SourceNode, source: string): boolean {
+  if (node.type === 'footnoteDefinition' || node.type === 'footnoteReference' || tocMarkerOf(node, source)) return true;
+  if (node.type === 'text' && /\[\^[^\]\r\n]+\]/.test(node.value || '')) return true;
   if (node.type === 'html') return isHtmlComment(node.value || '');
   if (['code', 'inlineCode', 'math', 'inlineMath'].includes(node.type)) return false;
   return !!alertTypeOf(node, source) ||
@@ -56,7 +59,7 @@ function enqueue(queues: Map<string, SourceQueue>, key: string, node: SourceNode
 
 /** Restore unchanged extension-bearing blocks, including their literal separators. */
 export function preserveRenderedSource(original: string, serialized: string): string {
-  if (!/==|<!--|\[!/.test(original)) return serialized;
+  if (!/==|<!--|\[!|\[\^|\[toc\]/i.test(original)) return serialized;
   const before = parser.parse(original), after = parser.parse(serialized);
   // Content queues allow unrelated blocks to be inserted, removed or moved.
   // Consume every original match once, retaining the order of repeated content

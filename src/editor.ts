@@ -29,6 +29,7 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts, parseAlerts } from './alerts';
 import { configureHighlights, highlightInputRule, highlightMark, parseHighlights } from './highlight';
 import { preserveRenderedSource } from './rendered-source';
+import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, parseTocFootnotes, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import './rendered-syntax.css';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
@@ -347,16 +348,18 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       this.inlineRaw = createInlineRawMarkdown();
-      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use(highlightInputRule);
+      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use(highlightInputRule).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
         configureHighlights(ctx);
         configureAlerts(ctx);
+        configureTocFootnotes(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
           { plugin: preserveRawMarkdown, options: {} },
           { plugin: parseHtmlComments, options: {} },
           { plugin: preserveInlineHtml, options: {} },
+          { plugin: parseTocFootnotes, options: {} },
           { plugin: parseHtmlBreaks, options: {} },
           { plugin: parseHighlights, options: {} },
           { plugin: parseAlerts, options: {} }, ...plugins,
@@ -408,7 +411,7 @@ export class MarkdownSurface {
           return false;
         },
         props: {
-          handleDOMEvents: { keydown: (view, event) => handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) },
+          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();

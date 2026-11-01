@@ -333,3 +333,13 @@ Windows 11，新版 Croquill 打开 Codex 输出目录 `dragdrop-acceptance/拖�
 窄窗口问题在应用级浏览器测试中已先重现：Crepe 将行内代码显示为 `inline-block`，超长代码路径会撑宽编辑区。修复对行内代码设置宽度约束并允许换行，保留代码块自身的横向滚动；没有靠隐藏编辑区溢出来裁掉内容。浏览器回归覆盖 760 / 960 CSS px、浅深色、长标题和链接、宽表格、代码块及源码模式。
 
 最终自动检查：`npx tsc --noEmit`、默认 `npm test` 和 `npm run build` 均通过。Linux 无头 Chromium 回归共 20 个测试文件，370 项通过；1 项私人样本测试因目录不存在自动跳过。覆盖 LF / CRLF / BOM、异处修改及增删段落后的原文保留、提示块和注释复制重开、高亮内输入字面等号、删除撤销、模拟组词、旧有换行及窄窗口回归。修复了没有 YAML 或以分割线开头的 BOM 文档原文位置偏移问题。`src-tauri/target` 未生成。模拟 composition 事件的检查不等于真实中文输入法验收；Windows 构建、桌面实测和本机官方 Typora 对照均未做。
+
+## 2026-10-31：按官方文档实现目录与脚注
+
+依据 [Markdown Reference / Table of Contents](https://support.typora.io/Markdown-Reference/#table-of-contents-toc)：输入 `[toc]` 后可生成目录，标题增删时自动更新；依据 [Footnotes](https://support.typora.io/Markdown-Reference/#footnotes)：正文用 `[^fn1]` 引用、以 `[^fn1]:` 定义，悬停上标查看内容。点击定位及孤立引用原样保存按本轮任务要求实现，没有把公开文档概述当作本机交互实测。
+
+目录读取当前编辑器中的全部 Markdown 标题，含引用、列表内标题与重名标题；生成内容不进入可编辑文档，保存仍写原目录标记。标题更新与脚注预览不强制触发全文序列化。目录只认独立段落中的标记，正文中的普通文字或代码不转成目录。
+
+脚注使用独立的完整定义节点，内部多段落、列表及已有格式可编辑；保存为脚注定义及带缩进的续段。未改定义与引用恢复原字节，孤立引用显示原标记、不增加反斜杠；有其他保护类别的定义继续整体保留，第二段不会被单独放到普通正文。验收样本为 [toc-footnotes.md](../examples/toc-footnotes.md)。
+
+最终自动检查：`npx tsc --noEmit`、默认 `npm test`、`npm run build` 均通过。Linux 无头 Chromium 回归共 21 个测试文件，406 项通过；1 项私人样本测试因目录不存在自动跳过。目录与脚注的 36 项定向测试覆盖全部标题层级及嵌套/重名标题、实时更新且不强制序列化、目录输入转换、脚注悬停/跳转、LF / CRLF / BOM、完整多段定义编辑及续写、表格局部保存、孤立引用和模拟组词；已有高亮、提示块、注释及换行等回归继续通过。`src-tauri/target` 未生成。Windows 构建、桌面验收和本机官方 Typora 对照未做；真实中文输入法手感未测，模拟组词仅属于浏览器回归。
