@@ -3,7 +3,8 @@ import { uploadConfig } from '@milkdown/kit/plugin/upload';
 import { dropIndicatorPlugin } from '@milkdown/kit/plugin/cursor';
 import { isImageFile } from './images';
 import { hasFileTransfer } from './file-drop';
-import { commandsCtx, editorViewCtx, remarkPluginsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import { commandsCtx, editorViewCtx, nodesCtx, parserCtx, serializerCtx, remarkPluginsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import { docSchema } from '@milkdown/kit/preset/commonmark';
 import { insertTableCommand } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $prose } from '@milkdown/kit/utils';
@@ -11,15 +12,15 @@ import { Plugin, TextSelection, type Command } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView as RichView } from '@milkdown/kit/prose/view';
 import { setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
-import { undo as richUndo, redo as richRedo } from '@milkdown/kit/prose/history';
+import { closeHistory, undo as richUndo, redo as richRedo } from '@milkdown/kit/prose/history';
 import type { Node as RichNode } from '@milkdown/kit/prose/model';
-import { EditorState, EditorSelection } from '@codemirror/state';
+import { EditorState, EditorSelection, Transaction } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, undo, redo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language';
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { highlightSelectionMatches } from '@codemirror/search';
 import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
@@ -30,6 +31,10 @@ import { alertBlock, configureAlerts, parseAlerts } from './alerts';
 import { configureHighlights, highlightInputRule, highlightMark, parseHighlights } from './highlight';
 import { preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, parseTocFootnotes, tocBlock, tocFootnotePlugin } from './toc-footnotes';
+import { SearchPanel, type SearchReplaceResult } from './search-panel';
+import { RichSearchPainter } from './rich-search';
+import { applySourceChanges, normalizedOffset, normalizedSource, replacementProblem, sourceOffset, type SearchMatch, type SearchOptions, type SourceChange } from './search-core';
+import { setSourceMatches, setSourceVersion, sourceSearchHighlights, sourceVersion, sourceVersionHistory } from './source-search-state';
 import './rendered-syntax.css';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
@@ -52,7 +57,6 @@ export class MarkdownSurface {
   private inlineRaw?: ReturnType<typeof createInlineRawMarkdown>;
   private source?: EditorView;
   private raw = '';
-  private richPrefix = '';
   private richNotice: string | null = null;
   private richInput?: string;
   private sourceInput?: string;
@@ -66,12 +70,58 @@ export class MarkdownSurface {
   private suppress = false;
   private richTimer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
+  private readonly find: SearchPanel;
+  private readonly searchPainter: RichSearchPainter;
+  private replacementVersion = 0;
+  private sourceUpdating = false;
+  private richExactSources = new Map<string, string>();
+  private sourceExactSources = new Map<string, string>();
+  private richContextVersion = '';
+  private richContexts = new Map<string, { base: string; origin: RichNode | undefined; originText: string; notice: string | null }>();
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
+    this.searchPainter = new RichSearchPainter(options.richRoot);
+    this.find = new SearchPanel({
+      text: () => this.getMarkdown(), focus: () => this.focus(),
+      replace: (matches, replacement) => this.replaceSearchMatches(matches, replacement),
+      paint: (text, matches, current, query, settings) => this.paintSearch(text, matches, current, query, settings),
+      reveal: (index, match) => {
+        if (this.currentMode === 'rich') this.searchPainter.reveal(index);
+        else if (this.source) { const from = normalizedOffset(this.raw, match.from), to = normalizedOffset(this.raw, match.to); this.source.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) }); }
+      },
+      clear: () => { this.searchPainter.clear(); this.source?.dispatch({ effects: setSourceMatches.of({ matches: [], current: 0 }) }); },
+    });
+    this.find.mount(options.richRoot);
     for (const root of [options.richRoot, options.sourceRoot]) {
       root.addEventListener('paste', this.handleImagePaste, { capture: true });
       root.addEventListener('drop', this.handleImageDrop, { capture: true });
       root.addEventListener('dragover', this.handleImageDragOver, { capture: true });
+      root.addEventListener('keydown', this.handleSearchShortcut, { capture: true });
+    }
+  }
+
+  private handleSearchShortcut = (event: KeyboardEvent): void => {
+    if (event.isComposing || this.isComposing() || event.altKey || !(event.ctrlKey || event.metaKey) || !['f', 'h'].includes(event.key.toLowerCase())) return;
+    event.preventDefault(); event.stopPropagation(); this.toggleSearch(event.key.toLowerCase() === 'h');
+  };
+  openSearch(replace = false): void {
+    if (this.isComposing()) return;
+    let selection = '';
+    if (this.currentMode === 'source' && this.source) { const range = this.source.state.selection.main; selection = this.source.state.sliceDoc(range.from, range.to); }
+    else if (this.crepe) { const view = this.richView(); selection = view.state.doc.textBetween(view.state.selection.from, view.state.selection.to, '\n'); }
+    this.find.open(replace, selection);
+  }
+  toggleSearch(replace = false): void { if (!this.isComposing()) this.find.toggle(replace); }
+  private publishChange(text: string): void {
+    this.options.onChange(text);
+    if (this.sourceUpdating) queueMicrotask(() => { if (!this.destroyed) this.find.documentChanged(); });
+    else this.find.documentChanged();
+  }
+  private paintSearch(text: string, matches: SearchMatch[], current: number, query: string, settings: SearchOptions): void {
+    if (this.currentMode === 'rich' && this.crepe) this.searchPainter.paint(text, this.richView(), matches, current, query, settings);
+    else {
+      this.searchPainter.clear();
+      this.source?.dispatch({ effects: setSourceMatches.of({ matches: matches.map(match => ({ from: normalizedOffset(text, match.from), to: normalizedOffset(text, match.to) })), current }) });
     }
   }
 
@@ -133,11 +183,11 @@ export class MarkdownSurface {
     this.cancelRichTimer();
     this.suppress = true;
     this.raw = markdownText;
-    this.richPrefix = '';
     this.richNotice = null;
     this.richInput = undefined;
     this.sourceInput = undefined;
     this.richSnapshot = undefined;
+    this.richExactSources.clear(); this.sourceExactSources.clear(); this.richContexts.clear(); this.richContextVersion = '';
     this.safetyReason = detectUnsafeMarkdown(markdownText);
     this.source?.destroy();
     this.source = undefined;
@@ -159,6 +209,7 @@ export class MarkdownSurface {
       }
       this.applyVisibility();
     } finally { this.suppress = false; }
+    this.find.mount(this.options.richRoot); this.find.documentChanged();
   }
 
   async setMode(mode: EditingMode): Promise<void> {
@@ -180,6 +231,7 @@ export class MarkdownSurface {
     }
     this.applyVisibility();
     this.focus();
+    this.find.documentChanged();
   }
 
   /** Flush synchronously, so Ctrl+S immediately after a keystroke saves that keystroke. */
@@ -187,11 +239,18 @@ export class MarkdownSurface {
     if (!this.suppress && this.currentMode === 'rich' && this.crepe && this.richSnapshot) {
       const document = this.richView().state.doc;
       if (!document.eq(this.richSnapshot)) {
-        this.raw = this.richOriginDocument?.eq(document) ? this.richOriginText : this.serializeRich();
+        const version = String(document.attrs.croquillSourceVersion || '');
+        if (version !== this.richContextVersion) {
+          const context = this.richContexts.get(version);
+          if (context) { this.richInput = context.base; this.richOriginDocument = context.origin; this.richOriginText = context.originText; this.richNotice = context.notice; }
+          this.richContextVersion = version;
+        }
+        const exact = this.richExactSources.size ? this.richExactSources.get(JSON.stringify(document.toJSON())) : undefined;
+        this.raw = exact !== undefined ? exact : this.richOriginDocument?.eq(document) ? this.richOriginText : this.serializeRich();
         this.richSnapshot = document;
         this.richInput = this.raw;
         this.cancelRichTimer();
-        this.options.onChange(this.raw);
+        this.publishChange(this.raw);
       }
     }
     return this.raw;
@@ -203,7 +262,7 @@ export class MarkdownSurface {
   }
 
   isComposing(): boolean {
-    return this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing;
+    return this.find.composing || (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
   }
 
   getOutline(): { level: number; text: string; line: number }[] { return markdownOutline(this.getMarkdown()); }
@@ -280,7 +339,9 @@ export class MarkdownSurface {
       root.removeEventListener('paste', this.handleImagePaste, { capture: true });
       root.removeEventListener('drop', this.handleImageDrop, { capture: true });
       root.removeEventListener('dragover', this.handleImageDragOver, { capture: true });
+      root.removeEventListener('keydown', this.handleSearchShortcut, { capture: true });
     }
+    this.find.destroy(); this.searchPainter.destroy();
     this.source?.destroy();
     await this.crepe?.destroy();
   }
@@ -288,13 +349,62 @@ export class MarkdownSurface {
   private richView(): RichView { return this.crepe!.editor.action((ctx) => ctx.get(editorViewCtx)); }
 
   private serializeRich(): string {
+    return this.serializeRichDocument(this.richView().state.doc, this.richInput ?? this.raw, this.richOriginText);
+  }
+
+  private serializeRichDocument(document: RichNode, input: string, origin: string): string {
     // The previous save also covers removal of the last newly inserted <br>.
-    const previousBody = splitFrontmatter(this.richInput ?? this.raw).body;
-    const serialized = preserveRenderedSource(previousBody, preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.getMarkdown())));
-    const originBody = splitFrontmatter(this.richOriginText).body;
+    const { body: previousBody, prefix } = splitFrontmatter(input);
+    const serialized = preserveRenderedSource(previousBody, preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.editor.action(ctx => ctx.get(serializerCtx)(document)))));
+    const originBody = splitFrontmatter(origin).body;
     const body = preserveRenderedSource(originBody, preserveEmptyListSource(originBody, preserveTableSource(originBody, serialized)));
-    const separator = this.richPrefix && this.richPrefix !== '\uFEFF' && !/[\r\n]$/.test(this.richPrefix) && body ? '\n\n' : '';
-    return this.richPrefix + separator + body;
+    const separator = prefix && prefix !== '\uFEFF' && !/[\r\n]$/.test(prefix) && body ? '\n\n' : '';
+    return prefix + separator + body;
+  }
+
+  private replaceSearchMatches(matches: SearchMatch[], replacement: string): SearchReplaceResult {
+    if (this.isComposing()) return { ok: false, message: '请先完成输入法组词。' };
+    const before = this.getMarkdown(), changes = matches.map(match => ({ ...match, insert: replacement }));
+    let next: string;
+    try { next = applySourceChanges(before, changes); } catch (error) { return { ok: false, message: String(error) }; }
+    if (next === before) return { ok: true };
+    const problem = replacementProblem(before, next, changes); if (problem) return { ok: false, message: problem };
+    const version = `replace-${++this.replacementVersion}`;
+    if (this.currentMode === 'source' && this.source) {
+      const state = this.source.state;
+      if (!this.sourceExactSources.size) this.sourceExactSources.set(JSON.stringify(['', this.sourceOriginDocument]), this.sourceOriginText);
+      this.sourceExactSources.set(JSON.stringify([state.field(sourceVersion), state.doc.toString()]), before);
+      this.sourceExactSources.set(JSON.stringify([version, normalizedSource(next)]), next);
+      this.source.dispatch({
+        changes: changes.map(change => ({ from: normalizedOffset(before, change.from), to: normalizedOffset(before, change.to), insert: normalizedSource(change.insert) })),
+        effects: setSourceVersion.of(version), annotations: [isolateHistory.of('full'), Transaction.userEvent.of('input.replace')],
+      });
+      return { ok: true };
+    }
+    if (!this.crepe) return { ok: false, message: '编辑器尚未就绪。' };
+    const reason = detectUnsafeMarkdown(next); if (reason) return { ok: false, message: `${reason}。请在源码模式进行这次替换。` };
+    const parts = splitFrontmatter(next);
+    let parsed: RichNode;
+    try {
+      parsed = this.crepe.editor.action(ctx => ctx.get(parserCtx)(parts.body));
+      if (!hasEquivalentMarkdownStructure(next, this.serializeRichDocument(parsed, next, next))) return { ok: false, message: '替换后的结构无法可靠显示，未执行。请在源码模式进行这次替换。' };
+    } catch { return { ok: false, message: '替换后的结构无法可靠显示，未执行。' }; }
+    const view = this.richView(), old = view.state.doc, oldVersion = String(old.attrs.croquillSourceVersion || '');
+    if (!this.richExactSources.size && this.richOriginDocument) this.richExactSources.set(JSON.stringify(this.richOriginDocument.toJSON()), this.richOriginText);
+    this.richExactSources.set(JSON.stringify(old.toJSON()), before);
+    this.richContexts.set(oldVersion, { base: before, origin: this.richOriginDocument, originText: this.richOriginText, notice: this.richNotice });
+    const suppressed = this.suppress; this.suppress = true; this.cancelRichTimer();
+    try {
+      view.dispatch(closeHistory(view.state.tr.replaceWith(0, old.content.size, parsed.content).setDocAttribute('croquillSourceVersion', version)));
+      if (view.state.doc.attrs.croquillSourceVersion !== version) return { ok: false, message: '替换会破坏编辑结构，未执行。请检查替换内容。' };
+      view.dispatch(closeHistory(view.state.tr));
+      const document = view.state.doc;
+      this.raw = next; this.richInput = next; this.richSnapshot = document; this.richOriginDocument = document; this.richOriginText = next; this.richContextVersion = version;
+      this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', preservedMarkdownBlocks(parts.body).length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
+      this.richExactSources.set(JSON.stringify(document.toJSON()), next);
+      this.richContexts.set(version, { base: next, origin: document, originText: next, notice: this.richNotice });
+    } finally { this.suppress = suppressed; }
+    this.publishChange(next); return { ok: true };
   }
 
   private async ensureRich(): Promise<void> {
@@ -304,8 +414,8 @@ export class MarkdownSurface {
     try {
       if (this.crepe) await this.crepe.destroy();
       this.options.richRoot.replaceChildren();
+      this.richExactSources.clear(); this.richContexts.clear(); this.richContextVersion = '';
       const parts = splitFrontmatter(this.raw);
-      this.richPrefix = parts.prefix;
       const blocks = preservedMarkdownBlocks(parts.body);
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       const crepe = new Crepe({
@@ -368,6 +478,18 @@ export class MarkdownSurface {
       // Crepe's block-only drop indicator also handles text selections, snapping
       // them to block boundaries. Keep ProseMirror's native inline/block drops.
       await crepe.editor.remove(dropIndicatorPlugin);
+      // A source-only replacement (e.g. YAML or Markdown spelling) can leave
+      // the rendered content identical. Keep its revision in native history.
+      await crepe.editor.remove(docSchema);
+      crepe.editor.use(ctx => {
+        const run = docSchema(ctx);
+        return async () => {
+          const ready = run(); // $node registers its spec synchronously.
+          ctx.update(nodesCtx, nodes => nodes.map(([name, spec]) => [name, name === 'doc' ? { ...spec, attrs: { ...spec.attrs, croquillSourceVersion: { default: '', validate: 'string' } } } : spec]));
+          const cleanup = await ready;
+          return async () => { await cleanup?.(); };
+        };
+      });
       // Root capture handlers own binary paste/drop, including cancellation. Disable
       // Crepe's fallback uploader so it cannot leave an upload placeholder behind.
       crepe.editor.config((ctx) => ctx.update(uploadConfig.key, (options) => ({ ...options, uploader: async () => [] })));
@@ -474,7 +596,7 @@ export class MarkdownSurface {
     if (this.richSnapshot?.eq(this.richView().state.doc)) {
       if (this.richTimer !== undefined) {
         this.cancelRichTimer();
-        this.options.onChange(this.raw);
+        this.publishChange(this.raw);
       }
       return;
     }
@@ -485,8 +607,10 @@ export class MarkdownSurface {
 
   private ensureSource(): void {
     if (this.source && this.sourceInput === this.raw) return;
+    this.sourceExactSources.clear();
     const extensions = [
       history(), lineNumbers(), highlightActiveLine(), drawSelection(),
+      sourceVersion, sourceVersionHistory, sourceSearchHighlights,
       markdown(), syntaxHighlighting(defaultHighlightStyle), bracketMatching(), highlightSelectionMatches(),
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ 'aria-label': 'Markdown 源码编辑器', spellcheck: 'false' }),
@@ -502,15 +626,24 @@ export class MarkdownSurface {
         { key: 'Mod-k', run: () => { this.formatSource('link'); return true; } },
         { key: 'Mod-Shift-x', run: () => { this.formatSource('strike'); return true; } },
         ...[1, 2, 3, 4, 5, 6].map((level) => ({ key: `Mod-${level}`, run: () => { this.formatSource(`heading${level}`); return true; } })),
-        ...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab,
+        ...defaultKeymap, ...historyKeymap, indentWithTab,
       ]),
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged || this.suppress || this.currentMode !== 'source') return;
+        const versionChanged = update.transactions.some(transaction => transaction.effects.some(effect => effect.is(setSourceVersion)));
+        if ((!update.docChanged && !versionChanged) || this.suppress || this.currentMode !== 'source') return;
         const text = update.state.doc.toString();
-        this.raw = text === this.sourceOriginDocument ? this.sourceOriginText : text;
+        const exact = this.sourceExactSources.get(JSON.stringify([update.state.field(sourceVersion), text]));
+        if (exact !== undefined) this.raw = exact;
+        else if (text === this.sourceOriginDocument) this.raw = this.sourceOriginText;
+        else {
+          const changes: SourceChange[] = [], previous = this.raw, newline = /\r\n|\r|\n/.exec(previous)?.[0] || '\n';
+          update.changes.iterChanges((from, to, _fromB, _toB, inserted) => changes.push({ from: sourceOffset(previous, from), to: sourceOffset(previous, to), insert: inserted.toString().replace(/\n/g, newline) }));
+          this.raw = applySourceChanges(previous, changes);
+        }
         this.sourceInput = this.raw;
         this.safetyReason = detectUnsafeMarkdown(this.raw);
-        this.options.onChange(this.raw);
+        this.sourceUpdating = true;
+        try { this.publishChange(this.raw); } finally { this.sourceUpdating = false; }
       }),
     ];
     const state = EditorState.create({ doc: this.raw, extensions });

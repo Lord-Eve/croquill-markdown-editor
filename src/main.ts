@@ -8,6 +8,7 @@ import { DocumentSession, type DocumentFile } from './session';
 import { protectFileDrops } from './file-drop';
 import { FileSidebar, type FolderListing } from './sidebar';
 import { markdownOutline } from './fidelity';
+import { installMenuPointerRouting, type MenuCommand } from './menu';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -18,7 +19,7 @@ app.innerHTML = `
       <button data-action="new">新建<span>Ctrl+N</span></button><button data-action="open">打开…<span>Ctrl+O</span></button><button data-action="folder">打开文件夹…<span>Ctrl+Shift+O</span></button><hr>
       <button data-action="save">保存<span>Ctrl+S</span></button><button data-action="saveAs">另存为…<span>Ctrl+Shift+S</span></button>
     </div></details>
-    <details><summary data-menu-key="e">编辑(E)</summary><div class="menu"><button data-format="undo">撤销<span>Ctrl+Z</span></button><button data-format="redo">重做<span>Ctrl+Y</span></button></div></details>
+    <details><summary data-menu-key="e">编辑(E)</summary><div class="menu"><button data-format="undo">撤销<span>Ctrl+Z</span></button><button data-format="redo">重做<span>Ctrl+Y</span></button><hr><button data-action="find">查找…<span>Ctrl+F</span></button><button data-action="replace">替换…<span>Ctrl+H</span></button></div></details>
     <details><summary data-menu-key="p">段落(P)</summary><div class="menu"><button data-format="heading1">一级标题<span>Ctrl+1</span></button><button data-format="heading2">二级标题<span>Ctrl+2</span></button><button data-format="heading3">三级标题<span>Ctrl+3</span></button><hr><button data-format="bullet">无序列表</button><button data-format="ordered">有序列表</button><button data-format="task">任务列表</button><button data-format="quote">引用</button><button data-format="codeblock">代码块</button><button data-format="table">插入表格</button><button data-action="image">图片</button></div></details>
     <details><summary data-menu-key="o">格式(O)</summary><div class="menu"><button data-format="bold">加粗<span>Ctrl+B</span></button><button data-format="italic">斜体<span>Ctrl+I</span></button><button data-format="strike">删除线</button><button data-format="link">链接<span>Ctrl+K</span></button><button data-format="code">行内代码</button></div></details>
     <details><summary data-menu-key="v">视图(V)</summary><div class="menu"><button data-action="mode">切换源码模式<span>Ctrl+/</span></button><button data-action="sidebar">显示／隐藏侧栏<span>Ctrl+Shift+L</span></button><button data-action="files">文件侧栏</button><button data-action="outline">大纲侧栏</button><hr><button data-action="smaller">缩小字号</button><button data-action="larger">放大字号</button></div></details>
@@ -232,6 +233,7 @@ async function insertImages(sources: ImageSource[]) {
 }
 async function action(name:string) {
   document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));
+  if(name==='find'||name==='replace'){if(!busy&&!$('modal-root').childElementCount)surface.toggleSearch(name==='replace');return;}
   if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
   if(name==='sidebar'){setSidebarVisible(document.body.classList.contains('sidebar-hidden'));return;}
   if(name==='outline'||name==='files'){setSidebarTab(name);return;}
@@ -253,7 +255,13 @@ async function action(name:string) {
     if(name==='help')await modal('在 Croquill 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\n左侧文件标签可打开文件夹，单击文件切换；分隔边可拖动调宽，底部按钮收起侧栏。\n\nCtrl+Shift+O 打开文件夹\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nTab / Shift+Tab 调整列表层级\n\n文件保存在本地，采用手动保存。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
   });
 }
-app.addEventListener('click',event=>{const target=(event.target as HTMLElement).closest<HTMLElement>('[data-action],[data-format]');if(!target)return;if(target.dataset.action)void action(target.dataset.action);else{document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));surface.format(target.dataset.format!);surface.focus();}});
+function executeCommand(command: MenuCommand) {
+  document.querySelectorAll('.menubar details[open]').forEach(node => node.removeAttribute('open'));
+  if(command.action)void action(command.action);
+  else if(command.format){surface.format(command.format);surface.focus();}
+}
+installMenuPointerRouting(document.querySelector<HTMLElement>('.menubar')!,executeCommand);
+app.addEventListener('click',event=>{const target=(event.target as HTMLElement).closest<HTMLElement>('[data-action],[data-format]');if(target)executeCommand({action:target.dataset.action,format:target.dataset.format});});
 document.addEventListener('pointerdown',event=>{if(!(event.target as HTMLElement).closest('details'))document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));});
 document.querySelectorAll('details').forEach(detail=>detail.addEventListener('toggle',()=>{if(detail.open)document.querySelectorAll('details[open]').forEach(other=>{if(other!==detail)other.removeAttribute('open');});}));
 document.addEventListener('keydown',event=>{
@@ -266,8 +274,8 @@ document.addEventListener('keydown',event=>{
   if(event.key==='Escape'){document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));return;}
   if(event.altKey||!event.ctrlKey)return;
   const key=event.key.toLowerCase();
-  const name=(event.code==='Slash' && !event.shiftKey)?'mode':key==='n'?'new':key==='o'?(event.shiftKey?'folder':'open'):key==='s'?(event.shiftKey?'saveAs':'save'):event.shiftKey&&key==='m'?'mode':event.shiftKey&&key==='l'?'sidebar':null;
-  if(name){event.preventDefault();void action(name);}
+  const name=key==='f'?'find':key==='h'?'replace':(event.code==='Slash' && !event.shiftKey)?'mode':key==='n'?'new':key==='o'?(event.shiftKey?'folder':'open'):key==='s'?(event.shiftKey?'saveAs':'save'):event.shiftKey&&key==='m'?'mode':event.shiftKey&&key==='l'?'sidebar':null;
+  if(name){event.preventDefault();if(name==='find'||name==='replace')event.stopPropagation();void action(name);}
 }, {capture:true});
 // Keep links inside the document from navigating away from the editor.
 $('rich-root').addEventListener('click',event=>{if((event.target as HTMLElement).closest('a'))event.preventDefault();});

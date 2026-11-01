@@ -50,7 +50,7 @@ button:hover { background:var(--hover); }
 .menubar { height:29px; flex-shrink:0; display:flex; align-items:center; padding:0 3px; gap:4px; background:var(--bg); position:relative; z-index:30; user-select:none; }
 .icon-button { width:30px; height:29px; display:grid; place-items:center; border-radius:5px; color:var(--quote); }
 .icon-button svg { width:16px; height:16px; stroke-width:1.65; }
-nav { display:flex; align-items:center; height:100%; gap:2px; }
+.menubar > nav { display:flex; align-items:center; height:100%; gap:2px; }
 details { position:relative; }
 summary { list-style:none; font-size:12px; padding:5px 7px; border-radius:3px; cursor:pointer; color:var(--fg); }
 summary::-webkit-details-marker { display:none; }
