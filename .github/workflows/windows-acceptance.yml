@@ -1,0 +1,96 @@
+name: Windows Acceptance
+
+# Real-Windows acceptance on a GitHub-hosted Windows runner.
+# Tier 1 (must pass): unit tests, Rust tests, Tauri release build.
+# Tier 2 (must pass): the built croquill.exe launches and shows its main window.
+# Tier 3 (reported, see acceptance/report): keyboard-driven GUI checks whose
+#   evidence is the window title and the exact bytes written to disk.
+# What this does NOT cover: drag-in opening, real IME composition, Typora
+#   side-by-side comparison. Those still need a human-driven Windows desktop.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      gui_acceptance:
+        description: "Run the Tier 2/3 GUI acceptance script"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Playwright browser for tests
+        run: npx playwright install chromium
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Frontend tests (Vitest)
+        run: npm test
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build Windows release exe (no bundle)
+        run: npm run tauri -- build --no-bundle
+
+      - name: Locate built exe
+        id: exe
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "src-tauri\target\release\croquill.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "croquill.exe not found at $exe" }
+          "path=$exe" >> $env:GITHUB_OUTPUT
+          Get-Item -LiteralPath $exe | Select-Object FullName, Length, LastWriteTime
+
+      - name: GUI acceptance (Tier 2/3)
+        if: ${{ inputs.gui_acceptance != false }}
+        shell: pwsh
+        run: >
+          .\acceptance\gui-acceptance.ps1
+          -ExePath "${{ steps.exe.outputs.path }}"
+          -ExamplesDir (Join-Path $PWD "examples")
+          -OutDir (Join-Path $PWD "acceptance-output")
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-acceptance-${{ github.sha }}
+          path: |
+            acceptance-output/**
+            src-tauri/target/release/croquill.exe
+          if-no-files-found: warn
+          retention-days: 30
