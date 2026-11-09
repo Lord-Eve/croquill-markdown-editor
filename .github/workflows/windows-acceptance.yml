@@ -76,7 +76,7 @@ jobs:
           Get-Item -LiteralPath $exe | Select-Object FullName, Length, LastWriteTime
 
       - name: GUI acceptance (Tier 2/3)
-        if: ${{ inputs.gui_acceptance != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.gui_acceptance != false }}
         shell: pwsh
         run: >
           .\acceptance\gui-acceptance.ps1
