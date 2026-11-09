@@ -20,13 +20,15 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
       mockIPC(async(cmd,args)=>{
         h.calls.push({cmd,args});
         if(cmd==='initial_path')return h.initial;
-        if(cmd==='plugin:dialog|open')return h.openSelected;
-        if(cmd==='plugin:dialog|save')return h.saveSelected;
+        if(cmd==='plugin:dialog|open'||cmd==='plugin:dialog|save'){
+          if(h.holdDialog)await new Promise(resolve=>h.releaseDialog=resolve);
+          return cmd==='plugin:dialog|open'?h.openSelected:h.saveSelected;
+        }
         if(cmd==='document_exists')return Object.hasOwn(h.files,args.path);
         if(cmd==='read_document'){
           if(h.readError)throw h.readError;
           if(!Object.hasOwn(h.files,args.path))throw '文件不存在';
-          const text=h.files[args.path];return {path:args.path,text,bom:false,newline:text.includes('\\r\\n')?'crlf':'lf',revision:'test-revision'};
+          const text=h.files[args.path];return {path:args.path,text,bom:!!h.bom,newline:text.includes('\\r\\n')?'crlf':'lf',revision:'test-revision'};
         }
         if(cmd==='write_document'){
           if(h.writeError)throw h.writeError;
