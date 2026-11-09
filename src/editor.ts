@@ -105,13 +105,13 @@ export class MarkdownSurface {
     event.preventDefault(); event.stopPropagation(); this.toggleSearch(event.key.toLowerCase() === 'h');
   };
   openSearch(replace = false): void {
-    if (this.isComposing()) return;
+    if (this.hasFocusedComposition()) return;
     let selection = '';
     if (this.currentMode === 'source' && this.source) { const range = this.source.state.selection.main; selection = this.source.state.sliceDoc(range.from, range.to); }
     else if (this.crepe) { const view = this.richView(); selection = view.state.doc.textBetween(view.state.selection.from, view.state.selection.to, '\n'); }
     this.find.open(replace, selection);
   }
-  toggleSearch(replace = false): void { if (!this.isComposing()) this.find.toggle(replace); }
+  toggleSearch(replace = false): void { if (!this.hasFocusedComposition()) this.find.toggle(replace); }
   private publishChange(text: string): void {
     this.options.onChange(text);
     if (this.sourceUpdating) queueMicrotask(() => { if (!this.destroyed) this.find.documentChanged(); });
@@ -213,7 +213,7 @@ export class MarkdownSurface {
   }
 
   async setMode(mode: EditingMode): Promise<void> {
-    if (this.isComposing()) return;
+    if (this.hasFocusedComposition()) return;
     this.getMarkdown();
     if (mode === 'rich') {
       this.safetyReason = detectUnsafeMarkdown(this.raw);
@@ -263,6 +263,14 @@ export class MarkdownSurface {
 
   isComposing(): boolean {
     return this.find.composing || (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
+  }
+
+  /** A blurred editor may retain its IME flag until the platform sends end. */
+  hasFocusedComposition(): boolean {
+    const focused = document.activeElement;
+    if (focused && this.find.root.contains(focused)) return this.find.composing;
+    const root = this.currentMode === 'source' ? this.options.sourceRoot : this.options.richRoot;
+    return !!focused && root.contains(focused) && (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
   }
 
   getOutline(): { level: number; text: string; line: number }[] { return markdownOutline(this.getMarkdown()); }

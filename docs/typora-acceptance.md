@@ -357,3 +357,35 @@ Windows 11，新版 Croquill 打开 Codex 输出目录 `dragdrop-acceptance/拖�
 验收样本与云端 Windows 操作步骤见 [search-replace.md](../examples/search-replace.md)。Windows 构建、桌面实测、真实中文输入法和本机官方 Typora 对照均未做，留待项目所有者在云端 Windows 验收。
 
 最终自动检查：`npx tsc --noEmit`、默认 `npm test`、`npm run build` 全部通过；24 个测试文件，442 项通过，1 项私人样本因目录不存在自动跳过。本轮新增 36 项，覆盖两种模式的查找选项、导航、高亮、LF / CRLF / BOM 和混合换行、原文块与片段替换、一步撤销重做、只改源写法的历史、模拟组词、表格保护、实际菜单指针及键盘命令、目录宽度和新验收样本。`src-tauri/target` 未生成，未改 Rust、依赖或版本号。
+
+## 2026-11-09：全局快捷键、拖入文档、最近文件与另存为图片
+
+本轮仍在 Linux 云端写代码。Windows 构建、桌面实测、真实中文输入法和官方 Typora 客户端对照均未做；人工样本及具体操作步骤见 [file-workflow.md](../examples/file-workflow.md)。
+
+### Ctrl+S 排查
+
+先补复现测试，确认旧实现会漏掉物理 `KeyS` 与非拉丁 `key` 不一致的快捷键、被窗口层捕获处理器先截获的事件，以及焦点移到侧栏后仍被旧输入法状态拦住的命令。忙碌时收到 Ctrl+S 原先也会直接丢弃；保存成功后状态栏会被普通更新清空。这些是代码路径和浏览器复现结果，不能据此认定 Windows 上间歇失效的全部根因已经证实。
+
+现改为窗口捕获层统一识别和消费一次，保留活动组词和模态对话框保护，只检查当前焦点的组词状态；忙碌时保存请求排队，成功后状态栏保留“已保存”和时间。回归覆盖正文、源码、查找、替换、文件树、大纲、菜单、原文块和行内片段旁的 Ctrl+S，其他全局命令在同样焦点逐一检查；现有中文组词与延迟整理回归继续执行。
+
+### 拖入与最近文件
+
+保留 `dragDropEnabled: false` 和网页拖放，不重新拦截原生正文拖动。依据微软 [WebView2 File 传递接口](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/javascript/webview#webview2script-webview-postmessagewithadditionalobjects-member(1))，通过 `postMessageWithAdditionalObjects` 将实际拖入的 `File` 对象传给本机，取得 `ICoreWebView2File.Path`；因此沿用真实磁盘文件的读取、版本冲突和保存流程，没有把文件字节冒充为已打开路径。复用锁文件中已有的 WebView2 依赖版本，未升级依赖。路径桥故障、非 Markdown、多文件混拖均保留当前文档；图片仍走原导入入口。
+
+最近 10 个文件存于本地设置，成功打开 / 保存后更新；取消和失败不加入新项。仅确认文件确实不存在或已不是普通文件时移除，权限和解码错误不移除。启动优先命令行文件，否则恢复上次活动文档；主动新建清除恢复目标，保留最近列表，不自动恢复未保存草稿。若发现当前磁盘文件已丢失，内存正文仍按未保存处理。
+
+### 图片处理的选择与官方依据
+
+官方 [Images / 相对路径](https://support.typora.io/Images/#relative-path-to-current-filefolder-default-behavior) 说明相对路径以当前 `.md` 所在目录为基准；[Copy Image](https://support.typora.io/Images/#copy-image) 和 Copy All Images 说明复制后更新引用、保留原图。该页没有明确规定“另存为必须自动复制附件目录”，本轮没有将这种猜测写成本机 Typora 实测结论。
+
+采用**改写路径，保留原文件**：同盘生成相对新文档目录、仍指向原图的路径，跨盘改为本地 `file:///`；仍能解析到同一原图的路径保持原写法。新文档继续依赖原附件目录，没有额外复制附件。先验证所有有关图片，再执行原安全写入，任一检查失败都不写副本、不切换当前文档，不移动或删除原图。
+
+源文档或目标文档存在文件链接时，按安全写入器和图片读取器实际解析到的文件位置确定基准，避免按链接所在目录算出错误路径；普通源文件已丢失时仍可根据原目录另存内存正文。另有实际文件系统回归覆盖源 / 目标文件链接、目标附件同名但内容不同、中文及空格编码、缺图失败和原图保留。
+
+修改范围只限真实 Markdown 图片目的地址、被图片使用的引用定义、HTML `img src` 的路径部分；保留原来的 alt、标题、查询参数 / 片段、代码、注释、普通链接、元数据、BOM 和换行。含图片的 HTML 仍按已有源码保护规则显示，不新增 HTML 渲染；引用式文档沿用已有的结构保护，可能进入源码模式，本轮不放宽它的渲染保护。改写了图片地址、或首次为含本地图片的草稿确定路径时重新加载来源，避免显示旧缓存；普通保存不重建编辑器。
+
+### Rust 检查范围
+
+完整 Tauri `cargo test --locked` 在 Linux 缺少 GLib / GTK / WebKit 开发库处停止；完整 Windows 交叉检查缺 `llvm-rc` 资源编译器，均未宣称完成。另用临时无 GUI 测试入口直接引用仓库原本的 `documents.rs`、`folders.rs`，执行原有和新增后端测试；同一入口加入真实 `file_drop_bridge.rs`，对 `x86_64-pc-windows-msvc` 执行 `cargo check --tests`，检查 Windows API 绑定和跨盘路径代码。没有制作 Windows exe，也没有以静态检查替代 Windows 资源管理器实际拖入验收。编译缓存保留。
+
+最终检查：`npx tsc --noEmit`、默认 `npm test`、`npm run build` 通过；30 个前端测试文件，513 项通过，1 项私人样本因目录不存在自动跳过。新增回归包含 9 类焦点的全局命令、实际 Ctrl+S 和反馈、模拟组词、忙碌保存排队、文件拖入三种未保存决定、图片拖入、最近文件及启动恢复、LF / CRLF / BOM 图片地址局部改写、引用定义、HTML 数字转义和失败保护。独立后端测试 21 项通过，Windows 后端接口交叉类型检查通过。额外检查 760×540 的浅深色界面，最近菜单显示 10 项、可滚动，保存时间不横向溢出；人工样本在所见即所得打开且未编辑原文一致。`src-tauri/target` 已生成，约 1.2 GiB，保留；Windows 构建、桌面、真实 IME 和 Typora 客户端对照仍未做。

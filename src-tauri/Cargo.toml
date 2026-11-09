@@ -24,6 +24,9 @@ percent-encoding = "=2.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+# Already present at these versions through Tauri/Wry; no dependency upgrade.
+webview2-com = "=0.39.1"
+windows-core = "=0.62.2"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

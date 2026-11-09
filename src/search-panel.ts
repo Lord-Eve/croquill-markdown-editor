@@ -60,6 +60,7 @@ export class SearchPanel {
   mount(before: HTMLElement): void { if (this.root.parentElement !== before.parentElement) before.before(this.root); }
   toggle(replace: boolean): void { if (!this.root.hidden && this.replaceMode === replace) this.close(); else this.open(replace); }
   open(replace: boolean, selection = ''): void {
+    if (!this.root.contains(document.activeElement)) this.composing = false;
     this.root.hidden = false; this.replaceMode = replace; this.root.querySelector<HTMLElement>('[data-search-replace]')!.hidden = !replace;
     if (selection && !/[\r\n]/.test(selection)) this.query.value = selection;
     this.refresh(true, true); this.query.focus(); this.query.select();

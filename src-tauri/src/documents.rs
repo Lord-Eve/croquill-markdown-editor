@@ -98,6 +98,14 @@ pub fn read_document(path: &str) -> Result<Document, String> {
     })
 }
 
+pub fn document_exists(path: &str) -> Result<bool, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("无法检查文件是否存在：{error}")),
+    }
+}
+
 fn resolve_destination(path: &Path) -> Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err("保存路径必须是绝对路径。".into());
@@ -249,10 +257,11 @@ fn sanitize_image_name(name: &str) -> String {
 fn encode_image_component(value: &str) -> String {
     let mut encoded = String::new();
     for character in value.chars() {
-        if !character.is_ascii() || character.is_ascii_alphanumeric() || "-._~".contains(character) {
+        if !character.is_ascii() && !character.is_whitespace() && !character.is_control() || character.is_ascii_alphanumeric() || "-._~".contains(character) {
             encoded.push(character);
         } else {
-            encoded.push_str(&format!("%{:02X}", character as u8));
+            let mut utf8 = [0; 4];
+            for byte in character.encode_utf8(&mut utf8).as_bytes() { encoded.push_str(&format!("%{byte:02X}")); }
         }
     }
     encoded
@@ -364,7 +373,7 @@ pub fn import_image(
     Err("同名图片过多，请重命名来源图片后重试。".into())
 }
 
-pub fn read_local_image(document_path: &str, src: &str) -> Result<String, String> {
+fn local_image_path(src: &str) -> Result<PathBuf, String> {
     let path_part = src.split(['?', '#']).next().unwrap_or(src);
     let decoded = percent_decode_str(path_part).decode_utf8().map_err(|_| "图片路径编码无效。")?;
     let decoded = decoded.as_ref();
@@ -387,9 +396,13 @@ pub fn read_local_image(document_path: &str, src: &str) -> Result<String, String
     if local.starts_with("\\\\") || local.starts_with("//") {
         return Err("首版不读取网络共享图片，请使用本地路径。".into());
     }
-    let local = Path::new(&local);
+    Ok(PathBuf::from(local))
+}
+
+pub fn read_local_image(document_path: &str, src: &str) -> Result<String, String> {
+    let local = local_image_path(src)?;
     let resolved = if local.is_absolute() {
-        local.to_path_buf()
+        local
     } else {
         let doc = fs::canonicalize(document_path).map_err(|e| format!("图片所对应文档不可用：{e}"))?;
         doc.parent().ok_or("文档没有所在文件夹。")?.join(local)
@@ -402,6 +415,152 @@ pub fn read_local_image(document_path: &str, src: &str) -> Result<String, String
     let mime = image_mime(&path)?;
     let bytes = fs::read(path).map_err(|e| format!("读取图片失败：{e}"))?;
     Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+fn relative_image_path(from: &Path, target: &Path) -> Option<PathBuf> {
+    let from: Vec<_> = from.components().collect();
+    let target: Vec<_> = target.components().collect();
+    let equal = |left: &std::path::Component<'_>, right: &std::path::Component<'_>| {
+        if cfg!(windows) { left.as_os_str().to_string_lossy().eq_ignore_ascii_case(&right.as_os_str().to_string_lossy()) } else { left == right }
+    };
+    if !equal(from.first()?, target.first()?) { return None; }
+    let common = from.iter().zip(&target).take_while(|(left, right)| equal(left, right)).count();
+    let mut relative = PathBuf::new();
+    for _ in common..from.len() { relative.push(".."); }
+    for component in target.iter().skip(common) { relative.push(component.as_os_str()); }
+    Some(relative)
+}
+fn image_path_url(path: &Path, absolute: bool) -> Result<String, String> {
+    let path = display_path(path);
+    let path = if cfg!(windows) { path.replace('\\', "/") } else { path };
+    if path.starts_with("//") { return Err("暂不支持跨网络共享目录迁移图片路径，原文档已保留。".into()); }
+    let mut result = String::new();
+    for (index, component) in path.split('/').enumerate() {
+        if index > 0 { result.push('/'); }
+        if absolute && index == 0 && component.len() == 2 && component.ends_with(':') { result.push_str(component); }
+        else { result.push_str(&encode_image_component(component)); }
+    }
+    Ok(if absolute { if result.starts_with('/') { format!("file://{result}") } else { format!("file:///{result}") } } else { result })
+}
+
+/// Save As retains the original files and rewrites only image destinations.
+/// None means the original reference still resolves to the same file: leave its
+/// spelling untouched. All validation happens before the Markdown safe write.
+pub fn rebase_image_paths(from_path: &str, to_path: &str, sources: &[String]) -> Result<Vec<Option<String>>, String> {
+    let from = Path::new(from_path); let to = Path::new(to_path);
+    if !from.is_absolute() || !to.is_absolute() { return Err("另存为的文档路径必须为绝对路径。".into()); }
+    let local: Vec<_> = sources.iter().map(|source| local_image_path(source)).collect::<Result<_, _>>()?;
+    if local.iter().all(|path| path.is_absolute()) { return Ok(vec![None; sources.len()]); }
+    let original = match fs::canonicalize(from) {
+        Ok(document) => document,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && fs::symlink_metadata(from).is_err() => from.to_path_buf(),
+        Err(error) => return Err(format!("无法确定原文档的图片基准位置：{error}")),
+    };
+    let from = fs::canonicalize(original.parent().ok_or("原文档没有所在目录。")?).map_err(|e| format!("原文档目录不可用：{e}"))?;
+    // The writer and image reader follow an existing file link. Use precisely
+    // that destination, not merely the directory selected in the dialog.
+    let destination = resolve_destination(to)?;
+    let to = destination.parent().ok_or("保存目标没有所在目录。")?.to_path_buf();
+    if from == to { return Ok(vec![None; sources.len()]); }
+    sources.iter().zip(local).map(|(source, local)| {
+        // A rooted Windows path without a drive (e.g. /images/a.png) still
+        // depends on the original document's drive and must be rebased.
+        if local.is_absolute() { return Ok(None); }
+        let image = fs::canonicalize(from.join(&local)).map_err(|e| format!("图片不可用，尚未另存为：{source}；{e}"))?;
+        let metadata = fs::metadata(&image).map_err(|e| format!("无法检查图片，尚未另存为：{e}"))?;
+        if !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES { return Err(format!("图片不可用或超过 20 MB，尚未另存为：{source}")); }
+        image_mime(&image)?;
+        if fs::canonicalize(to.join(local)).is_ok_and(|destination| destination == image) { return Ok(None); }
+        match relative_image_path(&to, &image) {
+            Some(relative) => image_path_url(&relative, false).map(Some),
+            None => image_path_url(&image, true).map(Some),
+        }
+    }).collect()
+}
+
+#[cfg(test)]
+mod save_as_tests {
+    use super::*;
+
+    #[test]
+    fn moving_the_document_rebases_to_the_same_original_image_without_copy_or_move() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("原目录"); let new = temp.path().join("新目录");
+        fs::create_dir(&old).unwrap(); fs::create_dir(&new).unwrap(); fs::create_dir(old.join("原文.assets")).unwrap();
+        let source = old.join("原文.md"); let target = new.join("新文.md"); let image = old.join("原文.assets/中文 图片.png");
+        fs::write(&source, b"original").unwrap(); fs::write(&image, b"original image").unwrap();
+        fs::create_dir(new.join("原文.assets")).unwrap(); fs::write(new.join("原文.assets/中文 图片.png"), b"different image").unwrap();
+        let paths = rebase_image_paths(source.to_str().unwrap(), target.to_str().unwrap(), &["原文.assets/中文%20图片.png?raw=1#view".into()]).unwrap();
+        assert_eq!(paths, vec![Some("../原目录/原文.assets/中文%20图片.png".into())]);
+        // Simulate the sole Markdown write; the image reader must resolve the
+        // rebased path from the saved document, not from an in-memory cache.
+        write_document(target.to_str().unwrap(), "new Markdown", false, "lf", None).unwrap();
+        let displayed = read_local_image(target.to_str().unwrap(), paths[0].as_ref().unwrap()).unwrap();
+        assert_eq!(displayed, format!("data:image/png;base64,{}", STANDARD.encode(b"original image")));
+        assert_eq!(fs::read(source).unwrap(), b"original"); assert_eq!(fs::read(image).unwrap(), b"original image");
+        assert_eq!(fs::read(new.join("原文.assets/中文 图片.png")).unwrap(), b"different image");
+    }
+
+    #[test]
+    fn same_directory_and_shared_relative_targets_keep_their_exact_source_spelling() {
+        let temp = tempfile::tempdir().unwrap();
+        let a = temp.path().join("a"); let b = temp.path().join("b"); fs::create_dir(&a).unwrap(); fs::create_dir(&b).unwrap();
+        fs::write(temp.path().join("shared.png"), b"image").unwrap();
+        assert_eq!(rebase_image_paths(a.join("a.md").to_str().unwrap(), a.join("renamed.md").to_str().unwrap(), &["./missing%20image.png".into()]).unwrap(), vec![None]);
+        assert_eq!(rebase_image_paths(a.join("a.md").to_str().unwrap(), b.join("b.md").to_str().unwrap(), &["../shared.png".into()]).unwrap(), vec![None]);
+        assert_eq!(rebase_image_paths(a.join("a.md").to_str().unwrap(), b.join("b.md").to_str().unwrap(), &[temp.path().join("shared.png").to_string_lossy().into_owned()]).unwrap(), vec![None]);
+    }
+
+    #[test]
+    fn encoded_filename_characters_are_not_mistaken_for_fragment_delimiters() {
+        let temp = tempfile::tempdir().unwrap(); let a = temp.path().join("a"); let b = temp.path().join("b"); fs::create_dir(&a).unwrap(); fs::create_dir(&b).unwrap();
+        fs::write(a.join("a#1.png"), b"image").unwrap();
+        assert_eq!(rebase_image_paths(a.join("a.md").to_str().unwrap(), b.join("b.md").to_str().unwrap(), &["a%231.png#view".into()]).unwrap(), vec![Some("../a/a%231.png".into())]);
+        fs::write(a.join("中文　图.png"), b"image").unwrap();
+        assert_eq!(rebase_image_paths(a.join("a.md").to_str().unwrap(), b.join("b.md").to_str().unwrap(), &["中文　图.png".into()]).unwrap(), vec![Some("../a/中文%E3%80%80图.png".into())]);
+    }
+
+    #[test]
+    fn missing_or_oversized_images_fail_before_any_document_or_attachment_write() {
+        let temp = tempfile::tempdir().unwrap(); let a = temp.path().join("a"); let b = temp.path().join("b"); fs::create_dir(&a).unwrap(); fs::create_dir(&b).unwrap();
+        let source = a.join("old.md"); let target = b.join("new.md"); fs::write(&source, b"original").unwrap();
+        assert!(rebase_image_paths(source.to_str().unwrap(), target.to_str().unwrap(), &["missing.png".into()]).is_err());
+        fs::File::create(a.join("huge.png")).unwrap().set_len(MAX_IMAGE_BYTES + 1).unwrap();
+        assert!(rebase_image_paths(source.to_str().unwrap(), target.to_str().unwrap(), &["huge.png".into()]).is_err());
+        assert!(!target.exists()); assert_eq!(fs::read(source).unwrap(), b"original"); assert_eq!(fs::read_dir(b).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn existence_check_distinguishes_missing_files_and_directories() {
+        let temp = tempfile::tempdir().unwrap(); let file = temp.path().join("文档.md");
+        assert!(!document_exists(file.to_str().unwrap()).unwrap()); fs::write(&file, b"text").unwrap(); assert!(document_exists(file.to_str().unwrap()).unwrap());
+        assert!(!document_exists(temp.path().to_str().unwrap()).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn document_links_use_the_same_real_directory_as_the_safe_writer_and_image_reader() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old"); let target = temp.path().join("target"); let links = temp.path().join("links");
+        for directory in [&old, &target, &links] { fs::create_dir(directory).unwrap(); }
+        fs::create_dir(old.join("assets")).unwrap(); fs::write(old.join("assets/picture.png"), b"original image").unwrap();
+        fs::write(old.join("note.md"), b"original document").unwrap(); fs::write(target.join("copy.md"), b"target document").unwrap();
+        let source_alias = links.join("source.md"); let target_alias = links.join("target.md");
+        std::os::unix::fs::symlink(old.join("note.md"), &source_alias).unwrap(); std::os::unix::fs::symlink(target.join("copy.md"), &target_alias).unwrap();
+        let paths = rebase_image_paths(source_alias.to_str().unwrap(), target_alias.to_str().unwrap(), &["assets/picture.png".into()]).unwrap();
+        assert_eq!(paths, vec![Some("../old/assets/picture.png".into())]);
+        write_document(target_alias.to_str().unwrap(), "saved copy", false, "lf", None).unwrap();
+        assert_eq!(read_local_image(target_alias.to_str().unwrap(), paths[0].as_ref().unwrap()).unwrap(), format!("data:image/png;base64,{}", STANDARD.encode(b"original image")));
+        assert_eq!(fs::read(old.join("note.md")).unwrap(), b"original document");
+        assert_eq!(fs::read(target.join("copy.md")).unwrap(), b"saved copy");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cross_drive_images_use_an_escaped_local_file_url() {
+        assert!(relative_image_path(Path::new("D:\\new"), Path::new("C:\\old\\图 片.png")).is_none());
+        assert_eq!(image_path_url(Path::new("C:\\old\\图 片.png"), true).unwrap(), "file:///C:/old/图%20片.png");
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,11 @@ import { protectFileDrops } from './file-drop';
 import { FileSidebar, type FolderListing } from './sidebar';
 import { markdownOutline } from './fidelity';
 import { installMenuPointerRouting, type MenuCommand } from './menu';
+import { RecentDocuments } from './recent-documents';
+import { sameDocumentPath } from './document-path';
+import { imageDestinations, rebaseImageSources } from './image-paths';
+import { installGlobalShortcuts } from './shortcuts';
+import { droppedDocumentPath } from './dropped-document';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -18,6 +23,7 @@ app.innerHTML = `
     <details><summary data-menu-key="f">文件(F)</summary><div class="menu">
       <button data-action="new">新建<span>Ctrl+N</span></button><button data-action="open">打开…<span>Ctrl+O</span></button><button data-action="folder">打开文件夹…<span>Ctrl+Shift+O</span></button><hr>
       <button data-action="save">保存<span>Ctrl+S</span></button><button data-action="saveAs">另存为…<span>Ctrl+Shift+S</span></button>
+      <hr><div class="menu-label">最近打开</div><div id="recent-files"></div>
     </div></details>
     <details><summary data-menu-key="e">编辑(E)</summary><div class="menu"><button data-format="undo">撤销<span>Ctrl+Z</span></button><button data-format="redo">重做<span>Ctrl+Y</span></button><hr><button data-action="find">查找…<span>Ctrl+F</span></button><button data-action="replace">替换…<span>Ctrl+H</span></button></div></details>
     <details><summary data-menu-key="p">段落(P)</summary><div class="menu"><button data-format="heading1">一级标题<span>Ctrl+1</span></button><button data-format="heading2">二级标题<span>Ctrl+2</span></button><button data-format="heading3">三级标题<span>Ctrl+3</span></button><hr><button data-format="bullet">无序列表</button><button data-format="ordered">有序列表</button><button data-format="task">任务列表</button><button data-format="quote">引用</button><button data-format="codeblock">代码块</button><button data-format="table">插入表格</button><button data-action="image">图片</button></div></details>
@@ -37,12 +43,24 @@ app.innerHTML = `
   </aside>
   <main id="main"><div id="notice" role="status" hidden></div><div id="editor-scroll"><div id="rich-root"></div><div id="source-root" hidden></div></div></main>
 </div>
-<footer class="statusbar"><div class="status-left"><button class="icon-button" data-action="sidebar" title="显示／隐藏侧栏 Ctrl+Shift+L" aria-label="显示／隐藏侧栏" aria-expanded="true"><i data-lucide="panel-left"></i></button><button data-action="mode" id="mode-button" title="切换源码模式 Ctrl+/"><i data-lucide="code-2"></i><span>所见即所得</span></button><span id="save-status">准备就绪</span></div><div class="status-right"><span id="encoding">UTF-8</span><span id="newline">LF</span><span class="status-separator">·</span><span id="word-count">0 字</span></div></footer>
+<footer class="statusbar"><div class="status-left"><button class="icon-button" data-action="sidebar" title="显示／隐藏侧栏 Ctrl+Shift+L" aria-label="显示／隐藏侧栏" aria-expanded="true"><i data-lucide="panel-left"></i></button><button data-action="mode" id="mode-button" title="切换源码模式 Ctrl+/"><i data-lucide="code-2"></i><span>所见即所得</span></button><span id="save-status" role="status" aria-live="polite">准备就绪</span></div><div class="status-right"><span id="encoding">UTF-8</span><span id="newline">LF</span><span class="status-separator">·</span><span id="word-count">0 字</span></div></footer>
 <div id="modal-root"></div><div id="toast" role="status" hidden></div>`;
 createIcons({ icons: {PanelLeft, Code2} });
 const $ = <T extends HTMLElement = HTMLElement>(id:string) => document.getElementById(id) as T;
 const desktop = isTauri();
 let busy = false;
+let queuedSave: 'save' | 'saveAs' | null = null;
+let savedAt: { path: string; time: string } | null = null;
+const recentDocuments = new RecentDocuments(localStorage);
+function renderRecentFiles() {
+  const root = $('recent-files'); root.replaceChildren();
+  for (const path of recentDocuments.paths) {
+    const button = document.createElement('button'); button.dataset.action = 'recent'; button.dataset.path = path;
+    button.textContent = path; button.title = path; root.append(button);
+  }
+  if (!root.childElementCount) { const empty = document.createElement('span'); empty.className = 'menu-empty'; empty.textContent = '暂无最近文件'; root.append(empty); }
+}
+renderRecentFiles();
 let toastTimer = 0;
 let statsTimer = 0;
 let fontSize = Math.min(24, Math.max(12, Number(localStorage.getItem('croquill-font')) || 16));
@@ -72,13 +90,25 @@ function modal(title:string, body:string, choices:{label:string,value:string,pri
 const session = new DocumentSession({
   openPath: () => desktop ? open({title:'打开 Markdown 文件',multiple:false,directory:false,filters:[{name:'Markdown 文档',extensions:['md','markdown','mdown','mkd','txt']},{name:'所有文件',extensions:['*']}]}) as Promise<string|null> : Promise.resolve(null),
   savePath: current => desktop ? save({title:'保存 Markdown 文件',defaultPath:current||'未命名.md',filters:[{name:'Markdown 文档',extensions:['md','markdown']}]}) : Promise.resolve(null),
-  read: path => invoke<DocumentFile>('read_document',{path}),
+  read: async path => {
+    try { return await invoke<DocumentFile>('read_document',{path}); }
+    catch (error) {
+      const exists = await invoke<boolean>('document_exists',{path}).catch(() => true);
+      if (!exists) { if(sameDocumentPath(path,session.path))session.markUnavailable();recentDocuments.forget(path); renderRecentFiles(); throw Error(`文件已不存在，已从最近文件中移除：${path}`); }
+      throw error;
+    }
+  },
   write: (path,text,bom,newline,expectedRevision) => invoke('write_document',{path,text,bom,newline,expectedRevision:expectedRevision ?? null}),
   confirmSave: name => modal('保存更改？',`“${name}”有尚未保存的修改。`,[{label:'不保存',value:'discard'},{label:'取消',value:'cancel'},{label:'保存',value:'save',primary:true}]) as Promise<'save'|'discard'|'cancel'>,
+  prepareSaveAs: (from, to, text) => rebaseImageSources(text, sources => invoke<(string | null)[]>('rebase_image_paths',{fromPath:from,toPath:to,sources})),
+}, {
+  opened: file => { savedAt = null; recentDocuments.opened(file.path); renderRecentFiles(); },
+  saved: path => { savedAt = { path, time: new Date().toLocaleTimeString('zh-CN', { hour12: false }) }; recentDocuments.opened(path); renderRecentFiles(); },
+  fresh: () => { savedAt = null; recentDocuments.fresh(); },
 });
 const imageImporter = new ImageImporter({
   documentPath: () => session.path,
-  saveDocument: () => session.save(),
+  saveDocument: () => saveCurrentDocument(),
   warn: toast,
   persist: args => invoke<string>('import_image', args),
 });
@@ -112,10 +142,7 @@ const fileSidebar = new FileSidebar({
   },
   listFolder: (root, path) => invoke<FolderListing>('list_document_folder', {root, path:path ?? null}),
   openFile: async path => {
-    await run(async () => {
-      if (path === session.path) return;
-      if (await session.open(path)) { imageCache.clear(); await surface.load(session.text); surface.focus(); }
-    });
+    await run(() => openDocument(path));
   },
   onError: toast,
 });
@@ -172,7 +199,11 @@ resizeHandle.addEventListener('keydown', event => {
 window.addEventListener('resize', () => resizeSidebar(sidebarWidth));
 
 // Capture external file drops before WebView can navigate, while leaving editor drags alone.
-protectFileDrops(window, [$('rich-root'), $('source-root')]);
+protectFileDrops(window, [$('rich-root'), $('source-root')], files => {
+  if (files.length !== 1) { toast('请一次只拖入一个 Markdown 文档；图片请单独拖入。'); return; }
+  if (!desktop) { toast('请在桌面程序中拖入本地 Markdown 文件'); return; }
+  void run(async () => { await openDocument(await droppedDocumentPath(files[0])); });
+});
 $('editor-scroll').addEventListener('scroll', () => surface.deferPendingSerialization(), { passive: true });
 
 function updateTitle() {
@@ -181,7 +212,7 @@ function updateTitle() {
   const title=`${session.dirty?'● ':''}${session.name} — Croquill`;
   document.title=title;
   if(desktop) void getCurrentWindow().setTitle(title).catch(()=>{});
-  $('save-status').textContent = session.dirty?'未保存':'';
+  $('save-status').textContent = session.dirty ? '未保存' : savedAt && sameDocumentPath(savedAt.path,session.path) ? `已保存 ${savedAt.time}` : session.path ? '已打开' : '准备就绪';
   $('save-status').title = session.path || '本地文档 · 手动保存';
   fileSidebar.setActiveFile(session.path);
   $('encoding').textContent=session.bom?'UTF-8 BOM':'UTF-8';
@@ -214,12 +245,36 @@ function updateMode() {
   document.body.classList.toggle('source-mode',source);
 }
 async function run(operation:()=>Promise<void>) {
-  if(busy || surface.isComposing() || $('modal-root').childElementCount) return;
+  if(busy || surface.hasFocusedComposition() || $('modal-root').childElementCount) return;
   session.edit(surface.getMarkdown());
   busy=true; $('editor-scroll').inert=true;
   try { await operation(); }
   catch(error){await modal('操作未完成',String(error),[{label:'返回文档',value:'cancel',primary:true}]);}
-  finally {busy=false;$('editor-scroll').inert=false;updateTitle();updateStats();}
+  finally {
+    busy=false;$('editor-scroll').inert=false;updateTitle();updateStats();
+    const requested = queuedSave; queuedSave = null;
+    if (requested) queueMicrotask(() => { void action(requested); });
+  }
+}
+async function openDocument(path?: string): Promise<void> {
+  if (path && sameDocumentPath(path, session.path)) return;
+  if (await session.open(path)) { imageCache.clear(); await surface.load(session.text); surface.focus(); }
+}
+async function requireRecentFile(path: string): Promise<void> {
+  if (await invoke<boolean>('document_exists', {path})) return;
+  if (sameDocumentPath(path, session.path)) session.markUnavailable();
+  recentDocuments.forget(path); renderRecentFiles();
+  throw Error(`文件已不存在，已从最近文件中移除：${path}`);
+}
+async function saveCurrentDocument(as = false): Promise<boolean> {
+  const previous = session.path, before = session.text;
+  $('save-status').textContent = '正在保存…';
+  if (!await session.save(as)) return false;
+  if (!sameDocumentPath(previous, session.path)) {
+    imageCache.clear();
+    if (session.text !== before || !previous && imageDestinations(before).length) await surface.load(session.text);
+  }
+  updateTitle(); return true;
 }
 async function insertImages(sources: ImageSource[]) {
   await run(async () => {
@@ -231,8 +286,9 @@ async function insertImages(sources: ImageSource[]) {
   });
   surface.focus();
 }
-async function action(name:string) {
+async function action(name:string, path?:string) {
   document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));
+  if ((name==='save'||name==='saveAs') && busy) { queuedSave=queuedSave==='saveAs'||name==='saveAs'?'saveAs':'save'; $('save-status').textContent='等待保存…'; return; }
   if(name==='find'||name==='replace'){if(!busy&&!$('modal-root').childElementCount)surface.toggleSearch(name==='replace');return;}
   if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
   if(name==='sidebar'){setSidebarVisible(document.body.classList.contains('sidebar-hidden'));return;}
@@ -249,43 +305,40 @@ async function action(name:string) {
       }
     }
     if(name==='new'){if(await session.fresh()){imageCache.clear();await surface.load('');surface.focus();}}
-    if(name==='open'){if(!desktop){toast('请在桌面程序中打开本地文件');return;}if(await session.open()){imageCache.clear();await surface.load(session.text);surface.focus();}}
-    if(name==='save'||name==='saveAs'){if(!desktop){toast('请在桌面程序中保存本地文件');return;}if(await session.save(name==='saveAs'))toast('已保存到本地');}
+    if(name==='open'||name==='recent'){if(!desktop){toast('请在桌面程序中打开本地文件');return;}if(name==='recent'&&path)await requireRecentFile(path);if(name==='open'||path)await openDocument(path);}
+    if(name==='save'||name==='saveAs'){if(!desktop){toast('请在桌面程序中保存本地文件');return;}if(await saveCurrentDocument(name==='saveAs'))toast('已保存到本地');}
     if(name==='mode'){await surface.setMode(surface.mode==='rich'?'source':'rich');surface.focus();}
     if(name==='help')await modal('在 Croquill 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\n左侧文件标签可打开文件夹，单击文件切换；分隔边可拖动调宽，底部按钮收起侧栏。\n\nCtrl+Shift+O 打开文件夹\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nTab / Shift+Tab 调整列表层级\n\n文件保存在本地，采用手动保存。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
   });
 }
 function executeCommand(command: MenuCommand) {
   document.querySelectorAll('.menubar details[open]').forEach(node => node.removeAttribute('open'));
-  if(command.action)void action(command.action);
+  if(command.action)void action(command.action,command.path);
   else if(command.format){surface.format(command.format);surface.focus();}
 }
 installMenuPointerRouting(document.querySelector<HTMLElement>('.menubar')!,executeCommand);
-app.addEventListener('click',event=>{const target=(event.target as HTMLElement).closest<HTMLElement>('[data-action],[data-format]');if(target)executeCommand({action:target.dataset.action,format:target.dataset.format});});
+app.addEventListener('click',event=>{const target=(event.target as HTMLElement).closest<HTMLElement>('[data-action],[data-format]');if(target)executeCommand({action:target.dataset.action,format:target.dataset.format,path:target.dataset.path});});
 document.addEventListener('pointerdown',event=>{if(!(event.target as HTMLElement).closest('details'))document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));});
 document.querySelectorAll('details').forEach(detail=>detail.addEventListener('toggle',()=>{if(detail.open)document.querySelectorAll('details[open]').forEach(other=>{if(other!==detail)other.removeAttribute('open');});}));
-document.addEventListener('keydown',event=>{
-  if(event.isComposing||surface.isComposing())return;
+installGlobalShortcuts({composing:()=>surface.hasFocusedComposition(),modal:()=>!!$('modal-root').childElementCount,execute:command=>{void action(command);},menu:event=>{
   if(event.altKey && !event.ctrlKey && !$('modal-root').childElementCount){
     const summary=Array.from(document.querySelectorAll<HTMLElement>('summary[data-menu-key]')).find(item => item.dataset.menuKey === event.key.toLowerCase());
     if(summary){event.preventDefault();(summary.parentElement as HTMLDetailsElement).open=true;summary.focus();}
     return;
   }
   if(event.key==='Escape'){document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));return;}
-  if(event.altKey||!event.ctrlKey)return;
-  const key=event.key.toLowerCase();
-  const name=key==='f'?'find':key==='h'?'replace':(event.code==='Slash' && !event.shiftKey)?'mode':key==='n'?'new':key==='o'?(event.shiftKey?'folder':'open'):key==='s'?(event.shiftKey?'saveAs':'save'):event.shiftKey&&key==='m'?'mode':event.shiftKey&&key==='l'?'sidebar':null;
-  if(name){event.preventDefault();if(name==='find'||name==='replace')event.stopPropagation();void action(name);}
-}, {capture:true});
+}});
 // Keep links inside the document from navigating away from the editor.
 $('rich-root').addEventListener('click',event=>{if((event.target as HTMLElement).closest('a'))event.preventDefault();});
 setSidebarTab(localStorage.getItem('croquill-sidebar-tab') === 'outline' ? 'outline' : 'files', false);
 setSidebarVisible(localStorage.getItem('croquill-sidebar') !== 'false');
-await surface.init('');
-updateTitle();updateStats();
-if(desktop){
-  await getCurrentWindow().onCloseRequested(event=>{event.preventDefault();void run(async()=>{if(await session.mayLeave())await getCurrentWindow().destroy();});});
-  const initial=await invoke<string|null>('initial_path').catch(()=>null);
-  if(initial)await run(async()=>{if(await session.open(initial))await surface.load(session.text);});
-}
+await run(async()=>{
+  await surface.init('');
+  if(desktop){
+    await getCurrentWindow().onCloseRequested(event=>{event.preventDefault();void run(async()=>{if(await session.mayLeave())await getCurrentWindow().destroy();});});
+    const initial=await invoke<string|null>('initial_path').catch(()=>null);
+    const restore=initial||recentDocuments.lastPath;
+    if(restore)await openDocument(restore);
+  }
+});
 surface.focus();

@@ -1,5 +1,17 @@
 mod documents;
 mod folders;
+#[cfg(windows)]
+mod file_drop_bridge;
+
+#[tauri::command]
+async fn document_exists(path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || documents::document_exists(&path)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn rebase_image_paths(from_path: String, to_path: String, sources: Vec<String>) -> Result<Vec<Option<String>>, String> {
+    tauri::async_runtime::spawn_blocking(move || documents::rebase_image_paths(&from_path, &to_path, &sources)).await.map_err(|e| e.to_string())?
+}
 
 #[tauri::command]
 async fn read_document(path: String) -> Result<documents::Document, String> {
@@ -62,7 +74,21 @@ fn initial_path() -> Option<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path])
+        .setup(|app| {
+            #[cfg(windows)] {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    window.with_webview(|webview| unsafe {
+                        match webview.controller().CoreWebView2().and_then(|view| file_drop_bridge::attach(&view)) {
+                            Ok(()) => {}, Err(error) => eprintln!("无法初始化拖入文件路径服务：{error}"),
+                        }
+                    })?;
+                }
+            }
+            #[cfg(not(windows))] let _ = app;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path, document_exists, rebase_image_paths])
         .run(tauri::generate_context!())
         .expect("Croquill 桌面窗口启动失败");
 }

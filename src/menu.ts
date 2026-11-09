@@ -1,4 +1,4 @@
-export interface MenuCommand { action?: string; format?: string }
+export interface MenuCommand { action?: string; format?: string; path?: string }
 
 /** Keep the pressed item through popup closure and consume its whole gesture. */
 export function installMenuPointerRouting(bar: HTMLElement, execute: (command: MenuCommand) => void): () => void {
@@ -8,7 +8,7 @@ export function installMenuPointerRouting(bar: HTMLElement, execute: (command: M
   const down = (event: PointerEvent) => {
     const button = event.target instanceof Element ? event.target.closest<HTMLElement>('.menu button[data-action],.menu button[data-format]') : null;
     if (!button || !bar.contains(button) || event.button !== 0 || !event.isPrimary) return;
-    pending = { pointer: event.pointerId, rect: button.getBoundingClientRect(), command: { action: button.dataset.action, format: button.dataset.format } };
+    pending = { pointer: event.pointerId, rect: button.getBoundingClientRect(), command: { action: button.dataset.action, format: button.dataset.format, path: button.dataset.path } };
     event.preventDefault(); event.stopPropagation(); bar.setPointerCapture(event.pointerId);
   };
   const up = (event: PointerEvent) => {
