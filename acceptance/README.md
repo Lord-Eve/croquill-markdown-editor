@@ -1,1 +1,23 @@
-IyBXaW5kb3dzIOiHquWKqOmqjOaUtu+8iEdpdEh1YiBBY3Rpb25z77yJCgpgLmdpdGh1Yi93b3JrZmxvd3Mvd2luZG93cy1hY2NlcHRhbmNlLnltbGAg5ZyoIEdpdEh1YiDnmoTnnJ8gV2luZG93cyBydW5uZXIg5LiK6Ieq5Yqo6LeR77yaCgoxLiAqKuW/hei/hyoq77yaYG5weCB0c2MgLS1ub0VtaXRg44CBYG5wbSB0ZXN0YOOAgWBjYXJnbyB0ZXN0YOOAgVRhdXJpIOato+W8j+aehOW7uu+8iGAtLW5vLWJ1bmRsZWDvvIzkuI4gYGJ1aWxkLnBzMWAg5LiA6Ie077yJCjIuICoq5b+F6L+HKirvvJrmnoTlu7rlh7rnmoQgYGNyb3F1aWxsLmV4ZWAg6IO95ZCv5Yqo5bm25Ye6546w5Li756qX5Y+jCjMuICoq6ISa5pys6aqM5pS2KirvvIhgZ3VpLWFjY2VwdGFuY2UucHMxYO+8ie+8mueUqOmUruebmOaTjeS9nOecn+Wunueoi+W6j++8jOivgeaNruWPquiupOS4pOagt+S4nOilv+KAlOKAlOeql+WPo+agh+mimOWSjOejgeebmOaWh+S7tueahOmAkOWtl+iKguWTiOW4jO+8jOWSjOS7peW+gOS6uuW3pemqjOaUtueahOagh+WHhuS4gOiHtO+8mgogICAtIEN0cmwrTyDmiZPlvIAgYGV4YW1wbGVzL2ZpbGUtd29ya2Zsb3cubWRgIOeahOWJr+acrAogICAtIOS4jee8lui+keebtOaOpSBDdHJsK1PvvIzkv53lrZjlkI4gU0hBMjU2IOS4juWOn+aWh+WujOWFqOS4gOiHtAogICAtIOWIh+a6kOeggeaooeW8j+WcqOaWh+acq+eymOi0tOagh+iusOihjO+8jEN0cmwrUyDlkI7moIforrDokL3nm5jkuJTljp/mlofliY3nvIDpgJDlrZfoioLkuI3lj5jjgIHmnKrkv53lrZjlnIbngrnmtojlpLEKICAgLSBDdHJsK1og5pKk6ZSA5ZCOIEN0cmwrU++8jOaWh+S7tuaBouWkjeS4uuWOn+WniyBTSEEyNTYKICAgLSBDdHJsK1NoaWZ0K1Mg5Y+m5a2Y5Li65Yiw5ZCM57qn5Y+m5LiA55uu5b2V77ya5Zu+54mH6Lev5b6E5pS55YaZ5Li6IGAuLi9zcmMvZmlsZS13b3JrZmxvdy5hc3NldHMvLi4uYOOAgemZhOS7tuayoeacieiiq+WkjeWItuOAgeWOn+aWh+S7tuacquWKqAogICAtIOWFs+eoi+W6j+WGjeWQr+WKqO+8muaBouWkjeS4iuasoeaWh+aho++8m+aWsOW7uuepuueZveWQjuWGjemHjeWQr++8muS/neaMgeepuueZvQo0LiDmr4/mrKHov5DooYzmioogYHJlc3VsdHMuanNvbmDjgIHnu5PorrogYHJlcG9ydC5tZGDjgIHmiKrlm77lkowgZXhlIOS9nOS4uiBhcnRpZmFjdCDkv53lrZggMzAg5aSpCgoqKuiEmuacrOS7o+abv+S4jeS6hueahO+8jOS7jemcgOecn+S6uuahjOmdoumqjOaUtioq77yI5LiN6KaB5Zug5Li66L+Z6YeM5YWo57u/5bCx5b2T5a6D5Lus6YCa6L+H77yJ77yaCgotIOS7jui1hOa6kOeuoeeQhuWZqOaLluWFpSBgLm1kYCDmiZPlvIAKLSDnnJ/lrp7kuK3mlofovpPlhaXms5Xnu4Tor43ov4fnqIsKLSDlkozlrpjmlrkgVHlwb3JhIOW5tuaOkuWvueeFp+aYvuekuuaViOaenAotIOe8uuWbvuaXtuWPpuWtmOS4uueahOWksei0peS/neaKpO+8iOmcgOWFiOehruiupOebruagh+i3r+W+hOWGjeS4i+e7k+iuuu+8iQoK6ISa5pys5paH5Lu25Yi75oSP5Y+q55SoIEFTQ0lJ77ya5qCH6aKY6YeM55qEIGDigJRgIOWSjOacquS/neWtmOagh+iusCBg4pePYCDnlKjnoIHngrnmi7zlh7rvvIzpgb/lhY3nvJbnoIHkuI3lkIzlr7zoh7Top6PmnpDlh7rplJnjgIIK
+# Windows 自动验收（GitHub Actions）
+
+`.github/workflows/windows-acceptance.yml` 在 GitHub 的真 Windows runner 上自动跑：
+
+1. **必过**：`npx tsc --noEmit`、`npm test`、`cargo test`、Tauri 正式构建（`--no-bundle`，与 `build.ps1` 一致）
+2. **必过**：构建出的 `croquill.exe` 能启动并出现主窗口
+3. **脚本验收**（`gui-acceptance.ps1`）：用键盘操作真实程序，证据只认两样东西——窗口标题和磁盘文件的逐字节哈希，和以往人工验收的标准一致：
+   - Ctrl+O 打开 `examples/file-workflow.md` 的副本
+   - 不编辑直接 Ctrl+S，保存后 SHA256 与原文完全一致
+   - 切源码模式在文末粘贴标记行，Ctrl+S 后标记落盘且原文前缀逐字节不变、未保存圆点消失
+   - Ctrl+Z 撤销后 Ctrl+S，文件恢复为原始 SHA256
+   - Ctrl+Shift+S 另存为到同级另一目录：图片路径改写为 `../src/file-workflow.assets/...`、附件没有被复制、原文件未动
+   - 关程序再启动：恢复上次文档；新建空白后再重启：保持空白
+4. 每次运行把 `results.json`、结论 `report.md`、截图和 exe 作为 artifact 保存 30 天
+
+**脚本代替不了的，仍需真人桌面验收**（不要因为这里全绿就当它们通过）：
+
+- 从资源管理器拖入 `.md` 打开
+- 真实中文输入法组词过程
+- 和官方 Typora 并排对照显示效果
+- 缺图时另存为的失败保护（需先确认目标路径再下结论）
+
+脚本文件刻意只用 ASCII：标题里的 `—` 和未保存标记 `●` 用码点拼出，避免编码不同导致解析出错。
