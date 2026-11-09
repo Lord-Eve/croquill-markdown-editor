@@ -247,11 +247,13 @@ function updateMode() {
 async function run(operation:()=>Promise<void>) {
   if(busy || surface.hasFocusedComposition() || $('modal-root').childElementCount) return;
   session.edit(surface.getMarkdown());
+  const restoreFocus = surface.deferFocus();
   busy=true; $('editor-scroll').inert=true;
   try { await operation(); }
   catch(error){await modal('操作未完成',String(error),[{label:'返回文档',value:'cancel',primary:true}]);}
   finally {
     busy=false;$('editor-scroll').inert=false;updateTitle();updateStats();
+    restoreFocus();
     const requested = queuedSave; queuedSave = null;
     if (requested) queueMicrotask(() => { void action(requested); });
   }
@@ -283,8 +285,8 @@ async function insertImages(sources: ImageSource[]) {
       if (!src) break;
       surface.insertImage(src);
     }
+    surface.focus();
   });
-  surface.focus();
 }
 async function action(name:string, path?:string) {
   document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));
@@ -301,7 +303,7 @@ async function action(name:string, path?:string) {
       const selected = await open({title:'选择图片',multiple:false,directory:false,filters:[{name:'图片',extensions:['png','jpg','jpeg','gif','webp','bmp','svg','avif']}]});
       if(typeof selected==='string'){
         const src=await imageImporter.import({path:selected});
-        if(src)surface.insertImage(src);
+        if(src){surface.insertImage(src);surface.focus();}
       }
     }
     if(name==='new'){if(await session.fresh()){imageCache.clear();await surface.load('');surface.focus();}}
