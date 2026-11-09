@@ -25,7 +25,18 @@ describe('rich editor Markdown serialization', () => {
   beforeEach(async () => {
     page = await browser.newPage();
     await page.goto(baseURL + '/tests/harness.html');
-    await page.addScriptTag({ type: 'module', content: 'import { MarkdownSurface } from "/src/editor.ts"; import { ImageImporter } from "/src/images.ts"; window.croqTestSurface = MarkdownSurface; window.croqTestImporter = ImageImporter; import { protectFileDrops } from "/src/file-drop.ts"; window.croqTestProtectDrops = protectFileDrops;' });
+    // A Vite dev-server reload can destroy the execution context between
+    // navigation and script injection (seen on the Windows runner and once
+    // locally as "Execution context was destroyed, most likely because of
+    // a navigation"). Retry the setup once instead of failing the test.
+    const script = { type: 'module' as const, content: 'import { MarkdownSurface } from "/src/editor.ts"; import { ImageImporter } from "/src/images.ts"; window.croqTestSurface = MarkdownSurface; window.croqTestImporter = ImageImporter; import { protectFileDrops } from "/src/file-drop.ts"; window.croqTestProtectDrops = protectFileDrops;' };
+    try {
+      await page.addScriptTag(script);
+    } catch (error) {
+      if (!/Execution context was destroyed/.test((error as Error).message)) throw error;
+      await page.goto(baseURL + '/tests/harness.html');
+      await page.addScriptTag(script);
+    }
     await page.waitForFunction(() => 'croqTestSurface' in window);
   });
   afterEach(async () => { await page?.close(); });
