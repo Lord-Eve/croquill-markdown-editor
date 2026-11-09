@@ -1,1 +1,257 @@
-IyBDcm9xdWlsbCBHVUkgYWNjZXB0YW5jZSBvbiBhIHJlYWwgV2luZG93cyBydW5uZXIuCiMKIyBFdmlkZW5jZSBtb2RlbCAoc2FtZSBhcyB0aGUgbWFudWFsIGFjY2VwdGFuY2UgaW4gRHJpdmUpOgojICAgLSB0aGUgd2luZG93IHRpdGxlICggIjxuYW1lPiAtIENyb3F1aWxsIiwgZGlydHkgcHJlZml4ID0gVSsyNUNGICsgc3BhY2UgKQojICAgLSB0aGUgZXhhY3QgYnl0ZXMgdGhlIGFwcCB3cml0ZXMgdG8gZGlzayAoU0hBMjU2IGJlZm9yZS9hZnRlcikKIyBObyB0ZXN0IGlzIHJlcG9ydGVkIFBBU1MgZnJvbSBhIHNjcmVlbnNob3Qgb3IgYSBwcm9jZXNzIGNoZWNrIGFsb25lLgojCiMgRXhpdCBjb2RlOiAwIHdoZW4gZXZlcnkgcmVjb3JkZWQgdGVzdCBQQVNTZXMsIDEgb3RoZXJ3aXNlLgojIFNjcmVlbnNob3RzIGFyZSBiZXN0LWVmZm9ydCBldmlkZW5jZSBhbmQgbmV2ZXIgZGVjaWRlIGEgcmVzdWx0LgojCiMgTk9URTogdGhpcyBmaWxlIGlzIGludGVudGlvbmFsbHkgQVNDSUktb25seS4gTm9uLUFTQ0lJIGNoYXJhY3RlcnMgbmVlZGVkCiMgZm9yIHRpdGxlIG1hdGNoaW5nIGFyZSBidWlsdCBmcm9tIGNvZGUgcG9pbnRzIHNvIHRoZSBmaWxlIHBhcnNlcyB0aGUgc2FtZQojIHVuZGVyIGFueSBjb2RlIHBhZ2UuCgpwYXJhbSgKICAgIFtQYXJhbWV0ZXIoTWFuZGF0b3J5ID0gJHRydWUpXVtzdHJpbmddJEV4ZVBhdGgsCiAgICBbUGFyYW1ldGVyKE1hbmRhdG9yeSA9ICR0cnVlKV1bc3RyaW5nXSRFeGFtcGxlc0RpciwKICAgIFtQYXJhbWV0ZXIoTWFuZGF0b3J5ID0gJHRydWUpXVtzdHJpbmddJE91dERpcgopCgokRXJyb3JBY3Rpb25QcmVmZXJlbmNlID0gJ0NvbnRpbnVlJwokRGFzaCA9IFtzdHJpbmddW2NoYXJdMHgyMDE0ICAgICAgICAgICMgZW0gZGFzaCB1c2VkIGluICJuYW1lIC0gQ3JvcXVpbGwiCiREb3QgID0gW3N0cmluZ11bY2hhcl0weDI1Q0YgICAgICAgICAgIyBkaXJ0eSBtYXJrZXIgcHJlZml4IGluIHRoZSB0aXRsZQokVGl0bGVTdWZmaXggPSAiICREYXNoIENyb3F1aWxsIgoKQWRkLVR5cGUgLUFzc2VtYmx5TmFtZSBTeXN0ZW0uV2luZG93cy5Gb3JtcwpBZGQtVHlwZSAtQXNzZW1ibHlOYW1lIFN5c3RlbS5EcmF3aW5nCkFkZC1UeXBlIEAiCnVzaW5nIFN5c3RlbTsKdXNpbmcgU3lzdGVtLlJ1bnRpbWUuSW50ZXJvcFNlcnZpY2VzOwpwdWJsaWMgc3RhdGljIGNsYXNzIFdpbjMyIHsKICAgIFtEbGxJbXBvcnQoInVzZXIzMi5kbGwiKV0gcHVibGljIHN0YXRpYyBleHRlcm4gYm9vbCBTZXRGb3JlZ3JvdW5kV2luZG93KEludFB0ciBoV25kKTsKICAgIFtEbGxJbXBvcnQoInVzZXIzMi5kbGwiKV0gcHVibGljIHN0YXRpYyBleHRlcm4gYm9vbCBHZXRXaW5kb3dSZWN0KEludFB0ciBoV25kLCBvdXQgUkVDVCByZWN0KTsKICAgIFtEbGxJbXBvcnQoInVzZXIzMi5kbGwiKV0gcHVibGljIHN0YXRpYyBleHRlcm4gdm9pZCBtb3VzZV9ldmVudCh1aW50IGZsYWdzLCB1aW50IGR4LCB1aW50IGR5LCB1aW50IGRhdGEsIFVJbnRQdHIgZXh0cmEpOwogICAgcHVibGljIHN0cnVjdCBSRUNUIHsgcHVibGljIGludCBMZWZ0LCBUb3AsIFJpZ2h0LCBCb3R0b207IH0KfQoiQAoKJHNjcmlwdDpSZXN1bHRzID0gTmV3LU9iamVjdCBTeXN0ZW0uQ29sbGVjdGlvbnMuQXJyYXlMaXN0CiRzY3JpcHQ6UHJvYyA9ICRudWxsCgpmdW5jdGlvbiBBZGQtUmVzdWx0KFtzdHJpbmddJElkLCBbc3RyaW5nXSRTdGF0dXMsIFtzdHJpbmddJERldGFpbCkgewogICAgW3ZvaWRdJHNjcmlwdDpSZXN1bHRzLkFkZChbb3JkZXJlZF1AeyBpZCA9ICRJZDsgc3RhdHVzID0gJFN0YXR1czsgZGV0YWlsID0gJERldGFpbCB9KQogICAgV3JpdGUtSG9zdCAiWyRTdGF0dXNdICRJZCAtICREZXRhaWwiCn0KCmZ1bmN0aW9uIEdldC1UaXRsZSB7CiAgICBpZiAoJG51bGwgLWVxICRzY3JpcHQ6UHJvYykgeyByZXR1cm4gIiIgfQogICAgJHNjcmlwdDpQcm9jLlJlZnJlc2goKQogICAgaWYgKCRzY3JpcHQ6UHJvYy5IYXNFeGl0ZWQpIHsgcmV0dXJuICIiIH0KICAgIHJldHVybiBbc3RyaW5nXSRzY3JpcHQ6UHJvYy5NYWluV2luZG93VGl0bGUKfQoKZnVuY3Rpb24gV2FpdC1UaXRsZShbc2NyaXB0YmxvY2tdJFByZWRpY2F0ZSwgW2ludF0kVGltZW91dFNlYywgW3N0cmluZ10kV2hhdCkgewogICAgJGRlYWRsaW5lID0gKEdldC1EYXRlKS5BZGRTZWNvbmRzKCRUaW1lb3V0U2VjKQogICAgd2hpbGUgKChHZXQtRGF0ZSkgLWx0ICRkZWFkbGluZSkgewogICAgICAgICR0ID0gR2V0LVRpdGxlCiAgICAgICAgaWYgKCYgJFByZWRpY2F0ZSAkdCkgeyByZXR1cm4gJHQgfQogICAgICAgIFN0YXJ0LVNsZWVwIC1NaWxsaXNlY29uZHMgNTAwCiAgICB9CiAgICBXcml0ZS1Ib3N0ICJUaW1lZCBvdXQgd2FpdGluZyBmb3IgJFdoYXQ7IGxhc3QgdGl0bGU6ICckKEdldC1UaXRsZSknIgogICAgcmV0dXJuICRudWxsCn0KCmZ1bmN0aW9uIEZvY3VzLUFwcCB7CiAgICBpZiAoJG51bGwgLWVxICRzY3JpcHQ6UHJvYyAtb3IgJHNjcmlwdDpQcm9jLkhhc0V4aXRlZCkgeyByZXR1cm4gfQogICAgJHNjcmlwdDpQcm9jLlJlZnJlc2goKQogICAgW3ZvaWRdW1dpbjMyXTo6U2V0Rm9yZWdyb3VuZFdpbmRvdygkc2NyaXB0OlByb2MuTWFpbldpbmRvd0hhbmRsZSkKICAgIFN0YXJ0LVNsZWVwIC1NaWxsaXNlY29uZHMgNDAwCn0KCmZ1bmN0aW9uIFNlbmQoW3N0cmluZ10kS2V5cywgW2ludF0kQWZ0ZXJNcyA9IDgwMCkgewogICAgRm9jdXMtQXBwCiAgICBbU3lzdGVtLldpbmRvd3MuRm9ybXMuU2VuZEtleXNdOjpTZW5kV2FpdCgkS2V5cykKICAgIFN0YXJ0LVNsZWVwIC1NaWxsaXNlY29uZHMgJEFmdGVyTXMKfQoKZnVuY3Rpb24gQ2xpY2stRWRpdG9yQ2VudGVyIHsKICAgICRzY3JpcHQ6UHJvYy5SZWZyZXNoKCkKICAgICRyZWN0ID0gTmV3LU9iamVjdCBXaW4zMitSRUNUCiAgICBpZiAoLW5vdCBbV2luMzJdOjpHZXRXaW5kb3dSZWN0KCRzY3JpcHQ6UHJvYy5NYWluV2luZG93SGFuZGxlLCBbcmVmXSRyZWN0KSkgeyByZXR1cm4gfQogICAgJHggPSBbaW50XSgoJHJlY3QuTGVmdCArICRyZWN0LlJpZ2h0KSAvIDIpCiAgICAkeSA9IFtpbnRdKCgkcmVjdC5Ub3AgKyAkcmVjdC5Cb3R0b20pIC8gMikKICAgIFtTeXN0ZW0uV2luZG93cy5Gb3Jtcy5DdXJzb3JdOjpQb3NpdGlvbiA9IE5ldy1PYmplY3QgU3lzdGVtLkRyYXdpbmcuUG9pbnQoJHgsICR5KQogICAgW1dpbjMyXTo6bW91c2VfZXZlbnQoMHgwMDAyLCAwLCAwLCAwLCBbVUludFB0cl06Olplcm8pICAjIGxlZnQgZG93bgogICAgW1dpbjMyXTo6bW91c2VfZXZlbnQoMHgwMDA0LCAwLCAwLCAwLCBbVUludFB0cl06Olplcm8pICAjIGxlZnQgdXAKICAgIFN0YXJ0LVNsZWVwIC1NaWxsaXNlY29uZHMgNTAwCn0KCmZ1bmN0aW9uIFNhdmUtU2NyZWVuc2hvdChbc3RyaW5nXSROYW1lKSB7CiAgICB0cnkgewogICAgICAgICRib3VuZHMgPSBbU3lzdGVtLldpbmRvd3MuRm9ybXMuU2NyZWVuXTo6UHJpbWFyeVNjcmVlbi5Cb3VuZHMKICAgICAgICAkYm1wID0gTmV3LU9iamVjdCBTeXN0ZW0uRHJhd2luZy5CaXRtYXAoJGJvdW5kcy5XaWR0aCwgJGJvdW5kcy5IZWlnaHQpCiAgICAgICAgJGdmeCA9IFtTeXN0ZW0uRHJhd2luZy5HcmFwaGljc106OkZyb21JbWFnZSgkYm1wKQogICAgICAgICRnZnguQ29weUZyb21TY3JlZW4oJGJvdW5kcy5Mb2NhdGlvbiwgW1N5c3RlbS5EcmF3aW5nLlBvaW50XTo6RW1wdHksICRib3VuZHMuU2l6ZSkKICAgICAgICAkcGF0aCA9IEpvaW4tUGF0aCAkT3V0RGlyICJzY3JlZW5zaG90c1wkTmFtZS5wbmciCiAgICAgICAgJGJtcC5TYXZlKCRwYXRoLCBbU3lzdGVtLkRyYXdpbmcuSW1hZ2luZy5JbWFnZUZvcm1hdF06OlBuZykKICAgICAgICAkZ2Z4LkRpc3Bvc2UoKTsgJGJtcC5EaXNwb3NlKCkKICAgIH0gY2F0Y2ggewogICAgICAgIFdyaXRlLUhvc3QgIlNjcmVlbnNob3QgJE5hbWUgZmFpbGVkIChub24tZmF0YWwpOiAkKCRfLkV4Y2VwdGlvbi5NZXNzYWdlKSIKICAgIH0KfQoKZnVuY3Rpb24gU3RhcnQtQXBwIHsKICAgICRzY3JpcHQ6UHJvYyA9IFN0YXJ0LVByb2Nlc3MgLUZpbGVQYXRoICRFeGVQYXRoIC1QYXNzVGhydQogICAgU3RhcnQtU2xlZXAgLVNlY29uZHMgMQp9CgpmdW5jdGlvbiBTdG9wLUFwcCB7CiAgICBpZiAoJG51bGwgLW5lICRzY3JpcHQ6UHJvYyAtYW5kIC1ub3QgJHNjcmlwdDpQcm9jLkhhc0V4aXRlZCkgewogICAgICAgIFt2b2lkXSRzY3JpcHQ6UHJvYy5DbG9zZU1haW5XaW5kb3coKQogICAgICAgIGlmICgtbm90ICRzY3JpcHQ6UHJvYy5XYWl0Rm9yRXhpdCgxMDAwMCkpIHsKICAgICAgICAgICAgU3RvcC1Qcm9jZXNzIC1JZCAkc2NyaXB0OlByb2MuSWQgLUZvcmNlIC1FcnJvckFjdGlvbiBTaWxlbnRseUNvbnRpbnVlCiAgICAgICAgfQogICAgfQogICAgU3RhcnQtU2xlZXAgLVNlY29uZHMgMQp9CgpmdW5jdGlvbiBHZXQtSGFzaChbc3RyaW5nXSRQYXRoKSB7CiAgICByZXR1cm4gKEdldC1GaWxlSGFzaCAtTGl0ZXJhbFBhdGggJFBhdGggLUFsZ29yaXRobSBTSEEyNTYpLkhhc2gKfQoKIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tIHNldHVwCmlmICgtbm90IChUZXN0LVBhdGggLUxpdGVyYWxQYXRoICRFeGVQYXRoKSkgeyB0aHJvdyAiRXhlIG5vdCBmb3VuZDogJEV4ZVBhdGgiIH0KTmV3LUl0ZW0gLUl0ZW1UeXBlIERpcmVjdG9yeSAtRm9yY2UgLVBhdGggJE91dERpciB8IE91dC1OdWxsCk5ldy1JdGVtIC1JdGVtVHlwZSBEaXJlY3RvcnkgLUZvcmNlIC1QYXRoIChKb2luLVBhdGggJE91dERpciAic2NyZWVuc2hvdHMiKSB8IE91dC1OdWxsCgokYmFzZSAgID0gSm9pbi1QYXRoICRlbnY6VEVNUCAiY3JvcXVpbGwtYWNjZXB0YW5jZSIKJHNyY0RpciA9IEpvaW4tUGF0aCAkYmFzZSAic3JjIgokZHN0RGlyID0gSm9pbi1QYXRoICRiYXNlICJzYXZlYXMtb3V0IgppZiAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAkYmFzZSkgeyBSZW1vdmUtSXRlbSAtTGl0ZXJhbFBhdGggJGJhc2UgLVJlY3Vyc2UgLUZvcmNlIH0KTmV3LUl0ZW0gLUl0ZW1UeXBlIERpcmVjdG9yeSAtRm9yY2UgLVBhdGggJHNyY0RpciB8IE91dC1OdWxsCk5ldy1JdGVtIC1JdGVtVHlwZSBEaXJlY3RvcnkgLUZvcmNlIC1QYXRoICRkc3REaXIgfCBPdXQtTnVsbAoKJHNhbXBsZVNyYyA9IEpvaW4tUGF0aCAkRXhhbXBsZXNEaXIgImZpbGUtd29ya2Zsb3cubWQiCiRhc3NldHNTcmMgPSBKb2luLVBhdGggJEV4YW1wbGVzRGlyICJmaWxlLXdvcmtmbG93LmFzc2V0cyIKQ29weS1JdGVtIC1MaXRlcmFsUGF0aCAkc2FtcGxlU3JjIC1EZXN0aW5hdGlvbiAkc3JjRGlyCmlmIChUZXN0LVBhdGggLUxpdGVyYWxQYXRoICRhc3NldHNTcmMpIHsgQ29weS1JdGVtIC1MaXRlcmFsUGF0aCAkYXNzZXRzU3JjIC1EZXN0aW5hdGlvbiAkc3JjRGlyIC1SZWN1cnNlIH0KCiRzYW1wbGUgPSBKb2luLVBhdGggJHNyY0RpciAiZmlsZS13b3JrZmxvdy5tZCIKJG9yaWdIYXNoICA9IEdldC1IYXNoICRzYW1wbGUKJG9yaWdCeXRlcyA9IFtTeXN0ZW0uSU8uRmlsZV06OlJlYWRBbGxCeXRlcygkc2FtcGxlKQokbWFya2VyID0gIjwhLS0gY3JvcXVpbGwtYWNjZXB0YW5jZS1tYXJrZXIgLS0+IgoKdHJ5IHsKICAgICMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tIFQyIGxhdW5jaAogICAgU3RhcnQtQXBwCiAgICAkdCA9IFdhaXQtVGl0bGUgeyBwYXJhbSgkeCkgJHguRW5kc1dpdGgoJFRpdGxlU3VmZml4KSB9IDYwICJtYWluIHdpbmRvdyB0aXRsZSIKICAgIGlmICgkbnVsbCAtbmUgJHQpIHsgQWRkLVJlc3VsdCAibGF1bmNoIiAiUEFTUyIgIk1haW4gd2luZG93IGFwcGVhcmVkLCB0aXRsZSAnJHQnLiIgfQogICAgZWxzZSB7IEFkZC1SZXN1bHQgImxhdW5jaCIgIkZBSUwiICJNYWluIHdpbmRvdyB0aXRsZSBuZXZlciBhcHBlYXJlZC4iIH0KICAgIFNhdmUtU2NyZWVuc2hvdCAiMDEtbGF1bmNoIgogICAgaWYgKCRudWxsIC1lcSAkdCkgeyB0aHJvdyAiQ2Fubm90IGNvbnRpbnVlIHdpdGhvdXQgYSBtYWluIHdpbmRvdy4iIH0KCiAgICAjIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSBUMyBvcGVuIGZpbGUKICAgIFNlbmQgIl57b30iIDE1MDAgICAgICAgICAgICAgICAgICAgICAgICMgQ3RybCtPLCBuYXRpdmUgT3BlbiBkaWFsb2cKICAgIFtTeXN0ZW0uV2luZG93cy5Gb3Jtcy5TZW5kS2V5c106OlNlbmRXYWl0KCRzYW1wbGUpCiAgICBTdGFydC1TbGVlcCAtTWlsbGlzZWNvbmRzIDMwMAogICAgW1N5c3RlbS5XaW5kb3dzLkZvcm1zLlNlbmRLZXlzXTo6U2VuZFdhaXQoIntFTlRFUn0iKQogICAgJHQgPSBXYWl0LVRpdGxlIHsgcGFyYW0oJHgpICR4IC1lcSAiZmlsZS13b3JrZmxvdy5tZCRUaXRsZVN1ZmZpeCIgfSAzMCAic2FtcGxlIG9wZW5lZCIKICAgIGlmICgkbnVsbCAtbmUgJHQpIHsgQWRkLVJlc3VsdCAib3Blbi1zYW1wbGUiICJQQVNTIiAiU2FtcGxlIG9wZW5lZCB2aWEgQ3RybCtPIGRpYWxvZy4iIH0KICAgIGVsc2UgeyBBZGQtUmVzdWx0ICJvcGVuLXNhbXBsZSIgIkZBSUwiICJUaXRsZSBkaWQgbm90IGJlY29tZSB0aGUgc2FtcGxlIG5hbWU7IGxhc3QgdGl0bGUgJyQoR2V0LVRpdGxlKScuIiB9CiAgICBTdGFydC1TbGVlcCAtU2Vjb25kcyAyCiAgICBTYXZlLVNjcmVlbnNob3QgIjAyLW9wZW5lZCIKCiAgICAjIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0gVDNiIG5vLWVkaXQgc2F2ZSwgYnl0ZSBleGFjdAogICAgU2VuZCAiXnMiIDE1MDAKICAgICRoID0gR2V0LUhhc2ggJHNhbXBsZQogICAgaWYgKCRoIC1lcSAkb3JpZ0hhc2gpIHsgQWRkLVJlc3VsdCAibm9lZGl0LXNhdmUtYnl0ZXMiICJQQVNTIiAiU0hBMjU2IHVuY2hhbmdlZCBhZnRlciBDdHJsK1Mgd2l0aCBubyBlZGl0cy4iIH0KICAgIGVsc2UgeyBBZGQtUmVzdWx0ICJub2VkaXQtc2F2ZS1ieXRlcyIgIkZBSUwiICJIYXNoIGNoYW5nZWQgd2l0aG91dCBlZGl0czogJGgiIH0KCiAgICAjIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSBUNCBzb3VyY2UtbW9kZSBlZGl0LCBzYXZlLCBwcmVmaXgga2VwdAogICAgQ2xpY2stRWRpdG9yQ2VudGVyCiAgICBTZW5kICJeLyIgMTIwMCAgICAgICAgICAgICAgICAgICAgICAgICAgIyBDdHJsKy8gLT4gc291cmNlIG1vZGUKICAgIFNlbmQgIl57RU5EfSIgNTAwCiAgICBTZXQtQ2xpcGJvYXJkIC1WYWx1ZSAiYHJgbiRtYXJrZXJgcmBuIgogICAgU2VuZCAiXnYiIDYwMAogICAgU2VuZCAiXnMiIDUwMAogICAgJHQgPSBXYWl0LVRpdGxlIHsgcGFyYW0oJHgpIC1ub3QgJHguU3RhcnRzV2l0aCgkRG90KSB9IDIwICJkaXJ0eSBtYXJrZXIgY2xlYXJlZCBhZnRlciBzYXZlIgogICAgJGJ5dGVzID0gW1N5c3RlbS5JTy5GaWxlXTo6UmVhZEFsbEJ5dGVzKCRzYW1wbGUpCiAgICAkdGV4dCAgPSBbU3lzdGVtLlRleHQuRW5jb2RpbmddOjpVVEY4LkdldFN0cmluZygkYnl0ZXMpCiAgICAkcHJlZml4T2sgPSAkYnl0ZXMuTGVuZ3RoIC1nZSAkb3JpZ0J5dGVzLkxlbmd0aAogICAgaWYgKCRwcmVmaXhPaykgewogICAgICAgIGZvciAoJGkgPSAwOyAkaSAtbHQgJG9yaWdCeXRlcy5MZW5ndGg7ICRpKyspIHsKICAgICAgICAgICAgaWYgKCRieXRlc1skaV0gLW5lICRvcmlnQnl0ZXNbJGldKSB7ICRwcmVmaXhPayA9ICRmYWxzZTsgYnJlYWsgfQogICAgICAgIH0KICAgIH0KICAgIGlmICgkbnVsbCAtbmUgJHQgLWFuZCAkdGV4dC5Db250YWlucygkbWFya2VyKSAtYW5kICRwcmVmaXhPaykgewogICAgICAgIEFkZC1SZXN1bHQgInNvdXJjZS1lZGl0LXNhdmUiICJQQVNTIiAiTWFya2VyIHNhdmVkLCBvcmlnaW5hbCBwcmVmaXggYnl0ZS1pZGVudGljYWwsIGRpcnR5IG1hcmtlciBjbGVhcmVkLiIKICAgIH0gZWxzZSB7CiAgICAgICAgQWRkLVJlc3VsdCAic291cmNlLWVkaXQtc2F2ZSIgIkZBSUwiICJ0aXRsZUNsZWFyZWQ9JCgkbnVsbCAtbmUgJHQpIG1hcmtlckZvdW5kPSQoJHRleHQuQ29udGFpbnMoJG1hcmtlcikpIHByZWZpeEludGFjdD0kcHJlZml4T2siCiAgICB9CiAgICBTYXZlLVNjcmVlbnNob3QgIjAzLXNvdXJjZS1lZGl0IgoKICAgICMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSBUNSB1bmRvICsgc2F2ZSByZXN0b3JlcyBieXRlcwogICAgU2VuZCAiXnoiIDYwMAogICAgU2VuZCAiXnMiIDUwMAogICAgJHQgPSBXYWl0LVRpdGxlIHsgcGFyYW0oJHgpIC1ub3QgJHguU3RhcnRzV2l0aCgkRG90KSB9IDIwICJkaXJ0eSBtYXJrZXIgY2xlYXJlZCBhZnRlciB1bmRvK3NhdmUiCiAgICAkaCA9IEdldC1IYXNoICRzYW1wbGUKICAgIGlmICgkbnVsbCAtbmUgJHQgLWFuZCAkaCAtZXEgJG9yaWdIYXNoKSB7IEFkZC1SZXN1bHQgInVuZG8tc2F2ZS1ieXRlcyIgIlBBU1MiICJVbmRvICsgQ3RybCtTIHJlc3RvcmVkIHRoZSBleGFjdCBvcmlnaW5hbCBTSEEyNTYuIiB9CiAgICBlbHNlIHsgQWRkLVJlc3VsdCAidW5kby1zYXZlLWJ5dGVzIiAiRkFJTCIgIkhhc2ggYWZ0ZXIgdW5kbytzYXZlOiAkaCAoZXhwZWN0ZWQgJG9yaWdIYXNoKSIgfQoKICAgICMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLSBUNiBTYXZlIEFzLCBwYXRoIHJlYmFzZQogICAgJHRhcmdldCA9IEpvaW4tUGF0aCAkZHN0RGlyICJmaWxlLXdvcmtmbG93Lm1kIgogICAgU2VuZCAiXitzIiAxNTAwICAgICAgICAgICAgICAgICAgICAgICAgICMgQ3RybCtTaGlmdCtTLCBuYXRpdmUgU2F2ZSBBcyBkaWFsb2cKICAgIFtTeXN0ZW0uV2luZG93cy5Gb3Jtcy5TZW5kS2V5c106OlNlbmRXYWl0KCR0YXJnZXQpCiAgICBTdGFydC1TbGVlcCAtTWlsbGlzZWNvbmRzIDMwMAogICAgW1N5c3RlbS5XaW5kb3dzLkZvcm1zLlNlbmRLZXlzXTo6U2VuZFdhaXQoIntFTlRFUn0iKQogICAgJGRlYWRsaW5lID0gKEdldC1EYXRlKS5BZGRTZWNvbmRzKDIwKQogICAgd2hpbGUgKChHZXQtRGF0ZSkgLWx0ICRkZWFkbGluZSAtYW5kIC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJHRhcmdldCkpIHsgU3RhcnQtU2xlZXAgLU1pbGxpc2Vjb25kcyA1MDAgfQogICAgaWYgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJHRhcmdldCkgewogICAgICAgICR0YXJnZXRUZXh0ID0gW1N5c3RlbS5JTy5GaWxlXTo6UmVhZEFsbFRleHQoJHRhcmdldCwgW1N5c3RlbS5UZXh0LkVuY29kaW5nXTo6VVRGOCkKICAgICAgICAkcmViYXNlZCA9ICR0YXJnZXRUZXh0IC1tYXRjaCAiXC5cLi9zcmMvZmlsZS13b3JrZmxvd1wuYXNzZXRzLyIKICAgICAgICAkYXNzZXRzQ29waWVkID0gVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAoSm9pbi1QYXRoICRkc3REaXIgImZpbGUtd29ya2Zsb3cuYXNzZXRzIikKICAgICAgICAkb3JpZ1VudG91Y2hlZCA9IChHZXQtSGFzaCAkc2FtcGxlKSAtZXEgJG9yaWdIYXNoCiAgICAgICAgaWYgKCRyZWJhc2VkIC1hbmQgLW5vdCAkYXNzZXRzQ29waWVkIC1hbmQgJG9yaWdVbnRvdWNoZWQpIHsKICAgICAgICAgICAgQWRkLVJlc3VsdCAic2F2ZWFzLXJlYmFzZSIgIlBBU1MiICJJbWFnZSBwYXRocyByZWJhc2VkIHRvIC4uL3NyYy8uLi4sIG5vIGFzc2V0cyBjb3BpZWQsIG9yaWdpbmFsIGZpbGUgdW50b3VjaGVkLiIKICAgICAgICB9IGVsc2UgewogICAgICAgICAgICBBZGQtUmVzdWx0ICJzYXZlYXMtcmViYXNlIiAiRkFJTCIgInJlYmFzZWQ9JHJlYmFzZWQgYXNzZXRzQ29waWVkPSRhc3NldHNDb3BpZWQgb3JpZ2luYWxVbnRvdWNoZWQ9JG9yaWdVbnRvdWNoZWQiCiAgICAgICAgfQogICAgfSBlbHNlIHsKICAgICAgICBBZGQtUmVzdWx0ICJzYXZlYXMtcmViYXNlIiAiRkFJTCIgIlNhdmUgQXMgdGFyZ2V0IGZpbGUgd2FzIG5vdCBjcmVhdGVkIGF0ICR0YXJnZXQuIgogICAgfQogICAgU2F2ZS1TY3JlZW5zaG90ICIwNC1zYXZlYXMiCgogICAgIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tIFQ3IHJlc3RhcnQgcmVzdG9yZXMgZG9jCiAgICBTdG9wLUFwcAogICAgU3RhcnQtQXBwCiAgICAkdCA9IFdhaXQtVGl0bGUgeyBwYXJhbSgkeCkgJHggLWVxICJmaWxlLXdvcmtmbG93Lm1kJFRpdGxlU3VmZml4IiB9IDQwICJkb2N1bWVudCByZXN0b3JlZCBhZnRlciByZXN0YXJ0IgogICAgaWYgKCRudWxsIC1uZSAkdCkgeyBBZGQtUmVzdWx0ICJyZXN0YXJ0LXJlc3RvcmUiICJQQVNTIiAiUmVsYXVuY2ggcmVzdG9yZWQgdGhlIGxhc3QgZG9jdW1lbnQgKHRpdGxlIG1hdGNoKS4iIH0KICAgIGVsc2UgeyBBZGQtUmVzdWx0ICJyZXN0YXJ0LXJlc3RvcmUiICJGQUlMIiAiTGFzdCB0aXRsZSBhZnRlciByZWxhdW5jaDogJyQoR2V0LVRpdGxlKScuIiB9CiAgICBTYXZlLVNjcmVlbnNob3QgIjA1LXJlc3RhcnQiCgogICAgIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0gVDggbmV3IGRvYywgcmVzdGFydCBzdGF5cyBibGFuawogICAgU2VuZCAiXm4iIDEwMDAgICAgICAgICAgICAgICAgICAgICAgICAgICMgQ3RybCtOCiAgICAkdCA9IFdhaXQtVGl0bGUgeyBwYXJhbSgkeCkgJHguRW5kc1dpdGgoJFRpdGxlU3VmZml4KSAtYW5kICR4IC1ub3RsaWtlICIqZmlsZS13b3JrZmxvdyoiIH0gMjAgIm5ldyBibGFuayBkb2N1bWVudCIKICAgIFN0b3AtQXBwCiAgICBTdGFydC1BcHAKICAgICR0ID0gV2FpdC1UaXRsZSB7IHBhcmFtKCR4KSAkeC5FbmRzV2l0aCgkVGl0bGVTdWZmaXgpIC1hbmQgJHggLW5vdGxpa2UgIipmaWxlLXdvcmtmbG93KiIgfSA0MCAiYmxhbmsgZG9jdW1lbnQgYWZ0ZXIgcmVzdGFydCIKICAgIGlmICgkbnVsbCAtbmUgJHQpIHsgQWRkLVJlc3VsdCAicmVzdGFydC1ibGFuayIgIlBBU1MiICJBZnRlciBOZXcgKyByZXN0YXJ0IHRoZSBhcHAgc3RheWVkIG9uIGEgYmxhbmsgZG9jdW1lbnQuIiB9CiAgICBlbHNlIHsgQWRkLVJlc3VsdCAicmVzdGFydC1ibGFuayIgIkZBSUwiICJMYXN0IHRpdGxlIGFmdGVyIHJlbGF1bmNoOiAnJChHZXQtVGl0bGUpJy4iIH0KICAgIFNhdmUtU2NyZWVuc2hvdCAiMDYtYmxhbmsiCn0KY2F0Y2ggewogICAgQWRkLVJlc3VsdCAiaGFybmVzcyIgIkZBSUwiICJIYXJuZXNzIHN0b3BwZWQgZWFybHk6ICQoJF8uRXhjZXB0aW9uLk1lc3NhZ2UpIgp9CmZpbmFsbHkgewogICAgU3RvcC1BcHAKICAgICRyZXN1bHRzID0gQCgkc2NyaXB0OlJlc3VsdHMpCiAgICAkcmVzdWx0cyB8IENvbnZlcnRUby1Kc29uIC1EZXB0aCA0IHwgU2V0LUNvbnRlbnQgLUxpdGVyYWxQYXRoIChKb2luLVBhdGggJE91dERpciAicmVzdWx0cy5qc29uIikgLUVuY29kaW5nIFVURjgKICAgICRsaW5lcyA9IEAoIiMgQ3JvcXVpbGwgV2luZG93cyBHVUkgYWNjZXB0YW5jZSIsICIiLCAiLSBFeGU6ICRFeGVQYXRoIiwgIi0gU2FtcGxlOiBleGFtcGxlcy9maWxlLXdvcmtmbG93Lm1kIiwgIiIpCiAgICBmb3JlYWNoICgkciBpbiAkcmVzdWx0cykgeyAkbGluZXMgKz0gIi0gWyQoJHIuc3RhdHVzKV0gJCgkci5pZCkgLSAkKCRyLmRldGFpbCkiIH0KICAgICRsaW5lcyAtam9pbiAiYHJgbiIgfCBTZXQtQ29udGVudCAtTGl0ZXJhbFBhdGggKEpvaW4tUGF0aCAkT3V0RGlyICJyZXBvcnQubWQiKSAtRW5jb2RpbmcgVVRGOAogICAgJGZhaWxlZCA9IEAoJHJlc3VsdHMgfCBXaGVyZS1PYmplY3QgeyAkXy5zdGF0dXMgLWVxICJGQUlMIiB9KS5Db3VudAogICAgV3JpdGUtSG9zdCAiQWNjZXB0YW5jZSBmaW5pc2hlZDogJCgkcmVzdWx0cy5Db3VudCkgY2hlY2tzLCAkZmFpbGVkIGZhaWxlZC4iCiAgICBpZiAoJGZhaWxlZCAtZ3QgMCkgeyBleGl0IDEgfQogICAgZXhpdCAwCn0K
+# Croquill GUI acceptance on a real Windows runner.
+#
+# Evidence model (same as the manual acceptance in Drive):
+#   - the window title ( "<name> - Croquill", dirty prefix = U+25CF + space )
+#   - the exact bytes the app writes to disk (SHA256 before/after)
+# No test is reported PASS from a screenshot or a process check alone.
+#
+# Exit code: 0 when every recorded test PASSes, 1 otherwise.
+# Screenshots are best-effort evidence and never decide a result.
+#
+# NOTE: this file is intentionally ASCII-only. Non-ASCII characters needed
+# for title matching are built from code points so the file parses the same
+# under any code page.
+
+param(
+    [Parameter(Mandatory = $true)][string]$ExePath,
+    [Parameter(Mandatory = $true)][string]$ExamplesDir,
+    [Parameter(Mandatory = $true)][string]$OutDir
+)
+
+$ErrorActionPreference = 'Continue'
+$Dash = [string][char]0x2014          # em dash used in "name - Croquill"
+$Dot  = [string][char]0x25CF          # dirty marker prefix in the title
+$TitleSuffix = " $Dash Croquill"
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class Win32 {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+    public struct RECT { public int Left, Top, Right, Bottom; }
+}
+"@
+
+$script:Results = New-Object System.Collections.ArrayList
+$script:Proc = $null
+
+function Add-Result([string]$Id, [string]$Status, [string]$Detail) {
+    [void]$script:Results.Add([ordered]@{ id = $Id; status = $Status; detail = $Detail })
+    Write-Host "[$Status] $Id - $Detail"
+}
+
+function Get-Title {
+    if ($null -eq $script:Proc) { return "" }
+    $script:Proc.Refresh()
+    if ($script:Proc.HasExited) { return "" }
+    return [string]$script:Proc.MainWindowTitle
+}
+
+function Wait-Title([scriptblock]$Predicate, [int]$TimeoutSec, [string]$What) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $t = Get-Title
+        if (& $Predicate $t) { return $t }
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host "Timed out waiting for $What; last title: '$(Get-Title)'"
+    return $null
+}
+
+function Focus-App {
+    if ($null -eq $script:Proc -or $script:Proc.HasExited) { return }
+    $script:Proc.Refresh()
+    [void][Win32]::SetForegroundWindow($script:Proc.MainWindowHandle)
+    Start-Sleep -Milliseconds 400
+}
+
+function Send([string]$Keys, [int]$AfterMs = 800) {
+    Focus-App
+    [System.Windows.Forms.SendKeys]::SendWait($Keys)
+    Start-Sleep -Milliseconds $AfterMs
+}
+
+function Click-EditorCenter {
+    $script:Proc.Refresh()
+    $rect = New-Object Win32+RECT
+    if (-not [Win32]::GetWindowRect($script:Proc.MainWindowHandle, [ref]$rect)) { return }
+    $x = [int](($rect.Left + $rect.Right) / 2)
+    $y = [int](($rect.Top + $rect.Bottom) / 2)
+    [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($x, $y)
+    [Win32]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)  # left down
+    [Win32]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)  # left up
+    Start-Sleep -Milliseconds 500
+}
+
+function Save-Screenshot([string]$Name) {
+    try {
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+        $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+        $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $path = Join-Path $OutDir "screenshots\$Name.png"
+        $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $gfx.Dispose(); $bmp.Dispose()
+    } catch {
+        Write-Host "Screenshot $Name failed (non-fatal): $($_.Exception.Message)"
+    }
+}
+
+function Start-App {
+    $script:Proc = Start-Process -FilePath $ExePath -PassThru
+    Start-Sleep -Seconds 1
+}
+
+function Stop-App {
+    if ($null -ne $script:Proc -and -not $script:Proc.HasExited) {
+        [void]$script:Proc.CloseMainWindow()
+        if (-not $script:Proc.WaitForExit(10000)) {
+            Stop-Process -Id $script:Proc.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Seconds 1
+}
+
+function Get-Hash([string]$Path) {
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+}
+
+# ---------------------------------------------------------------- setup
+if (-not (Test-Path -LiteralPath $ExePath)) { throw "Exe not found: $ExePath" }
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $OutDir "screenshots") | Out-Null
+
+$base   = Join-Path $env:TEMP "croquill-acceptance"
+$srcDir = Join-Path $base "src"
+$dstDir = Join-Path $base "saveas-out"
+if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
+New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
+
+$sampleSrc = Join-Path $ExamplesDir "file-workflow.md"
+$assetsSrc = Join-Path $ExamplesDir "file-workflow.assets"
+Copy-Item -LiteralPath $sampleSrc -Destination $srcDir
+if (Test-Path -LiteralPath $assetsSrc) { Copy-Item -LiteralPath $assetsSrc -Destination $srcDir -Recurse }
+
+$sample = Join-Path $srcDir "file-workflow.md"
+$origHash  = Get-Hash $sample
+$origBytes = [System.IO.File]::ReadAllBytes($sample)
+$marker = "<!-- croquill-acceptance-marker -->"
+
+try {
+    # ------------------------------------------------------------ T2 launch
+    Start-App
+    $t = Wait-Title { param($x) $x.EndsWith($TitleSuffix) } 60 "main window title"
+    if ($null -ne $t) { Add-Result "launch" "PASS" "Main window appeared, title '$t'." }
+    else { Add-Result "launch" "FAIL" "Main window title never appeared." }
+    Save-Screenshot "01-launch"
+    if ($null -eq $t) { throw "Cannot continue without a main window." }
+
+    # ------------------------------------------------------------ T3 open file
+    Send "^{o}" 1500                       # Ctrl+O, native Open dialog
+    [System.Windows.Forms.SendKeys]::SendWait($sample)
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    $t = Wait-Title { param($x) $x -eq "file-workflow.md$TitleSuffix" } 30 "sample opened"
+    if ($null -ne $t) { Add-Result "open-sample" "PASS" "Sample opened via Ctrl+O dialog." }
+    else { Add-Result "open-sample" "FAIL" "Title did not become the sample name; last title '$(Get-Title)'." }
+    Start-Sleep -Seconds 2
+    Save-Screenshot "02-opened"
+
+    # ------------------------------------------- T3b no-edit save, byte exact
+    Send "^s" 1500
+    $h = Get-Hash $sample
+    if ($h -eq $origHash) { Add-Result "noedit-save-bytes" "PASS" "SHA256 unchanged after Ctrl+S with no edits." }
+    else { Add-Result "noedit-save-bytes" "FAIL" "Hash changed without edits: $h" }
+
+    # --------------------------------- T4 source-mode edit, save, prefix kept
+    Click-EditorCenter
+    Send "^/" 1200                          # Ctrl+/ -> source mode
+    Send "^{END}" 500
+    Set-Clipboard -Value "`r`n$marker`r`n"
+    Send "^v" 600
+    Send "^s" 500
+    $t = Wait-Title { param($x) -not $x.StartsWith($Dot) } 20 "dirty marker cleared after save"
+    $bytes = [System.IO.File]::ReadAllBytes($sample)
+    $text  = [System.Text.Encoding]::UTF8.GetString($bytes)
+    $prefixOk = $bytes.Length -ge $origBytes.Length
+    if ($prefixOk) {
+        for ($i = 0; $i -lt $origBytes.Length; $i++) {
+            if ($bytes[$i] -ne $origBytes[$i]) { $prefixOk = $false; break }
+        }
+    }
+    if ($null -ne $t -and $text.Contains($marker) -and $prefixOk) {
+        Add-Result "source-edit-save" "PASS" "Marker saved, original prefix byte-identical, dirty marker cleared."
+    } else {
+        Add-Result "source-edit-save" "FAIL" "titleCleared=$($null -ne $t) markerFound=$($text.Contains($marker)) prefixIntact=$prefixOk"
+    }
+    Save-Screenshot "03-source-edit"
+
+    # ------------------------------------------- T5 undo + save restores bytes
+    Send "^z" 600
+    Send "^s" 500
+    $t = Wait-Title { param($x) -not $x.StartsWith($Dot) } 20 "dirty marker cleared after undo+save"
+    $h = Get-Hash $sample
+    if ($null -ne $t -and $h -eq $origHash) { Add-Result "undo-save-bytes" "PASS" "Undo + Ctrl+S restored the exact original SHA256." }
+    else { Add-Result "undo-save-bytes" "FAIL" "Hash after undo+save: $h (expected $origHash)" }
+
+    # ------------------------------------------------- T6 Save As, path rebase
+    $target = Join-Path $dstDir "file-workflow.md"
+    Send "^+s" 1500                         # Ctrl+Shift+S, native Save As dialog
+    [System.Windows.Forms.SendKeys]::SendWait($target)
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $target)) { Start-Sleep -Milliseconds 500 }
+    if (Test-Path -LiteralPath $target) {
+        $targetText = [System.IO.File]::ReadAllText($target, [System.Text.Encoding]::UTF8)
+        $rebased = $targetText -match "\.\./src/file-workflow\.assets/"
+        $assetsCopied = Test-Path -LiteralPath (Join-Path $dstDir "file-workflow.assets")
+        $origUntouched = (Get-Hash $sample) -eq $origHash
+        if ($rebased -and -not $assetsCopied -and $origUntouched) {
+            Add-Result "saveas-rebase" "PASS" "Image paths rebased to ../src/..., no assets copied, original file untouched."
+        } else {
+            Add-Result "saveas-rebase" "FAIL" "rebased=$rebased assetsCopied=$assetsCopied originalUntouched=$origUntouched"
+        }
+    } else {
+        Add-Result "saveas-rebase" "FAIL" "Save As target file was not created at $target."
+    }
+    Save-Screenshot "04-saveas"
+
+    # ------------------------------------------------- T7 restart restores doc
+    Stop-App
+    Start-App
+    $t = Wait-Title { param($x) $x -eq "file-workflow.md$TitleSuffix" } 40 "document restored after restart"
+    if ($null -ne $t) { Add-Result "restart-restore" "PASS" "Relaunch restored the last document (title match)." }
+    else { Add-Result "restart-restore" "FAIL" "Last title after relaunch: '$(Get-Title)'." }
+    Save-Screenshot "05-restart"
+
+    # --------------------------------------- T8 new doc, restart stays blank
+    Send "^n" 1000                          # Ctrl+N
+    $t = Wait-Title { param($x) $x.EndsWith($TitleSuffix) -and $x -notlike "*file-workflow*" } 20 "new blank document"
+    Stop-App
+    Start-App
+    $t = Wait-Title { param($x) $x.EndsWith($TitleSuffix) -and $x -notlike "*file-workflow*" } 40 "blank document after restart"
+    if ($null -ne $t) { Add-Result "restart-blank" "PASS" "After New + restart the app stayed on a blank document." }
+    else { Add-Result "restart-blank" "FAIL" "Last title after relaunch: '$(Get-Title)'." }
+    Save-Screenshot "06-blank"
+}
+catch {
+    Add-Result "harness" "FAIL" "Harness stopped early: $($_.Exception.Message)"
+}
+finally {
+    Stop-App
+    $results = @($script:Results)
+    $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $OutDir "results.json") -Encoding UTF8
+    $lines = @("# Croquill Windows GUI acceptance", "", "- Exe: $ExePath", "- Sample: examples/file-workflow.md", "")
+    foreach ($r in $results) { $lines += "- [$($r.status)] $($r.id) - $($r.detail)" }
+    $lines -join "`r`n" | Set-Content -LiteralPath (Join-Path $OutDir "report.md") -Encoding UTF8
+    $failed = @($results | Where-Object { $_.status -eq "FAIL" }).Count
+    Write-Host "Acceptance finished: $($results.Count) checks, $failed failed."
+    if ($failed -gt 0) { exit 1 }
+    exit 0
+}
