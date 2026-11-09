@@ -23,22 +23,26 @@ describe('rich editor Markdown serialization', () => {
 
   afterAll(async () => { await browser?.close(); await server?.close(); });
   beforeEach(async () => {
-    page = await browser.newPage();
-    await page.goto(baseURL + '/tests/harness.html');
-    // A Vite dev-server reload can destroy the execution context between
-    // navigation and script injection (seen on the Windows runner and once
-    // locally as "Execution context was destroyed, most likely because of
-    // a navigation"). Retry the setup once instead of failing the test.
     const script = { type: 'module' as const, content: 'import { MarkdownSurface } from "/src/editor.ts"; import { ImageImporter } from "/src/images.ts"; window.croqTestSurface = MarkdownSurface; window.croqTestImporter = ImageImporter; import { protectFileDrops } from "/src/file-drop.ts"; window.croqTestProtectDrops = protectFileDrops;' };
-    try {
-      await page.addScriptTag(script);
-    } catch (error) {
-      if (!/Execution context was destroyed/.test((error as Error).message)) throw error;
+    const setup = async () => {
+      page = await browser.newPage();
       await page.goto(baseURL + '/tests/harness.html');
       await page.addScriptTag(script);
+      await page.waitForFunction(() => 'croqTestSurface' in window);
+    };
+    // This setup is fragile on loaded CI runners in two observed ways:
+    // a Vite dev-server reload can destroy the execution context between
+    // navigation and script injection ("Execution context was destroyed",
+    // Windows Acceptance run #1), and first-hit module compilation can push
+    // the whole hook past the default 10s hook timeout (run #3). Retry the
+    // whole setup once with a fresh page, and give the hook room to do so.
+    try {
+      await setup();
+    } catch {
+      await page?.close().catch(() => {});
+      await setup();
     }
-    await page.waitForFunction(() => 'croqTestSurface' in window);
-  });
+  }, 60000);
   afterEach(async () => { await page?.close(); });
 
   it('uses hyphens for nested and task lists after a real rich editor edit', async () => {
