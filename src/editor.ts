@@ -70,6 +70,7 @@ export class MarkdownSurface {
   private suppress = false;
   private richTimer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
+  private deferredFocus?: () => void;
   private readonly find: SearchPanel;
   private readonly searchPainter: RichSearchPainter;
   private replacementVersion = 0;
@@ -257,8 +258,28 @@ export class MarkdownSurface {
   }
 
   focus(): void {
+    if (this.deferredFocus) { this.deferredFocus(); return; }
     if (this.currentMode === 'source') this.source?.focus();
     else if (this.crepe) this.richView().focus();
+  }
+
+  /** An inert editor cannot focus. Replay focus only after the operation unlocks it. */
+  deferFocus(): () => void {
+    const previous = document.activeElement;
+    const ownsFocus = (element: Element | null) => !!element &&
+      (!!this.source?.contentDOM.contains(element) || !!this.crepe && this.richView().dom.contains(element));
+    let requested = ownsFocus(previous);
+    this.deferredFocus = () => { requested = true; };
+    return () => {
+      this.deferredFocus = undefined;
+      if (!requested || this.destroyed || document.querySelector('dialog[open], [popover]:popover-open')) return;
+      const current = document.activeElement;
+      // Respect a dialog/control the user moved to while native IO was pending.
+      if (current && current !== document.body && current !== previous && !ownsFocus(current)) return;
+      // Both editors keep their model selection through blur. focus() syncs it to
+      // the DOM without adding a history step or overwriting an inserted image's caret.
+      this.focus();
+    };
   }
 
   isComposing(): boolean {
