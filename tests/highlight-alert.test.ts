@@ -46,6 +46,21 @@ describe('highlight, alerts and comments in the production editor', () => {
     if (!address || typeof address === 'string') throw Error('Test server unavailable');
     baseURL = 'http://127.0.0.1:' + address.port;
     browser = await launchTestBrowser();
+    // Pay the cold start here, inside the 60s setup budget: the first editor in a fresh
+    // Vite server compiles and loads every editor module, which took about 15s on the
+    // Windows CI runner (run 42902057670) and used to land on the first test's 5s limit.
+    const warm = await browser.newPage();
+    await warm.goto(baseURL + '/tests/harness.html');
+    await warm.addScriptTag({ type: 'module', content: `
+      import { MarkdownSurface } from '/src/editor.ts';
+      const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
+      document.body.append(richRoot, sourceRoot);
+      const surface = new MarkdownSurface({ richRoot, sourceRoot, onChange: () => {}, onDirty: () => {}, resolveImage: async src => src });
+      surface.init('==预热==\\n\\n> [!NOTE]\\n> 预热\\n\\n<!-- 预热 -->\\n').then(() => surface.destroy()).then(() => { window.warmed = 'ok'; }, error => { window.warmed = String(error); });
+    ` });
+    await warm.waitForFunction(() => 'warmed' in window, undefined, { timeout: 50000 });
+    expect(await warm.evaluate(() => (window as any).warmed)).toBe('ok');
+    await warm.close();
   }, 60000);
   afterAll(async () => { await browser?.close(); await server?.close(); });
   beforeEach(async () => {

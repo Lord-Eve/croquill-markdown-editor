@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.4.0] - 2026-11-11
+
 ### 新增
 
 - 新增 GitHub Actions Windows 自动验收：每次推送 main 自动在真 Windows 上跑类型检查、前端与 Rust 测试、正式构建，并用键盘脚本实测打开/保存的字节保真、源码编辑保存与撤销、另存为图片路径改写、重启恢复，证据（结论、截图、exe）留作运行附件；拖入、真实输入法和 Typora 对照仍需真人桌面验收
@@ -39,6 +41,7 @@
 - 单独保留没有 YAML 的 UTF-8 BOM，避免解析位置错位导致原文片段截取错误
 - 修复 `tests/editor-serialization.test.ts` 的测试搭建偶发失败：Windows 验收机上先后出现过注入脚本时执行上下文被销毁（Vite 开发服务器重载）、整套搭建超过默认 10 秒钩子限时两种情况，改为整套搭建失败后换新页面重试一次、钩子限时放宽到 60 秒；只改测试搭建流程，不影响应用行为
 - 修复 `tests/app-operation-focus.test.ts` 在 Windows 验收机上的偶发失败：富文本里按 Ctrl+End / Ctrl+Home 后，界面光标先动，编辑器内部选区稍后才跟上，测试抢在中间派发粘贴，内容落到了旧位置（文首）。本机复现为 15 次中 2～3 次；改为等编辑器内部选区确实到达文首 / 文末后再粘贴，共 5 处。只改测试，不影响应用行为
+- 修复 `tests/highlight-alert.test.ts` 第一条用例在 Windows 验收机上超时：新开的测试服务器第一次加载编辑器约需 15 秒，原先算在第一条用例的 5 秒限时里；改为在 60 秒的搭建阶段先预热一次。只改测试，不影响应用行为
 - 窄窗口中超长行内代码允许换行，避免撑出编辑区底部横向滚动条；代码块仍可在自身区域横向滚动
 
 ## [0.3.0] - 2026-10-30
@@ -128,9 +131,10 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.3.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.4.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
 
 [0.3.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.2.0...v0.3.0
+[0.4.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.3.0...v0.4.0
