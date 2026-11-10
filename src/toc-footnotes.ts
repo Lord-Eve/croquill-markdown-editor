@@ -232,14 +232,21 @@ export const tocFootnotePlugin = $prose(() => {
             else { dom.dataset.footnoteOrphan = ''; dom.tabIndex = -1; dom.removeAttribute('role'); dom.setAttribute('aria-label', '未定义脚注'); }
           } };
           live.add(instance); instance.refresh();
+          // Own the whole pointer gesture on a defined reference. If the press reaches the
+          // editor root, the table block schedules "select this body cell" for the next
+          // frame, which lands after the click and undoes the jump.
+          const definition = () => indexKey.getState(view.state)?.definitions.get(identifier);
+          for (const type of ['pointerdown', 'mousedown'] as const) dom.addEventListener(type, event => {
+            if (!definition()) return;
+            event.stopPropagation(); if (type === 'mousedown') event.preventDefault();
+          });
+          dom.addEventListener('click', event => {
+            const target = definition();
+            if (!target) return;
+            event.preventDefault(); event.stopPropagation(); hidePreview(); jumpTo(view, target.pos);
+          });
           return { dom, ignoreMutation: () => true, destroy: () => { live.delete(instance); } } satisfies NodeView;
         },
-      },
-      handleClick(view, _position, event) {
-        const element = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-footnote-reference]') : null;
-        const target = element && indexKey.getState(view.state)?.definitions.get(element.dataset.footnoteReference || '');
-        if (!target) return false;
-        event.preventDefault(); hidePreview(); jumpTo(view, target.pos); return true;
       },
       handleKeyDown(view, event) {
         if (event.isComposing || view.composing || !['Enter', ' '].includes(event.key)) return false;

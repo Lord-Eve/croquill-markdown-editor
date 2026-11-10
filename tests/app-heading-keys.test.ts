@@ -48,8 +48,16 @@ describe('heading level keys through the real app', () => {
   it('keeps ordinary Backspace inside a heading, and with a selection at its start', async () => {
     await open('## 标题甲\n', 'rich', 2);
     await steps([['Backspace', '## 标甲\n']]);
-    await page.keyboard.press('Home'); await page.keyboard.press('Shift+ArrowRight');
-    await page.waitForFunction(() => { const r = (window as any).fileApp.surface.richView().state.selection; return r.to > r.from; });
+    // For 200ms after the editor gains focus, ProseMirror treats "caret jumped to the very
+    // start of the document" as a browser glitch and puts it back, so a Home on the first
+    // line sent that soon after open() is undone (traced on 2026-11-10). Wait for that
+    // window to close, then wait for the editor model after each key (the DOM caret moves
+    // first, see caretTo in app-operation-focus.test.ts).
+    await page.waitForFunction(() => Date.now() - (window as any).fileApp.surface.richView().input.lastFocus > 200);
+    await page.keyboard.press('Home');
+    await page.waitForFunction(() => { const r = (window as any).fileApp.surface.richView().state.selection; return r.empty && r.$from.parentOffset === 0; });
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.waitForFunction(() => { const r = (window as any).fileApp.surface.richView().state.selection; return r.$from.parentOffset === 0 && r.to - r.from === 1; });
     await steps([['Backspace', '## 甲\n']]);
   }, 30000);
 

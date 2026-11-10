@@ -158,6 +158,17 @@ describe('live TOC and editable complete footnotes', () => {
     expect(result).toContain('footnote_definition');
   });
 
+  // Found in the 0.4.0 desktop pass: the table block swallowed the click inside a cell.
+  it.each(['table cell','table header'])('clicks through from a reference inside a %s',async where=>{
+    const source=where==='table cell'?'| 项目 | 内容 |\n| --- | --- |\n| 脚注 | 第一处[^n]说明 |\n\n[^n]: 定义内容\n':'| 项目[^n] | 内容 |\n| --- | --- |\n| 甲 | 乙 |\n\n[^n]: 定义内容\n';
+    await page.evaluate(async source=>{const h=(window as any).notesHarness;await h.surface.init(source);h.dirty=0;},source);
+    await page.locator('sup[data-footnote-reference]').click();
+    // The table block re-selects the cell on a later frame; let that frame pass first.
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(resolve,40)))));
+    const result=await page.evaluate(()=>{const h=(window as any).notesHarness,view=h.surface.richView();return {path:Array.from({length:view.state.selection.$from.depth},(_,i)=>view.state.selection.$from.node(i+1).type.name),saved:h.surface.getMarkdown()};});
+    expect(result.path).toContain('footnote_definition');expect(result.saved).toBe(source);
+  });
+
   it('keeps isolated references literal and unescaped after editing their surrounding paragraph',async()=>{
     const result=await page.evaluate(async()=>{const h=(window as any).notesHarness;await h.surface.init('前[^x]与[^中文 标签]后\n');h.selectText('后');h.insert('新');const saved=h.surface.getMarkdown();await h.surface.load(saved);return {saved,text:h.richRoot.querySelector('.ProseMirror > p')?.textContent,orphans:h.richRoot.querySelectorAll('[data-footnote-orphan]').length};});
     expect(result).toEqual({saved:'前[^x]与[^中文 标签]新后\n',text:'前[^x]与[^中文 标签]新后',orphans:2});
