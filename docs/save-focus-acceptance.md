@@ -46,6 +46,12 @@
 - 其余已通过且仍适用的结果复用；最终合计 31 文件、554 项全部覆盖通过。
 - 最终 `build.ps1`：通过（退出码 0）。`src-tauri/target/release/croquill.exe` 修改时间 `2026-11-09 11:05:13 -08:00`，大小 `11,161,600` 字节。
 
+## 2026-11-10 补记：CI 上“保存后首次点击”用例失败
+
+CI 第 15 跑中 `places the caret on the first click after a rich save` 得到 `粘点贴内容第一行…`。本机用临时诊断复现：富文本按 Ctrl+End 后立即读取，15 次中 2～3 次出现 DOM 光标已在文末、ProseMirror 模型选区仍在位置 1、`selectionchange` 尚未派发，此时粘贴落在文首；源码模式 45 次均无滞后（CodeMirror 在 keydown 内同步更新选区）。点击定位本身正确。
+
+测试新增 `caretTo('start' | 'end')`：按键后等待编辑器模型选区为空且位于文首 / 文末，再粘贴；替换同文件 5 处“Ctrl+Home / Ctrl+End 后立即粘贴”。加等待后同一诊断 90 次无滞后。未改产品代码、断言和超时。
+
 ## 最终 exe 的 Windows 桌面专项
 
 用 computer-use 操作最终构建，测试文件单独放在已忽略的 `test-results/save-focus-native/`，均为 UTF-8 BOM + CRLF；不编辑其他文档。通过原生打开对话框载入副本后，在对应编辑区粘贴 ASCII 标记。保存 → 撤销 / 重做过程中没有再次点击编辑器或手动恢复焦点。

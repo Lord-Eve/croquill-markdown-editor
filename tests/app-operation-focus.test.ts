@@ -28,6 +28,20 @@ describe('editor focus and history across application operations', () => {
       document.activeElement!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
     }, value);
   }
+  // Ctrl+Home / Ctrl+End moves the rich DOM caret first; ProseMirror's model follows on a
+  // later selectionchange. A paste dispatched in between lands at the old model position.
+  async function caretTo(edge: 'start' | 'end') {
+    await page.keyboard.press(edge === 'start' ? 'Control+Home' : 'Control+End');
+    await page.waitForFunction(edge => {
+      const s = (window as any).fileApp.surface;
+      if (s.mode === 'source') {
+        const r = s.source.state.selection.main;
+        return r.empty && r.head === (edge === 'start' ? 0 : s.source.state.doc.length);
+      }
+      const state = s.richView().state, Selection = state.selection.constructor;
+      return state.selection.empty && state.selection.head === (edge === 'start' ? Selection.atStart(state.doc) : Selection.atEnd(state.doc)).head;
+    }, edge);
+  }
   async function save() {
     await page.evaluate(() => { const h = (window as any).fileApp; h.holdWrite = true; h.releaseWrite = null; });
     await page.keyboard.press('Control+s');
@@ -40,7 +54,7 @@ describe('editor focus and history across application operations', () => {
   it.each(['rich', 'source'])('diagnoses inert blur without erasing %s history: refocus then undo', async mode => {
     const original = '原文\n';
     await openFileApp(page, baseURL, { files: { [currentFile]: original }, holdWrite: true });
-    await focusApp(page, mode); await page.keyboard.press('Control+Home'); await paste();
+    await focusApp(page, mode); await caretTo('start'); await paste();
     expect(await text()).toContain('粘贴内容');
     await page.keyboard.press('Control+s');
     await page.waitForFunction(() => !!(window as any).fileApp.releaseWrite);
@@ -55,7 +69,7 @@ describe('editor focus and history across application operations', () => {
   it.each(['rich', 'source'])('keeps %s focus and selection after saving, so the next undo reaches the editor', async mode => {
     const original = '原文尾巴\n';
     await openFileApp(page, baseURL, { files: { [currentFile]: original } });
-    await focusApp(page, mode); await page.keyboard.press('Control+Home'); await paste();
+    await focusApp(page, mode); await caretTo('start'); await paste();
     await page.keyboard.press('Shift+ArrowRight');
     await page.waitForFunction(() => {
       const s = (window as any).fileApp.surface, r = s.mode === 'source' ? s.source.state.selection.main : s.richView().state.selection;
@@ -76,7 +90,7 @@ describe('editor focus and history across application operations', () => {
     it(`${mode} undo/redo crosses saves byte-exactly (${JSON.stringify(eol)}, BOM=${bom})`, async () => {
       const original = ['# 标题', '', '原文__加粗__尾巴', ''].join(eol);
       await openFileApp(page, baseURL, { files: { [currentFile]: original }, bom }); await focusApp(page, mode);
-      await page.keyboard.press('Control+End'); await paste('新增文本');
+      await caretTo('end'); await paste('新增文本');
       const edited = await text(); expect(edited).not.toBe(original); await save();
       const bytes = (value: string) => Buffer.from((bom ? '\ufeff' : '') + value, 'utf8');
       async function written(expected: string) {
@@ -100,7 +114,7 @@ describe('editor focus and history across application operations', () => {
 
   it.each(['rich', 'source'])('places the caret on the first click after a %s save', async mode => {
     await openFileApp(page, baseURL, { files: { [currentFile]: '第一行\n\n第二行\n' } }); await focusApp(page, mode);
-    await page.keyboard.press('Control+End'); await paste(); await save();
+    await caretTo('end'); await paste(); await save();
     const point = await page.evaluate(() => {
       const surface = (window as any).fileApp.surface;
       if (surface.mode === 'source') { const rect = surface.source.coordsAtPos(1); return { x: rect.left, y: (rect.top + rect.bottom) / 2 }; }
@@ -193,7 +207,7 @@ describe('editor focus and history across application operations', () => {
 
   it.each(['rich', 'source'])('focuses the reloaded document after Save As rebases images from %s mode', async mode => {
     await openFileApp(page, baseURL, { files: { [currentFile]: '文字\n\n![图](image.png)\n' }, saveSelected: 'D:/新目录/副本.md' });
-    await focusApp(page, mode); await page.keyboard.press('Control+Home'); await paste();
+    await focusApp(page, mode); await caretTo('start'); await paste();
     await page.keyboard.press('Control+Shift+s'); await idle();
     const rebased = await text(); expect(rebased).toContain('../验收/image.png');
     expect((await focused()).editor).toBe(true);
