@@ -35,7 +35,27 @@ import { SearchPanel, type SearchReplaceResult } from './search-panel';
 import { RichSearchPainter } from './rich-search';
 import { applySourceChanges, normalizedOffset, normalizedSource, replacementProblem, sourceOffset, type SearchMatch, type SearchOptions, type SourceChange } from './search-core';
 import { setSourceMatches, setSourceVersion, sourceSearchHighlights, sourceVersion, sourceVersionHistory } from './source-search-state';
+import { nextHeadingLevel, sourceHeadingChange } from './heading-level';
 import './rendered-syntax.css';
+
+/** Ctrl+0 / Ctrl+= / Ctrl+-; `code` covers layouts and IME states that change `key`. */
+function headingLevelShortcut(event: KeyboardEvent): string | null {
+  if (event.shiftKey) return null;
+  if (event.key === '0' || event.code === 'Digit0') return 'paragraph';
+  if (event.key === '=' || event.code === 'Equal') return 'heading-up';
+  if (event.key === '-' || event.code === 'Minus') return 'heading-down';
+  return null;
+}
+
+/** Typora: Backspace at the very start of a heading turns it into a paragraph in one step. */
+function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
+  if (event.key !== 'Backspace' || event.isComposing || view.composing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  const { $from, empty } = view.state.selection, { heading, paragraph } = view.state.schema.nodes;
+  if (!empty || $from.parent.type !== heading || $from.parentOffset !== 0) return false;
+  if (!setBlockType(paragraph)(view.state, view.dispatch, view)) return false;
+  event.preventDefault();
+  return true;
+}
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
@@ -323,9 +343,11 @@ export class MarkdownSurface {
     if (markNames[action]) {
       const mark = markNames[action].map((name) => schema.marks[name]).find(Boolean);
       if (mark) command(toggleMark(mark));
-    } else if (/^(?:h|heading-?)[1-6]$/.test(action)) {
-      command(setBlockType(schema.nodes.heading, { level: Number(action.at(-1)) }));
-    } else if (action === 'paragraph') command(setBlockType(schema.nodes.paragraph));
+    } else if (nextHeadingLevel(action, 0) !== null) {
+      const block = view.state.selection.$from.parent;
+      const level = nextHeadingLevel(action, block.type === schema.nodes.heading ? Number(block.attrs.level) : 0)!;
+      command(level ? setBlockType(schema.nodes.heading, { level }) : setBlockType(schema.nodes.paragraph));
+    }
     else if (action === 'undo') command(richUndo);
     else if (action === 'redo') command(richRedo);
     else if (action === 'quote') command(wrapIn(schema.nodes.blockquote));
@@ -562,11 +584,11 @@ export class MarkdownSurface {
           return false;
         },
         props: {
-          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) },
+          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();
-            const action = /^[1-6]$/.test(key) ? `heading${key}` : key === 'b' ? 'bold' : key === 'i' ? 'italic' : key === 'k' ? 'link' : key === 'x' && event.shiftKey ? 'strike' : null;
+            const action = /^[1-6]$/.test(key) ? `heading${key}` : headingLevelShortcut(event) ?? (key === 'b' ? 'bold' : key === 'i' ? 'italic' : key === 'k' ? 'link' : key === 'x' && event.shiftKey ? 'strike' : null);
             if (!action) return false;
             event.preventDefault();
             this.format(action);
@@ -655,6 +677,9 @@ export class MarkdownSurface {
         { key: 'Mod-k', run: () => { this.formatSource('link'); return true; } },
         { key: 'Mod-Shift-x', run: () => { this.formatSource('strike'); return true; } },
         ...[1, 2, 3, 4, 5, 6].map((level) => ({ key: `Mod-${level}`, run: () => { this.formatSource(`heading${level}`); return true; } })),
+        { key: 'Mod-0', run: () => { this.formatSource('paragraph'); return true; } },
+        { key: 'Mod-=', run: () => { this.formatSource('heading-up'); return true; } },
+        { key: 'Mod--', run: () => { this.formatSource('heading-down'); return true; } },
         ...defaultKeymap, ...historyKeymap, indentWithTab,
       ]),
       EditorView.updateListener.of((update) => {
@@ -703,8 +728,17 @@ export class MarkdownSurface {
       view.dispatch({ changes: { from: range.from, to: range.to, insert: prefix + content + suffix }, selection: EditorSelection.range(range.from + prefix.length, range.from + prefix.length + content.length), userEvent: 'input' });
     } else if (action === 'table') {
       view.dispatch({ changes: { from: range.from, to: range.to, insert: '\n| 标题一 | 标题二 | 标题三 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n' }, userEvent: 'input' });
+    } else if (nextHeadingLevel(action, 0) !== null) {
+      // Rewrite only each line's ATX prefix, so the rest of the line keeps its bytes.
+      const changes: { from: number; to: number; insert: string }[] = [];
+      const first = view.state.doc.lineAt(range.from).number, last = view.state.doc.lineAt(range.to).number;
+      for (let number = first; number <= last; number++) {
+        const line = view.state.doc.line(number), change = sourceHeadingChange(line.text, action);
+        if (change) changes.push({ from: line.from + change.from, to: line.from + change.to, insert: change.insert });
+      }
+      if (changes.length) view.dispatch({ changes, userEvent: 'input' });
     } else {
-      const prefix = /^(?:h|heading-?)[1-6]$/.test(action) ? '#'.repeat(Number(action.at(-1))) + ' ' :
+      const prefix =
         action === 'quote' ? '> ' : action === 'bullet' || action === 'unordered-list' ? '- ' :
         action === 'ordered' || action === 'ordered-list' ? '1. ' : action === 'task' ? '- [ ] ' : null;
       if (prefix !== null) {
