@@ -167,7 +167,8 @@ describe('highlight, alerts and comments in the production editor', () => {
       const saved = await h.save(); await h.surface.load(saved);
       return { initial, saved, reopened: await h.save(), mode: h.surface.mode,
         final: Array.from(h.richRoot.querySelectorAll('mark')).map((node: any) => node.textContent),
-        text: h.richRoot.querySelectorAll('p')[1]?.textContent };
+        // innerText is what is displayed: hidden markers and raw entities are not part of it.
+        text: h.richRoot.querySelectorAll('p')[1]?.innerText };
     }, original);
     expect(result).toEqual({ initial: ['重点'], final: ['重点'], saved: original.replace('待改正文', '新待改正文'),
       reopened: original.replace('待改正文', '新待改正文'), mode: 'rich', text: '前==实体==与==转义==，真正重点后' });
@@ -244,27 +245,34 @@ describe('highlight, alerts and comments in the production editor', () => {
     expect(await page.evaluate(() => (window as any).extensionHarness.save())).toBe('前==重点==后\n');
   });
 
-  it('deletes highlighted contents and restores them with undo', async () => {
+  // The delimiters are ordinary source characters: deleting the words between them leaves
+  // the four equals signs as literal text, exactly what the file then contains.
+  it('deletes highlighted contents, leaving the delimiters as text, and restores them with undo', async () => {
     await page.evaluate(async () => {
       const h = (window as any).extensionHarness; await h.surface.init('前==重点==后\n'); h.selectText('重点', 0, 2);
     });
     await page.keyboard.press('Backspace');
-    expect(await page.evaluate(() => (window as any).extensionHarness.save())).toBe('前后\n');
+    expect(await page.evaluate(() => (window as any).extensionHarness.save())).toBe('前====后\n');
     expect(await page.locator('mark').count()).toBe(0);
+    expect(await page.locator('.ProseMirror p').first().innerText()).toBe('前====后');
     await page.evaluate(() => (window as any).extensionHarness.surface.format('undo'));
     expect(await page.evaluate(() => (window as any).extensionHarness.save())).toBe('前==重点==后\n');
   });
 
-  it('keeps literal equals typed inside a highlight after saving and reopening', async () => {
+  // Typing == inside a highlight is typing a delimiter: the highlight ends there, on
+  // screen at once and identically after saving and reopening.
+  it('ends a highlight where == is typed inside it, the same before and after reopening', async () => {
     await page.evaluate(async () => {
       const h = (window as any).extensionHarness; await h.surface.init('前==甲乙==后\n'); h.selectText('甲乙', 1);
     });
     await page.keyboard.insertText('==');
+    const before = await page.evaluate(() => (window as any).extensionHarness.richRoot.querySelector('mark')?.textContent);
     const result = await page.evaluate(async () => {
       const h = (window as any).extensionHarness; const saved = await h.save(); await h.surface.load(saved);
-      return { saved, mode: h.surface.mode, text: h.richRoot.querySelector('p')?.textContent, highlight: h.richRoot.querySelector('mark')?.textContent };
+      return { saved, mode: h.surface.mode, text: h.richRoot.querySelector('p')?.innerText, highlight: h.richRoot.querySelector('mark')?.textContent };
     });
-    expect(result).toEqual({ saved: '前==甲\\=\\=乙==后\n', mode: 'rich', text: '前甲==乙后', highlight: '甲==乙' });
+    expect(before).toBe('甲');
+    expect(result).toEqual({ saved: '前==甲==乙==后\n', mode: 'rich', text: '前甲乙==后', highlight: '甲' });
   });
 
   it('keeps a BOM before a leading horizontal rule while editing later text', async () => {
@@ -335,12 +343,13 @@ describe('highlight, alerts and comments in the production editor', () => {
       view.dom.dispatchEvent(keyboard);
       const during = { composing: view.composing, position: view.state.selection.from, expected: position, headings: h.richRoot.querySelectorAll('h2').length };
       view.dom.dispatchEvent(new CompositionEvent('compositionend', { data: '组词', bubbles: true }));
-      return { during, saved: await h.save(), text: h.richRoot.querySelector('p')?.textContent };
+      return { during, saved: await h.save(), text: h.richRoot.querySelector('p')?.innerText };
     });
     expect(result.during).toMatchObject({ composing: true, headings: 0 });
     expect(result.during.position).toBe(result.during.expected);
     expect(result.saved).toBe('前==重点==组词后\n');
-    expect(result.text).toBe('前重点组词后');
+    // The caret sits right after the closing ==, so the delimiters are on screen.
+    expect(result.text).toBe('前==重点==组词后');
   });
 
   it('shows inline and block HTML comments as dimmed literal source without executing markup', async () => {

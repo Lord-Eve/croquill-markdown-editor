@@ -133,7 +133,7 @@ describe('live TOC and editable complete footnotes', () => {
   });
 
   it('shows an editable multi-paragraph definition as one block, not ordinary body paragraphs',async()=>{
-    const result=await page.evaluate(async original=>{const h=(window as any).notesHarness;await h.surface.init(original);const def=h.richRoot.querySelector('[data-footnote-definition]');return {mode:h.surface.mode,blocks:h.richRoot.querySelectorAll('[data-footnote-definition]').length,paragraphs:[...(def?.querySelectorAll('dd > p')||[])].map(node=>node.textContent),editable:(def?.querySelector('dd') as HTMLElement)?.isContentEditable,loose:[...h.richRoot.querySelectorAll('.ProseMirror > p')].map(node=>node.textContent)};},'正文[^Ab]\n\n'+definition+'\n');
+    const result=await page.evaluate(async original=>{const h=(window as any).notesHarness;await h.surface.init(original);const def=h.richRoot.querySelector('[data-footnote-definition]');return {mode:h.surface.mode,blocks:h.richRoot.querySelectorAll('[data-footnote-definition]').length,paragraphs:[...(def?.querySelectorAll('dd > p')||[])].map(node=>(node as HTMLElement).innerText),editable:(def?.querySelector('dd') as HTMLElement)?.isContentEditable,loose:[...h.richRoot.querySelectorAll('.ProseMirror > p')].map(node=>node.textContent)};},'正文[^Ab]\n\n'+definition+'\n');
     expect(result).toMatchObject({mode:'rich',blocks:1,paragraphs:['第一段 原写法。','第二段带 高亮。'],editable:true});
     expect(result.loose.join('')).not.toContain('第二段');
   });
@@ -223,7 +223,7 @@ describe('live TOC and editable complete footnotes', () => {
 
   it('keeps mixed formatting and literal equals around footnotes inside a highlight',async()=>{
     const original='前==**粗体**与[^n]、[^x]==后\n\n[^n]: 注释\n';
-    const result=await page.evaluate(async original=>{const h=(window as any).notesHarness;await h.surface.init(original);h.selectText('后');h.insert('新');const saved=h.surface.getMarkdown();await h.surface.load(saved);return {saved,mark:h.richRoot.querySelector('mark')?.textContent,reference:h.richRoot.querySelector('mark [data-footnote-reference], [data-footnote-reference] mark')?.textContent};},original);
+    const result=await page.evaluate(async original=>{const h=(window as any).notesHarness;await h.surface.init(original);h.selectText('后');h.insert('新');const saved=h.surface.getMarkdown();await h.surface.load(saved);return {saved,mark:[...h.richRoot.querySelectorAll('mark')].map(node=>node.textContent).join(''),reference:h.richRoot.querySelector('mark [data-footnote-reference], [data-footnote-reference] mark')?.textContent};},original);
     expect(result.saved).toBe(original.replace('==后','==新后'));expect(result.reference).toBe('n');expect(result.mark).toContain('粗体');
   });
 

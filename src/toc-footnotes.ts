@@ -13,6 +13,7 @@ import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import { normalizeFootnoteLabel, tocMarkerOf, type DocumentSyntaxNode } from './document-syntax';
 import { literalFootnotes } from './footnote-literals';
+import { blockSpans, visibleText } from './inline-source-view';
 import './toc-footnotes.css';
 
 /** The existing remark definition owns every paragraph, list and code block. */
@@ -63,9 +64,9 @@ export const tocBlock = $node('croquill_toc', () => ({
 
 export const footnoteInputRule = $inputRule(ctx => new InputRule(/(?<!\\)\[\^([^\[\]\\\r\n]+)\]$/, (state, match, start, end) => {
   if (!match[1].trim()) return null;
-  let code = (state.storedMarks || state.selection.$from.marks()).some(mark => mark.type.spec.code);
-  state.doc.nodesBetween(start, end, node => { if (node.marks.some(mark => mark.type.spec.code)) code = true; return !code; });
-  if (code) return null;
+  // Inline code is source text now: a marker typed between its backticks stays literal.
+  const $start = state.doc.resolve(start), offset = $start.parentOffset;
+  if (blockSpans($start.parent).some(span => span.kind === 'code' && span.innerFrom <= offset && offset <= span.innerTo)) return null;
   return state.tr.replaceWith(start, end, footnoteReferenceSchema.type(ctx).create({ label: match[1], identifier: normalizeFootnoteLabel(match[1]), raw: match[0] }));
 }));
 
@@ -157,10 +158,10 @@ function syntaxText(node: DocumentSyntaxNode): string { return node.value || nod
 function indexOf(doc: RichNode): DocumentIndex {
   const headings: HeadingTarget[] = [], definitions = new Map<string, DefinitionTarget>();
   doc.descendants((node, pos) => {
-    if (node.type.name === 'heading') headings.push({ pos, level: Number(node.attrs.level), text: node.textContent });
+    if (node.type.name === 'heading') headings.push({ pos, level: Number(node.attrs.level), text: visibleText(node.textContent) });
     if (node.type.name === 'footnote_definition') {
       const label = normalizeFootnoteLabel(String(node.attrs.identifier || node.attrs.label));
-      if (!definitions.has(label)) definitions.set(label, { pos, text: node.textBetween(0, node.content.size, '\n\n') });
+      if (!definitions.has(label)) definitions.set(label, { pos, text: visibleText(node.textBetween(0, node.content.size, '\n\n')) });
     }
     if (node.type.name === 'croquill_raw_block') {
       if (!rawIndexes.has(node)) {

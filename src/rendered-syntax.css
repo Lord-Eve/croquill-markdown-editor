@@ -1,3 +1,7 @@
+/* Inline Markdown is source text; these classes come from src/inline-source-view.ts. */
+.milkdown .ProseMirror .md-marker { color:var(--muted); font-weight:400; font-style:normal; text-decoration:none; background:none; }
+.milkdown .ProseMirror .md-marker.md-hidden { display:none; }
+.milkdown .ProseMirror del.md-strike { text-decoration:line-through; }
 .milkdown .ProseMirror mark { color:inherit; background:#fff3a3; padding:0; }
 :root[data-theme='dark'] .milkdown .ProseMirror mark { background:#756013; color:#fff2bb; }
 .milkdown .ProseMirror [data-croquill-comment] { color:var(--muted); opacity:.7; }

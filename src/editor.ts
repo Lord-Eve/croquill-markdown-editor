@@ -4,13 +4,13 @@ import { dropIndicatorPlugin } from '@milkdown/kit/plugin/cursor';
 import { isImageFile } from './images';
 import { hasFileTransfer } from './file-drop';
 import { commandsCtx, editorViewCtx, nodesCtx, parserCtx, serializerCtx, remarkPluginsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
-import { docSchema } from '@milkdown/kit/preset/commonmark';
-import { insertTableCommand } from '@milkdown/kit/preset/gfm';
+import { docSchema, emphasisKeymap, emphasisStarInputRule, emphasisUnderscoreInputRule, inlineCodeInputRule, inlineCodeKeymap, strongInputRule, strongKeymap } from '@milkdown/kit/preset/commonmark';
+import { insertTableCommand, strikethroughInputRule, strikethroughKeymap } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $prose } from '@milkdown/kit/utils';
 import { Plugin, TextSelection, type Command } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView as RichView } from '@milkdown/kit/prose/view';
-import { setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands';
+import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
 import { closeHistory, undo as richUndo, redo as richRedo } from '@milkdown/kit/prose/history';
 import type { Node as RichNode } from '@milkdown/kit/prose/model';
@@ -28,7 +28,9 @@ import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
 import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml, parseHtmlComments } from './inline-raw';
 import { alertBlock, configureAlerts, parseAlerts } from './alerts';
-import { configureHighlights, highlightInputRule, highlightMark, parseHighlights } from './highlight';
+import { highlightMark } from './highlight';
+import { configureInlineSource, flattenInlineSource } from './inline-source-markdown';
+import { inlineSourcePlugin, toggleInlineSyntax } from './inline-source-view';
 import { preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, parseTocFootnotes, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import { SearchPanel, type SearchReplaceResult } from './search-panel';
@@ -336,14 +338,9 @@ export class MarkdownSurface {
     const view = this.richView();
     const { schema } = view.state;
     const command = (fn: Command) => fn(view.state, view.dispatch, view);
-    const markNames: Record<string, string[]> = {
-      bold: ['strong'], italic: ['emphasis', 'em'], strike: ['strike_through', 'strikethrough'],
-      code: ['inlineCode', 'code'], 'inline-code': ['inlineCode', 'code'],
-    };
-    if (markNames[action]) {
-      const mark = markNames[action].map((name) => schema.marks[name]).find(Boolean);
-      if (mark) command(toggleMark(mark));
-    } else if (nextHeadingLevel(action, 0) !== null) {
+    const syntax = ({ bold: 'strong', italic: 'em', strike: 'strike', code: 'code', 'inline-code': 'code', highlight: 'highlight' } as const)[action];
+    if (syntax) toggleInlineSyntax(view, syntax);
+    else if (nextHeadingLevel(action, 0) !== null) {
       const block = view.state.selection.$from.parent;
       const level = nextHeadingLevel(action, block.type === schema.nodes.heading ? Number(block.attrs.level) : 0)!;
       command(level ? setBlockType(schema.nodes.heading, { level }) : setBlockType(schema.nodes.paragraph));
@@ -509,11 +506,11 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       this.inlineRaw = createInlineRawMarkdown();
-      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use(highlightInputRule).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
-        configureHighlights(ctx);
+        configureInlineSource(ctx);
         configureAlerts(ctx);
         configureTocFootnotes(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
@@ -522,13 +519,16 @@ export class MarkdownSurface {
           { plugin: preserveInlineHtml, options: {} },
           { plugin: parseTocFootnotes, options: {} },
           { plugin: parseHtmlBreaks, options: {} },
-          { plugin: parseHighlights, options: {} },
+          { plugin: flattenInlineSource, options: {} },
           { plugin: parseAlerts, options: {} }, ...plugins,
         ]);
       });
       // Crepe's block-only drop indicator also handles text selections, snapping
       // them to block boundaries. Keep ProseMirror's native inline/block drops.
       await crepe.editor.remove(dropIndicatorPlugin);
+      // Inline formatting is source text here (src/inline-source.ts). The stock rules and
+      // shortcuts would turn it back into marks.
+      await crepe.editor.remove([strongInputRule, emphasisStarInputRule, emphasisUnderscoreInputRule, inlineCodeInputRule, strikethroughInputRule, strongKeymap, emphasisKeymap, inlineCodeKeymap, strikethroughKeymap].flat());
       // A source-only replacement (e.g. YAML or Markdown spelling) can leave
       // the rendered content identical. Keep its revision in native history.
       await crepe.editor.remove(docSchema);

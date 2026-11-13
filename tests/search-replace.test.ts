@@ -130,7 +130,8 @@ describe('find and replace through both production editing surfaces', () => {
     await page.keyboard.press('Control+z'); expect(await markdown()).toBe(metadata); await page.keyboard.press('Control+z'); expect(await markdown()).toBe(source);
     await page.keyboard.press('Control+y'); expect(await markdown()).toBe(metadata); await page.keyboard.press('Control+y'); expect(await markdown()).toBe(spelling);
     await page.evaluate(() => (window as any).searchHarness.type('新'));
-    expect((await markdown()).replace(/\r\n/g, '\n')).toBe(spelling.replace('**粗体**', '**新粗体**').replace(/\r\n/g, '\n'));
+    // The caret is at the start of the paragraph, which is before the ** it now begins with.
+    expect((await markdown()).replace(/\r\n/g, '\n')).toBe(spelling.replace('**粗体**', '新**粗体**').replace(/\r\n/g, '\n'));
     await page.keyboard.press('Control+z'); expect(await markdown()).toBe(spelling);
   });
 
