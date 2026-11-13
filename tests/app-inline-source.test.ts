@@ -23,7 +23,10 @@ describe('inline Markdown as source text through the real app', () => {
   const markdown = () => page.evaluate(() => (window as any).fileApp.surface.getMarkdown());
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   async function open(source: string, config: Record<string, unknown> = {}) {
-    await openFileApp(page, baseURL, { files: { [currentFile]: source }, ...config }); await focusApp(page, 'rich');
+    await openFileApp(page, baseURL, { files: { [currentFile]: source }, ...config });
+    // focusApp would re-enter rich mode by itself; the document must open there on its own.
+    expect(await page.evaluate(() => { const s = (window as any).fileApp.surface; return { mode: s.mode, reason: s.getSafetyReason() }; })).toEqual({ mode: 'rich', reason: null });
+    await focusApp(page, 'rich');
     // ProseMirror undoes a jump to the document start for 200ms after focus (see
     // app-heading-keys.test.ts); none of these tests should race that window.
     await page.waitForFunction(() => Date.now() - (window as any).fileApp.surface.richView().input.lastFocus > 200);
@@ -182,6 +185,25 @@ describe('inline Markdown as source text through the real app', () => {
     await caret('前文'); await page.keyboard.insertText('新'); await settle();
     await page.keyboard.press('Control+s'); await page.waitForFunction(() => (window as any).fileApp.writes.length === 2);
     expect((await page.evaluate(() => (window as any).fileApp.writes[1].text)).replace(/\r\n/g, '\n')).toBe(original.replace('前文 **加粗文字**', '新前文 **加粗文字**').replace(/\r\n/g, '\n'));
+  }, 30000);
+
+  // Found while accepting this work in the real window; both were already wrong in 0.4.0.
+  it('opens a CRLF document with soft line breaks in rich mode and saves the edit with its newline kind', async () => {
+    const original = '第一行\r\n第二行 **加粗\r\n跨行** 后\r\n\r\n> 引用\r\n> 续行\r\n';
+    await open(original); await caret('第一行'); await page.keyboard.insertText('新'); await settle();
+    await page.keyboard.press('Control+s'); await page.waitForFunction(() => (window as any).fileApp.writes.length === 1);
+    const write = await page.evaluate(() => (window as any).fileApp.writes[0]);
+    expect(write.newline).toBe('crlf'); expect(write.text.replace(/\r\n/g, '\n')).toBe(('新' + original).replace(/\r\n/g, '\n'));
+  }, 30000);
+
+  it('keeps a document that cannot round-trip in source protection when the mode is toggled', async () => {
+    await openFileApp(page, baseURL, { files: { [currentFile]: '[文字][引用]\n\n[引用]: https://example.com\n' } });
+    const state = () => page.evaluate(() => { const s = (window as any).fileApp.surface; return { mode: s.mode, protected: !!s.getSafetyReason() }; });
+    expect(await state()).toEqual({ mode: 'source', protected: true });
+    await page.evaluate(async () => { const s = (window as any).fileApp.surface; await s.setMode('rich'); });
+    expect(await state()).toEqual({ mode: 'source', protected: true });
+    await page.evaluate(async () => { const s = (window as any).fileApp.surface; await s.setMode('source'); await s.setMode('rich'); });
+    expect(await state()).toEqual({ mode: 'source', protected: true });
   }, 30000);
 
   it('renders escapes and entities as the characters they stand for, and their source at the caret', async () => {

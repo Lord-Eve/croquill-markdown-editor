@@ -20,6 +20,10 @@ describe('Markdown protection', () => {
   it('accepts equivalent CommonMark/GFM serialization but detects dropped structure', () => {
     expect(hasEquivalentMarkdownStructure('# 标题\r\n\r\n__加粗__\r\n', '# 标题\n\n**加粗**\n')).toBe(true);
     expect(hasEquivalentMarkdownStructure('- [x] 完成\n- [ ] 待办', '* [x] 完成\n* [ ] 待办\n')).toBe(true);
+    // A soft line break in a CRLF file is the same paragraph as its LF serialization.
+    expect(hasEquivalentMarkdownStructure('第一行\r\n第二行\r\n\r\n> 引用\r\n> 续行\r\n', '第一行\n第二行\n\n> 引用\n> 续行\n')).toBe(true);
+    expect(hasEquivalentMarkdownStructure('```\r\n代码\r\n第二行\r\n```\r\n', '```\n代码\n第二行\n```\n')).toBe(true);
+    expect(hasEquivalentMarkdownStructure('第一行\r\n第二行\r\n', '第一行\n\n第二行\n')).toBe(false);
     expect(hasEquivalentMarkdownStructure('![中文](图片 空格.png)', '正文')).toBe(false);
     expect(hasEquivalentMarkdownStructure('| 一 | 二 |\n| --- | --- |\n| 甲 | 乙 |', '一 二 甲 乙')).toBe(false);
     expect(hasEquivalentMarkdownStructure('```ts\nconst a = 1\n```', '```\nconst a = 1\n```')).toBe(false);

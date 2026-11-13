@@ -16,6 +16,15 @@
 3. **中文输入法优先。** 处理键盘事件时检查 `isComposing`，输入法正在组词时不能打断，也不能触发快捷键。
 4. **不提交**：`node_modules/`、`.tools/`、`dist/`、`src-tauri/target/`（已在 `.gitignore` 中）。
 
+## 行内格式是源码文本
+
+所见即所得模式里，加粗、斜体、删除线、行内代码、高亮、反斜杠转义和实体**不是**编辑器的格式标记（mark），而是文档里的普通字符：`**加粗**` 就是 6 个字符。`src/inline-source-view.ts` 用显示层把标记藏起来、给内容加样式，光标碰到时再显示。设计依据和实测见 `docs/inline-source-spike.md`、`docs/inline-source-acceptance.md`。
+
+- 不要再用 `toggleMark` 或输入规则生成这些格式的 mark。外来的 mark（网页粘贴）会被自动写回源码字符。
+- 读文字给人看（目录、预览、统计）时用 `visibleText`，不要直接用 `textContent`，否则会带出标记字符。
+- 文字保存时原样写出，只在行首会变成别的结构时加转义（`guardLineStart`）。不要恢复全局转义。
+- 光标所在位置不能放任何额外的 DOM 节点，否则中文输入法组词会中断（已实测）。
+
 ## 目录
 
 | 路径 | 内容 |
@@ -24,6 +33,7 @@
 | `src/editor.ts` | 编辑核心：Crepe 所见即所得 + CodeMirror 源码模式，两者之间的同步 |
 | `src/session.ts` | 文档会话：路径、是否已修改、保存 / 打开 / 关闭流程 |
 | `src/fidelity.ts` | 保真检查：哪些语法要进入源码保护、结构是否等价、大纲提取 |
+| `src/inline-source*.ts` | 行内格式：文档里保留源码字符，显示层隐藏标记（见下方
 | `src/style.css` | 全部样式，主题变量在 `:root` 中 |
 | `src-tauri/src/documents.rs` | 读写文件、编码与换行检测、本地图片读取（含 Rust 单元测试） |
 | `src-tauri/src/lib.rs` | Tauri 命令注册 |

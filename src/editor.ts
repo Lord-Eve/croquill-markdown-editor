@@ -64,6 +64,7 @@ import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 
 export type EditingMode = 'rich' | 'source';
+const UNRELIABLE_ROUND_TRIP = '此文档的部分结构无法可靠往返转换，已保留原文并启用源码保护';
 export interface MarkdownSurfaceOptions {
   richRoot: HTMLElement;
   sourceRoot: HTMLElement;
@@ -102,6 +103,7 @@ export class MarkdownSurface {
   private richExactSources = new Map<string, string>();
   private sourceExactSources = new Map<string, string>();
   private richContextVersion = '';
+  private unreliableRich?: string;
   private richContexts = new Map<string, { base: string; origin: RichNode | undefined; originText: string; notice: string | null }>();
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
@@ -458,7 +460,12 @@ export class MarkdownSurface {
   }
 
   private async ensureRich(): Promise<void> {
-    if (this.crepe && this.richInput === this.raw) return;
+    if (this.crepe && this.richInput === this.raw) {
+      // Leaving and re-entering rich mode must not forget a failed round trip.
+      if (this.unreliableRich === this.raw) this.safetyReason = UNRELIABLE_ROUND_TRIP;
+      return;
+    }
+    this.unreliableRich = undefined;
     const oldSuppress = this.suppress;
     this.suppress = true;
     try {
@@ -619,7 +626,7 @@ export class MarkdownSurface {
       this.richOriginDocument = this.richSnapshot;
       this.richOriginText = this.raw;
       if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRich())) {
-        this.safetyReason = '此文档的部分结构无法可靠往返转换，已保留原文并启用源码保护';
+        this.safetyReason = UNRELIABLE_ROUND_TRIP; this.unreliableRich = this.raw;
       }
     } finally { this.suppress = oldSuppress; }
   }

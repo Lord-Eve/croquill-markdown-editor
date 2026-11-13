@@ -140,7 +140,9 @@ function semanticTree(value: unknown, source: string): unknown {
   const copy: Record<string, unknown> = {};
   for (const key of Object.keys(node).sort()) {
     if (key === 'position' || key === 'data' || key === 'spread') continue;
-    copy[key] = semanticTree(node[key], source);
+    // A line ending inside a value (a soft break, a code block) is the file's newline
+    // style, which is kept separately; CRLF and LF there are the same structure.
+    copy[key] = key === 'value' && typeof node[key] === 'string' ? (node[key] as string).replace(/\r\n?/g, '\n') : semanticTree(node[key], source);
   }
   return copy;
 }
