@@ -50,6 +50,11 @@ export class RichSearchPainter {
         else { const range = document.createRange(); range.selectNodeContents(dom); this.ranges[index] = range; }
       });
     });
+    // A match on a hidden inline marker (searching for ** or ==) would be painted on
+    // nothing. Show every marker while such a search is on screen; this is a class on
+    // the root only, so the document and the painted ranges are untouched.
+    const hidden = (node: Node) => !!(node instanceof Element ? node : node.parentElement)?.closest('.md-marker.md-hidden');
+    this.root.classList.toggle('md-reveal-markers', this.ranges.some(range => !!range && (hidden(range.startContainer) || hidden(range.endContainer))));
     if (typeof Highlight !== 'undefined' && CSS.highlights) {
       CSS.highlights.set(this.name, new Highlight(...this.ranges.filter((range): range is Range => !!range)));
       const selected = this.ranges[current]; if (selected) CSS.highlights.set(this.currentName, new Highlight(selected));
@@ -94,7 +99,7 @@ export class RichSearchPainter {
   }
   clear(): void {
     if (typeof CSS !== 'undefined' && CSS.highlights) { CSS.highlights.delete(this.name); CSS.highlights.delete(this.currentName); }
-    this.ranges = [];
+    this.ranges = []; this.root.classList.remove('md-reveal-markers');
   }
   destroy(): void { this.clear(); this.style.remove(); }
 }

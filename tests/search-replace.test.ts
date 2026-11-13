@@ -62,7 +62,11 @@ describe('find and replace through both production editing surfaces', () => {
     const painted = () => page.evaluate(() => [...CSS.highlights.entries()].filter(([name]) => name.startsWith('croquill-search-') && !name.endsWith('current')).flatMap(([, highlight]) => [...highlight].map(range => range.toString())));
     await page.keyboard.press('Control+h'); await query().fill('加粗'); expect(await count()).toBe('1 / 1'); expect(await painted()).toEqual(['加粗']);
     await query().fill('甲 **加'); expect(await count()).toBe('1 / 1'); expect(await painted()).toEqual(['甲 **加']);
-    await query().fill('**'); expect(await count()).toBe('1 / 2'); expect(await markdown()).toBe(source);
+    const markersShown = () => page.evaluate(() => [...document.querySelectorAll('.ProseMirror .md-marker')].filter(node => getComputedStyle(node).display !== 'none').length);
+    expect(await markersShown()).toBe(0);
+    // Matches on hidden markers bring every marker on screen, without editing anything.
+    await query().fill('**'); expect(await count()).toBe('1 / 2'); expect(await markdown()).toBe(source); expect(await markersShown()).toBe(6);
+    await query().fill('加粗'); expect(await markersShown()).toBe(0); await query().fill('**');
     await query().fill('加粗'); await replacement().fill('替换'); await command('all'); expect(await markdown()).toBe(source.replace('加粗', '替换'));
     expect(await page.locator('.ProseMirror strong').textContent()).toBe('替换');
     await query().fill('**'); await replacement().fill('__'); await command('all'); expect(await markdown()).toBe('甲 __替换__ 乙 `码` 与 \\*星\\* 丙\n');
