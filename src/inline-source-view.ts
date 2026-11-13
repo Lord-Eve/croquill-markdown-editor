@@ -57,7 +57,14 @@ function decorateBlock(block: RichNode, position: number, selectionFrom: number,
     if (innerFrom > from) decorations.push(Decoration.inline(from, innerFrom, marker));
     if (to > innerTo) decorations.push(Decoration.inline(innerTo, to, marker));
     const nodeName = element[span.kind];
-    if (nodeName && innerTo > innerFrom) decorations.push(Decoration.inline(innerFrom, innerTo, { nodeName, class: 'md-' + span.kind }));
+    // Inclusive: text typed at either edge of the content belongs to it. While an IME
+    // composition is open the decorations are only mapped, and this keeps the composing
+    // text inside the element the browser is typing it into.
+    if (nodeName && innerTo > innerFrom) decorations.push(Decoration.inline(innerFrom, innerTo, { nodeName, class: 'md-' + span.kind }, { inclusiveStart: true, inclusiveEnd: true }));
+    // Known and left alone: with the caret right after a marker, an IME types its
+    // composing letters into the marker's grey node until they are committed. Putting
+    // an anchor element there to redirect the caret made Chromium lose the composition
+    // (letters stayed, the committed word was appended), so nothing may sit at the caret.
     if (span.kind === 'entity' && !active) {
       const value = span.value || '';
       decorations.push(Decoration.widget(from, () => {
@@ -202,6 +209,50 @@ export function inlineSourcePlugin(): Plugin<ViewState> {
     },
     view(view) { editor = view; return { destroy() { editor = undefined; } }; },
   });
+}
+
+/**
+ * Enter inside formatted text: close the open markers before the break and reopen them
+ * after it, so both halves keep their formatting instead of two dangling `**`.
+ * Only adds the characters; the editor's own Enter then splits the block.
+ */
+export function handleSourceEnter(view: EditorView, event: KeyboardEvent): boolean {
+  if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || view.composing) return false;
+  const { selection } = view.state, { $from } = selection;
+  if (!selection.empty || !isSourceBlock($from.parent)) return false;
+  const block = $from.parent, offset = $from.parentOffset;
+  const open = blockSpans(block).filter(span => !['escape', 'entity'].includes(span.kind) && span.innerFrom < offset && offset < span.innerTo);
+  if (!open.length) return false;
+  const text = (from: number, to: number) => block.textBetween(from, to, '\n', INLINE_OBJECT);
+  // Outer spans come first: close inner-to-outer, reopen outer-to-inner.
+  const closing = open.map(span => text(span.innerTo, span.to)).reverse().join(''), opening = open.map(span => text(span.from, span.innerFrom)).join('');
+  const position = $from.pos;
+  const tr = view.state.tr.insertText(closing + opening, position);
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, position + closing.length)));
+  return false;
+}
+
+/** `[文字](地址 "标题")` and `<https://…>` become a link as their last character is typed. */
+export function linkInputHandlers(): { match: RegExp; handler: (state: EditorState, match: RegExpMatchArray, start: number, end: number) => Transaction | null }[] {
+  const outsideCode = (state: EditorState, start: number) => {
+    const $start = state.doc.resolve(start), offset = $start.parentOffset;
+    return isSourceBlock($start.parent) && !blockSpans($start.parent).some(span => span.kind === 'code' && span.from <= offset && offset < span.to);
+  };
+  return [{
+    match: /(?<![\\!])\[([^[\]\n]+)\]\(([^()\s]+)(?:[ \t]+"([^"\n]*)")?\)$/,
+    handler: (state, match, start, end) => {
+      const link = state.schema.marks.link;
+      if (!link || !outsideCode(state, start)) return null;
+      return state.tr.replaceWith(start, end, state.schema.text(match[1], [link.create({ href: match[2], title: match[3] || null })])).removeStoredMark(link);
+    },
+  }, {
+    match: /(?<!\\)<((?:https?|ftp):\/\/[^\s<>]+)>$/,
+    handler: (state, match, start, end) => {
+      const link = state.schema.marks.link;
+      if (!link || !outsideCode(state, start)) return null;
+      return state.tr.replaceWith(start, end, state.schema.text(match[1], [link.create({ href: match[1] })])).removeStoredMark(link);
+    },
+  }];
 }
 
 type FormatKind = 'strong' | 'em' | 'strike' | 'code' | 'highlight';

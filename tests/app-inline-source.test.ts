@@ -218,6 +218,92 @@ describe('inline Markdown as source text through the real app', () => {
     await page.keyboard.press('Control+z'); await page.waitForFunction(() => (window as any).fileApp.surface.getMarkdown() === '开头\n');
   }, 30000);
 
+  it('adds and removes markers around the selection with the formatting shortcuts', async () => {
+    await open('甲乙丙丁\n'); await caret('乙丙', 0, 2);
+    const selected = () => page.evaluate(() => { const s = (window as any).fileApp.surface.richView().state; return s.doc.textBetween(s.selection.from, s.selection.to); });
+    const step = async (key: string, expected: string) => { await page.keyboard.press(key); await page.waitForFunction(expected => (window as any).fileApp.surface.getMarkdown() === expected, expected, { timeout: 3000 }).catch(() => {}); expect(await markdown()).toBe(expected); };
+    await step('Control+b', '甲**乙丙**丁\n'); expect(await selected()).toBe('乙丙');
+    expect(await page.locator('#rich-root p strong').textContent()).toBe('乙丙');
+    await step('Control+i', '甲***乙丙***丁\n'); expect(await selected()).toBe('乙丙');
+    await step('Control+b', '甲*乙丙*丁\n'); await step('Control+i', '甲乙丙丁\n'); expect(await selected()).toBe('乙丙');
+    await step('Control+Shift+x', '甲~~乙丙~~丁\n'); await step('Control+Shift+x', '甲乙丙丁\n');
+    for (const [action, expected] of [['code', '甲`乙丙`丁\n'], ['code', '甲乙丙丁\n'], ['highlight', '甲==乙丙==丁\n'], ['highlight', '甲乙丙丁\n']] as const) {
+      await page.evaluate(action => (window as any).fileApp.surface.format(action), action); expect(await markdown()).toBe(expected);
+    }
+    // One undo step per command.
+    await page.keyboard.press('Control+z'); await page.waitForFunction(() => (window as any).fileApp.surface.getMarkdown() === '甲==乙丙==丁\n');
+  }, 30000);
+
+  it('opens an empty pair at the caret, keeps markers tight to the words, and unwraps from inside', async () => {
+    await open('甲 乙丙 丁\n'); await caret('丁', 1);
+    await page.keyboard.press('Control+b'); await page.waitForFunction(() => (window as any).fileApp.surface.getMarkdown() === '甲 乙丙 丁****\n');
+    expect((await look()).caret).toBe('甲 乙丙 丁**|**');
+    await page.keyboard.insertText('粗'); await settle();
+    expect(await markdown()).toBe('甲 乙丙 丁**粗**\n'); expect(await page.locator('#rich-root p strong').textContent()).toBe('粗');
+    await page.keyboard.press('Control+b'); await page.waitForFunction(() => (window as any).fileApp.surface.getMarkdown() === '甲 乙丙 丁粗\n');
+    await caret(' 乙丙 ', 0, 4); await page.keyboard.press('Control+i');
+    await page.waitForFunction(() => (window as any).fileApp.surface.getMarkdown() === '甲 *乙丙* 丁粗\n');
+    expect(await page.locator('#rich-root p em').textContent()).toBe('乙丙');
+  }, 30000);
+
+  it('ignores a formatting shortcut while an IME composition is open', async () => {
+    await open('甲乙丙\n'); await caret('乙', 0, 1);
+    const prevented = await page.evaluate(() => {
+      document.activeElement!.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      const event = new KeyboardEvent('keydown', { key: 'b', code: 'KeyB', ctrlKey: true, isComposing: true, bubbles: true, cancelable: true });
+      document.activeElement!.dispatchEvent(event); return event.defaultPrevented;
+    });
+    expect(prevented).toBe(false); expect(await markdown()).toBe('甲乙丙\n');
+  }, 30000);
+
+  it('keeps both halves formatted when Enter splits formatted text', async () => {
+    await open('前 **加粗*斜体*文字** 后\n'); await caret('斜体', 1);
+    await page.keyboard.press('Enter'); await page.waitForFunction(() => (window as any).fileApp.surface.getMarkdown().includes('\n\n'));
+    expect(await markdown()).toBe('前 **加粗*斜***\n\n***体*文字** 后\n');
+    const rendered = await page.evaluate(() => [...document.querySelectorAll('#rich-root p')].map(node => [...node.querySelectorAll('strong')].map(strong => strong.textContent).join('')));
+    expect(rendered.slice(0, 2)).toEqual(['加粗*斜*', '*体*文字']);
+    // Enter at the edge of a span, or in plain text, adds nothing.
+    await caret('后', 1); await page.keyboard.press('Enter'); await settle();
+    expect(await markdown()).toBe('前 **加粗*斜***\n\n***体*文字** 后\n');
+  }, 30000);
+
+  it('turns typed link syntax into a link, but not inside code or after a backslash', async () => {
+    await open('见\n'); await caret('见', 1);
+    await page.keyboard.type('[文档](https://example.com "标题")'); await settle();
+    expect(await markdown()).toBe('见[文档](https://example.com "标题")\n');
+    expect(await page.evaluate(() => { const link = document.querySelector('#rich-root p a') as HTMLAnchorElement | null; return link && { text: link.textContent, href: link.getAttribute('href'), title: link.getAttribute('title') }; })).toEqual({ text: '文档', href: 'https://example.com', title: '标题' });
+    await page.keyboard.type(' <https://example.org>'); await settle();
+    expect(await markdown()).toBe('见[文档](https://example.com "标题") <https://example.org>\n');
+    expect(await page.locator('#rich-root p a').count()).toBe(2);
+    await page.evaluate(async () => { await (window as any).fileApp.surface.load('`码`\n'); }); await caret('码', 1);
+    await page.keyboard.type('[a](b)'); await settle();
+    expect(await markdown()).toBe('`码[a](b)`\n'); expect(await page.locator('#rich-root p a').count()).toBe(0);
+  }, 30000);
+
+  // Chromium's own IME pipeline, driven through the debugging protocol. It produces real
+  // composition events and DOM edits, but it is not a real input method.
+  it.each([['inside a span', '加粗文字', 2, '前文 **加粗中文文字**'], ['right after the opening marker', '加粗文字', 0, '前文 **中文加粗文字**'], ['right after the closing marker', ' 中间', 0, '前文 **加粗文字**中文 中间']] as const)('composes %s without disturbing markers or text', async (_name, text, offset, expected) => {
+    await open(sample); await caret(text, offset); await settle();
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text: 'zhong', selectionStart: 5, selectionEnd: 5 }); await settle();
+    await cdp.send('Input.imeSetComposition', { text: 'zhongwen', selectionStart: 8, selectionEnd: 8 }); await settle();
+    const during = await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView(), selection = document.getSelection()!;
+      return { composing: view.composing, text: view.state.selection.$head.parent.textContent, anchor: !!selection.anchorNode };
+    });
+    // The composing letters are in the document at the caret and nowhere else. (Right
+    // after a marker they are drawn grey until committed; that is a known cosmetic gap.)
+    expect(during.composing).toBe(true); expect(during.text).toContain(expected.replace('中文', 'zhongwen'));
+    await cdp.send('Input.insertText', { text: '中文' });
+    await page.waitForFunction(expected => (window as any).fileApp.surface.getMarkdown().startsWith(expected), expected);
+    await page.waitForFunction(() => !(window as any).fileApp.surface.richView().composing); await page.waitForTimeout(120); await settle();
+    const after = await look();
+    expect(after.caret.replace(/\|/, '')).toContain(expected);
+    expect(await page.evaluate(() => document.querySelector('#rich-root p strong')?.textContent)).toBe(expected.includes('加粗中文文字') ? '加粗中文文字' : expected.includes('中文加粗文字') ? '中文加粗文字' : '加粗文字');
+    // One undo removes the composed word.
+    await page.keyboard.press('Control+z'); await page.waitForFunction(sample => (window as any).fileApp.surface.getMarkdown() === sample, sample);
+  }, 30000);
+
   it('keeps the table of contents and outline free of marker characters', async () => {
     await open('[TOC]\n\n## 标题 **粗** 与 `码` \\*\n\n正文\n'); await caret('正文'); await settle();
     expect(await page.locator('[data-croquill-toc] button').allTextContents()).toEqual(['标题 粗 与 码 *']);
