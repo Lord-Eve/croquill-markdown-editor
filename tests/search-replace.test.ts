@@ -55,6 +55,21 @@ describe('find and replace through both production editing surfaces', () => {
     expect(await count()).toBe('1 / 1'); expect(await markdown()).toBe(source);
   });
 
+  // Inline Markdown is source text in the rich document, so a match is the same
+  // characters in both modes, markers included.
+  it('finds and replaces words and markers of inline formatting in rich mode', async () => {
+    const source = '甲 **加粗** 乙 `码` 与 \\*星\\* 丙\n'; await load(source, 'rich');
+    const painted = () => page.evaluate(() => [...CSS.highlights.entries()].filter(([name]) => name.startsWith('croquill-search-') && !name.endsWith('current')).flatMap(([, highlight]) => [...highlight].map(range => range.toString())));
+    await page.keyboard.press('Control+h'); await query().fill('加粗'); expect(await count()).toBe('1 / 1'); expect(await painted()).toEqual(['加粗']);
+    await query().fill('甲 **加'); expect(await count()).toBe('1 / 1'); expect(await painted()).toEqual(['甲 **加']);
+    await query().fill('**'); expect(await count()).toBe('1 / 2'); expect(await markdown()).toBe(source);
+    await query().fill('加粗'); await replacement().fill('替换'); await command('all'); expect(await markdown()).toBe(source.replace('加粗', '替换'));
+    expect(await page.locator('.ProseMirror strong').textContent()).toBe('替换');
+    await query().fill('**'); await replacement().fill('__'); await command('all'); expect(await markdown()).toBe('甲 __替换__ 乙 `码` 与 \\*星\\* 丙\n');
+    expect(await page.locator('.ProseMirror strong').textContent()).toBe('替换');
+    await page.keyboard.press('Control+z'); expect(await markdown()).toBe(source.replace('加粗', '替换')); await page.keyboard.press('Control+z'); expect(await markdown()).toBe(source);
+  });
+
   it.each(['rich', 'source'])('opens shortcuts, paints all matches and navigates/filters without changing %s bytes', async mode => {
     const source = 'cat cats CAT cat_ _cat cat2 cat\n\n中文，中文词；中文。\n'; await load(source, mode);
     await page.keyboard.press('Control+f'); await query().fill('cat'); expect(await count()).toBe('1 / 7');

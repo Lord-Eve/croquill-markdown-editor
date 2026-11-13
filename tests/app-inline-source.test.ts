@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser, Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
+import { readFileSync } from 'node:fs';
 import { createTestServer } from './server';
 import { launchTestBrowser } from './browser';
 import { currentFile, focusApp, openFileApp } from './app-files-fixture';
@@ -171,6 +172,17 @@ describe('inline Markdown as source text through the real app', () => {
       await page.keyboard.press('Control+z'); await page.waitForFunction(original => (window as any).fileApp.surface.getMarkdown() === original, original);
     }, 30000);
   }
+
+  it.each(['\n', '\r\n'])('opens the manual acceptance sample, saves it unchanged, and keeps the rest exact after an edit (%j)', async eol => {
+    const original = readFileSync(new URL('../examples/inline-source.md', import.meta.url), 'utf8').replace(/\r?\n/g, eol);
+    await open(original);
+    expect(await page.evaluate(() => { const s = (window as any).fileApp.surface; return { mode: s.mode, reason: s.getSafetyReason(), notice: s.getRichNotice() }; })).toEqual({ mode: 'rich', reason: null, notice: null });
+    await page.keyboard.press('Control+s'); await page.waitForFunction(() => (window as any).fileApp.writes.length === 1);
+    expect(await page.evaluate(() => (window as any).fileApp.writes[0].text)).toBe(original);
+    await caret('前文'); await page.keyboard.insertText('新'); await settle();
+    await page.keyboard.press('Control+s'); await page.waitForFunction(() => (window as any).fileApp.writes.length === 2);
+    expect((await page.evaluate(() => (window as any).fileApp.writes[1].text)).replace(/\r\n/g, '\n')).toBe(original.replace('前文 **加粗文字**', '新前文 **加粗文字**').replace(/\r\n/g, '\n'));
+  }, 30000);
 
   it('renders escapes and entities as the characters they stand for, and their source at the caret', async () => {
     await open('转义 \\*星号\\* 与 实体 &amp; 和 &lt;标签&gt; 尾\n\n普通段落\n'); await caret('普通段落'); await settle();
