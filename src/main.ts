@@ -289,7 +289,7 @@ async function insertImages(sources: ImageSource[]) {
   });
 }
 async function action(name:string, path?:string) {
-  document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));
+  document.querySelectorAll('.menubar details[open]').forEach(e=>e.removeAttribute('open'));
   if ((name==='save'||name==='saveAs') && busy) { queuedSave=queuedSave==='saveAs'||name==='saveAs'?'saveAs':'save'; $('save-status').textContent='等待保存…'; return; }
   if(name==='find'||name==='replace'){if(!busy&&!$('modal-root').childElementCount)surface.toggleSearch(name==='replace');return;}
   if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
@@ -320,15 +320,15 @@ function executeCommand(command: MenuCommand) {
 }
 installMenuPointerRouting(document.querySelector<HTMLElement>('.menubar')!,executeCommand);
 app.addEventListener('click',event=>{const target=(event.target as HTMLElement).closest<HTMLElement>('[data-action],[data-format]');if(target)executeCommand({action:target.dataset.action,format:target.dataset.format,path:target.dataset.path});});
-document.addEventListener('pointerdown',event=>{if(!(event.target as HTMLElement).closest('details'))document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));});
-document.querySelectorAll('details').forEach(detail=>detail.addEventListener('toggle',()=>{if(detail.open)document.querySelectorAll('details[open]').forEach(other=>{if(other!==detail)other.removeAttribute('open');});}));
+document.addEventListener('pointerdown',event=>{if(!(event.target as HTMLElement).closest('.menubar details'))document.querySelectorAll('.menubar details[open]').forEach(e=>e.removeAttribute('open'));});
+document.querySelectorAll<HTMLDetailsElement>('.menubar details').forEach(detail=>detail.addEventListener('toggle',()=>{if(detail.open)document.querySelectorAll('.menubar details[open]').forEach(other=>{if(other!==detail)other.removeAttribute('open');});}));
 installGlobalShortcuts({composing:()=>surface.hasFocusedComposition(),modal:()=>!!$('modal-root').childElementCount,execute:command=>{void action(command);},menu:event=>{
   if(event.altKey && !event.ctrlKey && !$('modal-root').childElementCount){
-    const summary=Array.from(document.querySelectorAll<HTMLElement>('summary[data-menu-key]')).find(item => item.dataset.menuKey === event.key.toLowerCase());
+    const summary=Array.from(document.querySelectorAll<HTMLElement>('.menubar summary[data-menu-key]')).find(item => item.dataset.menuKey === event.key.toLowerCase());
     if(summary){event.preventDefault();(summary.parentElement as HTMLDetailsElement).open=true;summary.focus();}
     return;
   }
-  if(event.key==='Escape'){document.querySelectorAll('details[open]').forEach(e=>e.removeAttribute('open'));return;}
+  if(event.key==='Escape'){document.querySelectorAll('.menubar details[open]').forEach(e=>e.removeAttribute('open'));return;}
 }});
 // Keep links inside the document from navigating away from the editor.
 $('rich-root').addEventListener('click',event=>{if((event.target as HTMLElement).closest('a'))event.preventDefault();});

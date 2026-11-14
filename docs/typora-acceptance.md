@@ -393,3 +393,7 @@ Windows 11，新版 Croquill 打开 Codex 输出目录 `dragdrop-acceptance/拖�
 完整 Tauri `cargo test --locked` 在 Linux 缺少 GLib / GTK / WebKit 开发库处停止；完整 Windows 交叉检查缺 `llvm-rc` 资源编译器，均未宣称完成。另用临时无 GUI 测试入口直接引用仓库原本的 `documents.rs`、`folders.rs`，执行原有和新增后端测试；同一入口加入真实 `file_drop_bridge.rs`，对 `x86_64-pc-windows-msvc` 执行 `cargo check --tests`，检查 Windows API 绑定和跨盘路径代码。没有制作 Windows exe，也没有以静态检查替代 Windows 资源管理器实际拖入验收。编译缓存保留。
 
 最终检查：`npx tsc --noEmit`、默认 `npm test`、`npm run build` 通过；30 个前端测试文件，513 项通过，1 项私人样本因目录不存在自动跳过。新增回归包含 9 类焦点的全局命令、实际 Ctrl+S 和反馈、模拟组词、忙碌保存排队、文件拖入三种未保存决定、图片拖入、最近文件及启动恢复、LF / CRLF / BOM 图片地址局部改写、引用定义、HTML 数字转义和失败保护。独立后端测试 21 项通过，Windows 后端接口交叉类型检查通过。额外检查 760×540 的浅深色界面，最近菜单显示 10 项、可滚动，保存时间不横向溢出；人工样本在所见即所得打开且未编辑原文一致。`src-tauri/target` 已生成，约 1.2 GiB，保留；Windows 构建、桌面、真实 IME 和 Typora 客户端对照仍未做。
+
+## 2026-11-14：块级 HTML 渲染
+
+块级 HTML 渲染：依据官方文档 HTML 一节，本机 Typora 试用过期，未做实测对照。
