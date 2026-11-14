@@ -969,4 +969,89 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     expect(markdown).toContain('<div>x\r\ny</div>');
     expect(markdown).not.toContain('<div>x\ny</div>');
   });
+
+  it('27. inserts images after a selected croquill_raw_block rather than replacing it when source is blurred or arrow-selected', async () => {
+    // 1) Click HTML block -> blur source textarea without changing ProseMirror selection -> insertImage('x.png')
+    await open('<div>html原文</div>\n');
+    await page.locator('.croquill-html-preview').click();
+
+    const afterHtmlInsert = await page.evaluate(() => {
+      const h = (window as any).htmlHarness;
+      const textarea = document.querySelector('.croquill-html-source') as HTMLTextAreaElement;
+      textarea.blur();
+      const view = h.surface.richView();
+      const selectedNodeName = view.state.selection.node?.type.name ?? null;
+
+      h.surface.insertImage('x.png');
+
+      let imageEnd = -1;
+      view.state.doc.descendants((node: any, pos: number) => {
+        if (node.type.name === 'image-block' && node.attrs.src === 'x.png') {
+          imageEnd = pos + node.nodeSize;
+        }
+      });
+
+      const firstMarkdown = h.surface.getMarkdown();
+      const selAfterFirst = view.state.selection.from;
+
+      // A follow-up image insertion should not replace x.png either.
+      h.surface.insertImage('y.png');
+
+      return {
+        selectedNodeName,
+        imageEnd,
+        selAfterFirst,
+        firstMarkdown,
+        secondMarkdown: h.surface.getMarkdown(),
+      };
+    });
+
+    expect(afterHtmlInsert.selectedNodeName).toBe('croquill_raw_block');
+    expect(afterHtmlInsert.selAfterFirst).toBeGreaterThanOrEqual(afterHtmlInsert.imageEnd);
+    expect(afterHtmlInsert.firstMarkdown).toContain('<div>html原文</div>');
+    expect(afterHtmlInsert.firstMarkdown.indexOf('![](x.png)')).toBeGreaterThan(
+      afterHtmlInsert.firstMarkdown.indexOf('<div>html原文</div>'),
+    );
+    expect(afterHtmlInsert.secondMarkdown).toContain('<div>html原文</div>');
+    expect(afterHtmlInsert.secondMarkdown).toContain('![](x.png)');
+    expect(afterHtmlInsert.secondMarkdown.indexOf('![](y.png)')).toBeGreaterThan(
+      afterHtmlInsert.secondMarkdown.indexOf('![](x.png)'),
+    );
+
+    // 2) ArrowDown onto a mixed-category raw block (kind === '') -> insertImage('mixed.png')
+    await open('前段\n\n<div>\n\n[[双链]]\n\n</div>\n\n后段\n');
+    await page.evaluate(() => {
+      const view = (window as any).htmlHarness.surface.richView();
+      view.focus();
+      view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.near(view.state.doc.resolve(3))));
+    });
+    await page.keyboard.press('ArrowDown');
+
+    const afterMixedInsert = await page.evaluate(() => {
+      const h = (window as any).htmlHarness;
+      const view = h.surface.richView();
+      const selNode = view.state.selection.node;
+      const selectedType = selNode?.type.name ?? null;
+      const selectedKind = selNode?.attrs.kind ?? null;
+      const preCount = h.richRoot.querySelectorAll('pre[data-croquill-raw]').length;
+      h.surface.insertImage('mixed.png');
+      return {
+        selectedType,
+        selectedKind,
+        preCount,
+        markdown: h.surface.getMarkdown(),
+      };
+    });
+
+    expect(afterMixedInsert.preCount).toBe(1);
+    expect(afterMixedInsert.selectedType).toBe('croquill_raw_block');
+    expect(afterMixedInsert.selectedKind).toBe('');
+    expect(afterMixedInsert.markdown).toContain('<div>\n\n[[双链]]\n\n</div>');
+    expect(afterMixedInsert.markdown.indexOf('![](mixed.png)')).toBeGreaterThan(
+      afterMixedInsert.markdown.indexOf('<div>\n\n[[双链]]\n\n</div>'),
+    );
+    expect(afterMixedInsert.markdown.indexOf('后段')).toBeGreaterThan(
+      afterMixedInsert.markdown.indexOf('![](mixed.png)'),
+    );
+  });
 });

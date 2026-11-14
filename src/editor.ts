@@ -8,7 +8,7 @@ import { docSchema, emphasisKeymap, emphasisStarInputRule, emphasisUnderscoreInp
 import { insertTableCommand, strikethroughInputRule, strikethroughKeymap } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $prose } from '@milkdown/kit/utils';
-import { Plugin, TextSelection, type Command } from '@milkdown/kit/prose/state';
+import { NodeSelection, Plugin, Selection, TextSelection, type Command, type Transaction as ProseTransaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView as RichView } from '@milkdown/kit/prose/view';
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -41,6 +41,25 @@ import { applySourceChanges, normalizedOffset, normalizedSource, replacementProb
 import { setSourceMatches, setSourceVersion, sourceSearchHighlights, sourceVersion, sourceVersionHistory } from './source-search-state';
 import { nextHeadingLevel, sourceHeadingChange } from './heading-level';
 import './rendered-syntax.css';
+
+function insertBlockAfterRawSelection(view: RichView, node: RichNode): ProseTransaction {
+  const { state } = view;
+  const { selection } = state;
+  if (selection instanceof NodeSelection && selection.node.type.name === 'croquill_raw_block') {
+    const insertPos = selection.to;
+    let tr = state.tr.insert(insertPos, node);
+    const afterPos = insertPos + node.nodeSize;
+    const next = Selection.findFrom(tr.doc.resolve(afterPos), 1);
+    if (next) return tr.setSelection(next);
+    const paragraph = state.schema.nodes.paragraph;
+    if (paragraph) {
+      tr = tr.insert(afterPos, paragraph.create());
+      return tr.setSelection(Selection.near(tr.doc.resolve(afterPos), 1));
+    }
+    return tr.setSelection(Selection.near(tr.doc.resolve(afterPos), -1));
+  }
+  return state.tr.replaceSelectionWith(node);
+}
 
 /** Ctrl+0 / Ctrl+= / Ctrl+-; `code` covers layouts and IME states that change `key`. */
 function headingLevelShortcut(event: KeyboardEvent): string | null {
@@ -211,7 +230,7 @@ export class MarkdownSurface {
     } else if (this.crepe) {
       const view = this.richView();
       const type = view.state.schema.nodes['image-block'];
-      view.dispatch(view.state.tr.replaceSelectionWith(type.create({ src, alt: '' })).scrollIntoView());
+      view.dispatch(insertBlockAfterRawSelection(view, type.create({ src, alt: '' })).scrollIntoView());
       this.notifyRichChange();
     }
   }
@@ -397,7 +416,7 @@ export class MarkdownSurface {
     else if (action === 'table') this.crepe.editor.action((ctx) => ctx.get(commandsCtx).call(insertTableCommand.key, { row: 3, col: 3 }));
     else if (action === 'image') {
       const type = schema.nodes['image-block'];
-      if (type) view.dispatch(view.state.tr.replaceSelectionWith(type.create({ src: '', alt: '' })).scrollIntoView());
+      if (type) view.dispatch(insertBlockAfterRawSelection(view, type.create({ src: '', alt: '' })).scrollIntoView());
     }
     else if (action === 'link') {
       const { from, to } = view.state.selection;
