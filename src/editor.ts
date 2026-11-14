@@ -22,7 +22,7 @@ import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@cod
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
-import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
+import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
@@ -309,7 +309,7 @@ export class MarkdownSurface {
   }
 
   isComposing(): boolean {
-    return this.find.composing || (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
+    return this.find.composing || (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && (this.richView().composing || isHtmlSourceComposing(this.options.richRoot)));
   }
 
   /** A blurred editor may retain its IME flag until the platform sends end. */
@@ -317,7 +317,9 @@ export class MarkdownSurface {
     const focused = document.activeElement;
     if (focused && this.find.root.contains(focused)) return this.find.composing;
     const root = this.currentMode === 'source' ? this.options.sourceRoot : this.options.richRoot;
-    return !!focused && root.contains(focused) && (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
+    if (!focused || !root.contains(focused)) return false;
+    if (this.currentMode === 'source') return !!this.source?.composing;
+    return isFocusedHtmlSource(this.options.richRoot) ? isHtmlSourceComposing(this.options.richRoot) : !!this.crepe && this.richView().composing;
   }
 
   getOutline(): { level: number; text: string; line: number }[] { return markdownOutline(this.getMarkdown()); }
@@ -340,6 +342,11 @@ export class MarkdownSurface {
     if (this.currentMode === 'source') { this.formatSource(action); return; }
     if (!this.crepe) return;
     const view = this.richView();
+    if (isFocusedHtmlSource(this.options.richRoot)) {
+      if (action === 'undo') { richUndo(view.state, view.dispatch, view); this.notifyRichChange(); }
+      else if (action === 'redo') { richRedo(view.state, view.dispatch, view); this.notifyRichChange(); }
+      return;
+    }
     const { schema } = view.state;
     const command = (fn: Command) => fn(view.state, view.dispatch, view);
     const syntax = ({ bold: 'strong', italic: 'em', strike: 'strike', code: 'code', 'inline-code': 'code', highlight: 'highlight' } as const)[action];
@@ -515,7 +522,7 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       this.inlineRaw = createInlineRawMarkdown();
-      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({ resolveImage: this.options.resolveImage })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
@@ -593,7 +600,7 @@ export class MarkdownSurface {
           return false;
         },
         props: {
-          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event) },
+          handleDOMEvents: { keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event) },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();
