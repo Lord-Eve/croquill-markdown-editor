@@ -104,6 +104,7 @@ export class MarkdownSurface {
   private sourceExactSources = new Map<string, string>();
   private richContextVersion = '';
   private unreliableRich?: string;
+  private richDefaultNewline = '\n';
   private richContexts = new Map<string, { base: string; origin: RichNode | undefined; originText: string; notice: string | null }>();
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
@@ -152,7 +153,22 @@ export class MarkdownSurface {
     }
   }
 
+  private isEditingHtmlSource(target?: EventTarget | null): boolean {
+    return this.currentMode === 'rich' && (
+      isFocusedHtmlSource(this.options.richRoot) ||
+      (target instanceof Element && !!target.closest('textarea.croquill-html-source'))
+    );
+  }
+
   private handleImagePaste = (event: ClipboardEvent): void => {
+    if (this.isEditingHtmlSource(event.target)) {
+      const files = Array.from(event.clipboardData?.files || []).filter(isImageFile);
+      if (files.length) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      return;
+    }
     const html = event.clipboardData?.getData('text/html') || '';
     // A copied web image keeps its URL instead of uploading a browser-provided bitmap.
     if (/<img\b[^>]*\bsrc=["']https?:/i.test(html)) return;
@@ -166,7 +182,7 @@ export class MarkdownSurface {
     // Ignore non-image files too: neither the browser nor an editor plugin may open them.
     event.preventDefault(); event.stopImmediatePropagation();
     const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
-    if (!files.length || this.isComposing()) return;
+    if (!files.length || this.isComposing() || this.isEditingHtmlSource(event.target)) return;
     this.placeImageCursor(event.clientX, event.clientY);
     this.options.onImageFiles?.(files, false);
   };
@@ -175,7 +191,7 @@ export class MarkdownSurface {
   };
 
   placeImageCursor(x: number, y: number): void {
-    if (this.isComposing()) return;
+    if (this.isComposing() || this.isEditingHtmlSource()) return;
     if (this.currentMode === 'source' && this.source) {
       const pos = this.source.posAtCoords({ x, y });
       if (pos !== null) this.source.dispatch({ selection: { anchor: pos } });
@@ -187,7 +203,7 @@ export class MarkdownSurface {
   }
 
   insertImage(src: string): void {
-    if (this.isComposing() || this.destroyed) return;
+    if (this.isComposing() || this.destroyed || this.isEditingHtmlSource()) return;
     if (this.currentMode === 'source' && this.source) {
       const { from, to } = this.source.state.selection.main;
       const text = `![](${src})`;
@@ -298,7 +314,9 @@ export class MarkdownSurface {
     this.deferredFocus = () => { requested = true; };
     return () => {
       this.deferredFocus = undefined;
-      if (!requested || this.destroyed || document.querySelector('dialog[open], [popover]:popover-open')) return;
+      const hasOpenOverlay = Array.from(document.querySelectorAll('dialog[open], [popover]:popover-open'))
+        .some(element => !element.closest('[data-croquill-html]'));
+      if (!requested || this.destroyed || hasOpenOverlay) return;
       const current = document.activeElement;
       // Respect a dialog/control the user moved to while native IO was pending.
       if (current && current !== document.body && current !== previous && !ownsFocus(current)) return;
@@ -332,7 +350,8 @@ export class MarkdownSurface {
       this.source.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: 'start' }) });
       this.source.focus();
     } else {
-      const heading = this.options.richRoot.querySelectorAll('h1,h2,h3,h4,h5,h6')[index];
+      const heading = Array.from(this.options.richRoot.querySelectorAll('h1,h2,h3,h4,h5,h6'))
+        .filter(element => !element.closest('[data-croquill-html]'))[index];
       heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
   }
@@ -459,6 +478,7 @@ export class MarkdownSurface {
       view.dispatch(closeHistory(view.state.tr));
       const document = view.state.doc;
       this.raw = next; this.richInput = next; this.richSnapshot = document; this.richOriginDocument = document; this.richOriginText = next; this.richContextVersion = version;
+      this.richDefaultNewline = /\r\n|\r|\n/.exec(next)?.[0] || '\n';
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', preservedMarkdownBlocks(parts.body).length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       this.richExactSources.set(JSON.stringify(document.toJSON()), next);
       this.richContexts.set(version, { base: next, origin: document, originText: next, notice: this.richNotice });
@@ -480,6 +500,7 @@ export class MarkdownSurface {
       this.options.richRoot.replaceChildren();
       this.richExactSources.clear(); this.richContexts.clear(); this.richContextVersion = '';
       const parts = splitFrontmatter(this.raw);
+      this.richDefaultNewline = /\r\n|\r|\n/.exec(this.raw)?.[0] || '\n';
       const blocks = preservedMarkdownBlocks(parts.body);
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       const crepe = new Crepe({
@@ -522,7 +543,10 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       this.inlineRaw = createInlineRawMarkdown();
-      crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({ resolveImage: this.options.resolveImage })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({
+        resolveImage: this.options.resolveImage,
+        defaultLineEnding: () => this.richDefaultNewline,
+      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);

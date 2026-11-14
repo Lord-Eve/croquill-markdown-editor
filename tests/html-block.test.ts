@@ -51,6 +51,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
         changes: [],
         dirty: 0,
         resolveCalls: [],
+        imageFilesCalls: [],
         resolver: async src => src,
       };
       let nextText = '';
@@ -72,6 +73,10 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
         sourceRoot,
         onChange: text => { h.changes.push(text); h.session.edit(text); },
         onDirty: () => { h.dirty++; h.session.markPending(); },
+        onImageFiles: (files, clipboard) => {
+          h.imageFilesCalls.push({ names: files.map(file => file.name), clipboard });
+          h.surface.insertImage('uploaded.png');
+        },
         resolveImage: async src => {
           h.resolveCalls.push(src);
           return h.resolver(src);
@@ -83,6 +88,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
         h.changes = [];
         h.dirty = 0;
         h.resolveCalls = [];
+        h.imageFilesCalls = [];
         await h.session.open('D:/notes/html-block.md');
         await h.surface.init(text);
       };
@@ -181,10 +187,13 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     page.on('pageerror', err => pageErrors.push(err.message));
 
     await page.evaluate(() => {
-      (window as any).htmlHarness.resolver = async (src: string) =>
-        src === 'a.png'
-          ? 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+      (window as any).__settledResolves = 0;
+      (window as any).htmlHarness.resolver = (src: string) => {
+        const result = src === 'a.png'
+          ? Promise.resolve('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
           : Promise.reject(new Error('missing file'));
+        return result.finally(() => { (window as any).__settledResolves++; });
+      };
     });
 
     const dataUri = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -194,10 +203,8 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
 
     await page.waitForFunction(() => {
       const localImg = document.querySelector('.croquill-html-preview img[alt="局部图"]');
-      return localImg?.getAttribute('src')?.startsWith('data:image/gif');
+      return (window as any).__settledResolves === 2 && localImg?.getAttribute('src')?.startsWith('data:image/gif');
     });
-    // Allow microtasks from rejected resolveImage to settle.
-    await page.evaluate(() => new Promise(r => setTimeout(r, 20)));
 
     const state = await page.evaluate(() => {
       const preview = document.querySelector('.croquill-html-preview')!;
@@ -237,10 +244,13 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     const requestedUrls: string[] = [];
     page.on('request', req => requestedUrls.push(req.url()));
     await page.evaluate(() => {
-      (window as any).htmlHarness.resolver = async () => Promise.reject(new Error('not found'));
+      (window as any).__settledResolves = 0;
+      (window as any).htmlHarness.resolver = () => Promise.reject(new Error('not found')).finally(() => {
+        (window as any).__settledResolves++;
+      });
     });
     await open('<script>window.__x=1</script>\n<img src=x onerror="window.__x=1" alt="安全图">\n');
-    await page.evaluate(() => new Promise(r => setTimeout(r, 20)));
+    await page.waitForFunction(() => (window as any).__settledResolves === 1);
     const check = await page.evaluate(() => {
       const previews = (window as any).htmlHarness.richRoot as HTMLElement;
       const img = previews.querySelector('.croquill-html-preview img');
@@ -770,4 +780,193 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     await page.waitForFunction(() => (window as any).fileApp.surface.mode === 'source');
     expect(await page.evaluate(() => (window as any).fileApp.surface.mode)).toBe('source');
   }, 30000);
+
+  it('22. ignores image paste/drop and surface.insertImage while HTML source textarea is focused, keeping plain text paste working', async () => {
+    const original = '<div>初始文本</div>\n';
+    await open(original);
+    await page.locator('.croquill-html-preview').click();
+
+    const blocked = await page.evaluate(() => {
+      const h = (window as any).htmlHarness;
+      const textarea = document.querySelector('.croquill-html-source') as HTMLTextAreaElement;
+      // Place caret between '<div>初' and '始文本</div>'.
+      textarea.focus();
+      textarea.setSelectionRange(6, 6);
+
+      const pasteTransfer = new DataTransfer();
+      pasteTransfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'paste.png', { type: 'image/png' }));
+      const pasteEvent = new ClipboardEvent('paste', { clipboardData: pasteTransfer, bubbles: true, cancelable: true });
+      textarea.dispatchEvent(pasteEvent);
+
+      const dropTransfer = new DataTransfer();
+      dropTransfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'drop.png', { type: 'image/png' }));
+      const dropEvent = new DragEvent('drop', { dataTransfer: dropTransfer, bubbles: true, cancelable: true });
+      textarea.dispatchEvent(dropEvent);
+
+      h.surface.insertImage('x.png');
+
+      const textPasteTransfer = new DataTransfer();
+      textPasteTransfer.setData('text/plain', '中');
+      const textPasteEvent = new ClipboardEvent('paste', { clipboardData: textPasteTransfer, bubbles: true, cancelable: true });
+      textarea.dispatchEvent(textPasteEvent);
+
+      return {
+        imagePasteDefaultPrevented: pasteEvent.defaultPrevented,
+        imageDropDefaultPrevented: dropEvent.defaultPrevented,
+        plainPasteDefaultPrevented: textPasteEvent.defaultPrevented,
+        imageFilesCalls: h.imageFilesCalls.length,
+        markdown: h.surface.getMarkdown(),
+        focused: document.activeElement === textarea,
+        caret: [textarea.selectionStart, textarea.selectionEnd],
+      };
+    });
+
+    expect(blocked.imagePasteDefaultPrevented).toBe(true);
+    expect(blocked.imageDropDefaultPrevented).toBe(true);
+    expect(blocked.plainPasteDefaultPrevented).toBe(false);
+    expect(blocked.imageFilesCalls).toBe(0);
+    expect(blocked.markdown).toBe(original);
+    expect(blocked.focused).toBe(true);
+    expect(blocked.caret).toEqual([6, 6]);
+
+    // Exercise real browser copy+paste inside the focused textarea.
+    await page.evaluate(() => {
+      const textarea = document.querySelector('.croquill-html-source') as HTMLTextAreaElement;
+      textarea.focus();
+      // Select '初始' inside '<div>初始文本</div>', copy, and paste after '<div>初始'.
+      textarea.setSelectionRange(5, 7);
+    });
+    await page.keyboard.press('Control+c');
+    await page.evaluate(() => {
+      const textarea = document.querySelector('.croquill-html-source') as HTMLTextAreaElement;
+      textarea.setSelectionRange(7, 7);
+    });
+    await page.keyboard.press('Control+v');
+    expect(await page.evaluate(() => (window as any).htmlHarness.surface.getMarkdown())).toBe('<div>初始初始文本</div>\n');
+  });
+
+  it('23. excludes headings inside [data-croquill-html] previews when jumping via scrollToHeading()', async () => {
+    await open('# A\n\n<div><h2>HTML</h2></div>\n\n# B\n');
+    const result = await page.evaluate(() => {
+      const h = (window as any).htmlHarness;
+      const scrolled: Array<{ tagName: string; text: string; insideHtml: boolean }> = [];
+      const originalScroll = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function (this: Element) {
+        scrolled.push({
+          tagName: this.tagName,
+          text: this.textContent?.trim() ?? '',
+          insideHtml: !!this.closest('[data-croquill-html]'),
+        });
+      };
+      try {
+        h.surface.scrollToHeading(1);
+      } finally {
+        Element.prototype.scrollIntoView = originalScroll;
+      }
+      return {
+        outline: h.surface.getOutline().map((item: { level: number; text: string }) => ({ level: item.level, text: item.text })),
+        scrolled,
+      };
+    });
+
+    expect(result.outline).toEqual([
+      { level: 1, text: 'A' },
+      { level: 1, text: 'B' },
+    ]);
+    expect(result.scrolled).toEqual([
+      { tagName: 'H1', text: 'B', insideHtml: false },
+    ]);
+  });
+
+  it('24. passes C:/ and file:/// img[src] to resolveImage cleanly while still stripping unsafe <a href="file:///"> and isolating Crepe DOMPurify', async () => {
+    const requestedUrls: string[] = [];
+    page.on('request', req => requestedUrls.push(req.url()));
+
+    await page.evaluate(() => {
+      (window as any).__deferredResolvers = [] as Array<{ src: string; resolve: (url: string) => void }>;
+      (window as any).htmlHarness.resolver = (src: string) => new Promise<string>(resolve => {
+        (window as any).__deferredResolvers.push({ src, resolve });
+      });
+    });
+
+    await open(
+      '<div>\n<img src="C:/notes/a.png" alt="盘符图">\n<img src="file:///C:/notes/a.png" alt="文件图">\n<img src="javascript:alert(1)" alt="脚本图">\n<a href="file:///C:/x">文件链接</a>\n</div>\n',
+    );
+
+    await page.waitForFunction(() => (window as any).__deferredResolvers?.length === 2);
+
+    const beforeResolve = await page.evaluate(async () => {
+      const h = (window as any).htmlHarness;
+      const preview = document.querySelector('.croquill-html-preview')!;
+      const driveImg = preview.querySelector('img[alt="盘符图"]')!;
+      const fileImg = preview.querySelector('img[alt="文件图"]')!;
+      const scriptImg = preview.querySelector('img[alt="脚本图"]')!;
+      const fileLink = preview.querySelector('a')!;
+      const compiledSource = await (await fetch('/src/html-sanitize.ts')).text();
+      const match = /from\s+["']([^"']*dompurify[^"']*)["']/.exec(compiledSource);
+      if (!match) throw new Error('Unable to locate Vite-resolved dompurify module');
+      const loadModule = new Function('u', 'return import(u)') as (u: string) => Promise<{ default: { sanitize(s: string): string } }>;
+      const defaultPurify = (await loadModule(match[1])).default;
+      const defaultSanitized = defaultPurify.sanitize('<img src="C:/notes/a.png">');
+      return {
+        resolveCalls: h.resolveCalls,
+        driveHasSrc: driveImg.hasAttribute('src'),
+        fileHasSrc: fileImg.hasAttribute('src'),
+        scriptHasSrc: scriptImg.hasAttribute('src'),
+        linkHref: fileLink.getAttribute('href'),
+        defaultSanitizedHasSrc: /\bsrc=/i.test(defaultSanitized),
+      };
+    });
+
+    expect(beforeResolve.resolveCalls).toEqual(['C:/notes/a.png', 'file:///C:/notes/a.png']);
+    expect(beforeResolve.driveHasSrc).toBe(false);
+    expect(beforeResolve.fileHasSrc).toBe(false);
+    expect(beforeResolve.scriptHasSrc).toBe(false);
+    expect(beforeResolve.linkHref).toBeNull();
+    expect(beforeResolve.defaultSanitizedHasSrc).toBe(false);
+
+    const dataUri = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    await page.evaluate(uri => {
+      for (const entry of (window as any).__deferredResolvers) entry.resolve(uri);
+    }, dataUri);
+
+    await page.waitForFunction(() => {
+      const preview = document.querySelector('.croquill-html-preview')!;
+      return preview.querySelector('img[alt="盘符图"]')?.getAttribute('src')?.startsWith('data:image/gif')
+        && preview.querySelector('img[alt="文件图"]')?.getAttribute('src')?.startsWith('data:image/gif');
+    });
+    expect(requestedUrls.some(url => url.includes('notes/a.png'))).toBe(false);
+  });
+
+  it('25. omits live data-croquill-raw-value attribute updates on [data-croquill-html] DOM', async () => {
+    await open('<div>静态块</div>\n');
+    const initialHasAttr = await page.evaluate(() =>
+      document.querySelector('[data-croquill-html]')!.hasAttribute('data-croquill-raw-value'),
+    );
+    expect(initialHasAttr).toBe(false);
+
+    await page.locator('.croquill-html-preview').click();
+    await page.keyboard.type('X');
+    const editingHasAttr = await page.evaluate(() =>
+      document.querySelector('[data-croquill-html]')!.hasAttribute('data-croquill-raw-value'),
+    );
+    expect(editingHasAttr).toBe(false);
+  });
+
+  it('26. preserves CRLF line endings inside a trailing single-line HTML block in a CRLF document', async () => {
+    await open('前\r\n\r\n<div>x</div>');
+    await page.locator('.croquill-html-preview').click();
+    await page.evaluate(() => {
+      const textarea = document.querySelector('.croquill-html-source') as HTMLTextAreaElement;
+      textarea.focus();
+      textarea.setSelectionRange(6, 6);
+    });
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('y');
+    await page.keyboard.press('Escape');
+
+    const markdown = await page.evaluate(() => (window as any).htmlHarness.surface.getMarkdown());
+    expect(markdown).toContain('<div>x\r\ny</div>');
+    expect(markdown).not.toContain('<div>x\ny</div>');
+  });
 });

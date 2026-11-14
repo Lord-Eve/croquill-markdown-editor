@@ -19,6 +19,7 @@ interface RawTreeNode {
 
 export interface HtmlBlockPluginOptions {
   resolveImage?: (src: string) => Promise<string>;
+  defaultLineEnding?: () => string;
 }
 
 const RAW_BLOCK_NODE_NAME = 'croquill_raw_block';
@@ -36,11 +37,11 @@ function normalizeDisplayNewlines(text: string): string {
   return text.replace(/\r\n|\r/g, '\n');
 }
 
-function splitRawTail(value: string): { body: string; tail: string; lineEnding: string } {
+function splitRawTail(value: string, fallbackLineEnding = '\n'): { body: string; tail: string; lineEnding: string } {
   const match = TRAILING_SPACE_RE.exec(value);
   const tail = match ? match[1] : '';
   const body = tail ? value.slice(0, value.length - tail.length) : value;
-  const lineEnding = FIRST_NEWLINE_RE.exec(value)?.[0] || '\n';
+  const lineEnding = FIRST_NEWLINE_RE.exec(value)?.[0] || fallbackLineEnding;
   return { body, tail, lineEnding };
 }
 
@@ -108,6 +109,7 @@ class HtmlBlockNodeView implements NodeView {
   private readonly view: EditorView;
   private readonly getPos: () => number | undefined;
   private readonly resolveImage?: (src: string) => Promise<string>;
+  private readonly getDefaultLineEnding?: () => string;
   private savedTail: string;
   private lineEnding: string;
   private editing = false;
@@ -121,13 +123,15 @@ class HtmlBlockNodeView implements NodeView {
     view: EditorView,
     getPos: () => number | undefined,
     resolveImage?: (src: string) => Promise<string>,
+    getDefaultLineEnding?: () => string,
   ) {
     this.node = node;
     this.view = view;
     this.getPos = getPos;
     this.resolveImage = resolveImage;
+    this.getDefaultLineEnding = getDefaultLineEnding;
 
-    const split = splitRawTail(String(node.attrs.value ?? ''));
+    const split = splitRawTail(String(node.attrs.value ?? ''), this.defaultLineEnding());
     this.savedTail = split.tail;
     this.lineEnding = split.lineEnding;
 
@@ -148,7 +152,6 @@ class HtmlBlockNodeView implements NodeView {
     this.preview.className = 'croquill-html-preview';
 
     this.dom.append(this.textarea, this.preview);
-    this.syncDomAttributes();
     this.renderPreview();
     htmlViewsByDom.set(this.dom, this);
 
@@ -161,8 +164,8 @@ class HtmlBlockNodeView implements NodeView {
     this.textarea.addEventListener('blur', this.onTextareaBlur);
   }
 
-  private syncDomAttributes(): void {
-    this.dom.setAttribute('data-croquill-raw-value', JSON.stringify(String(this.node.attrs.value ?? '')));
+  private defaultLineEnding(): string {
+    return this.getDefaultLineEnding?.() || '\n';
   }
 
   private syncVisibility(): void {
@@ -203,7 +206,7 @@ class HtmlBlockNodeView implements NodeView {
         );
       }
     }
-    const split = splitRawTail(String(this.node.attrs.value ?? ''));
+    const split = splitRawTail(String(this.node.attrs.value ?? ''), this.defaultLineEnding());
     this.savedTail = split.tail;
     this.lineEnding = split.lineEnding;
     this.textarea.value = normalizeDisplayNewlines(split.body);
@@ -222,7 +225,7 @@ class HtmlBlockNodeView implements NodeView {
     const currentRaw = String(this.node.attrs.value ?? '');
     const currentBody = currentRaw.endsWith(this.savedTail)
       ? currentRaw.slice(0, currentRaw.length - this.savedTail.length)
-      : splitRawTail(currentRaw).body;
+      : splitRawTail(currentRaw, this.defaultLineEnding()).body;
     const draftDisplay = normalizeDisplayNewlines(this.textarea.value);
     if (draftDisplay === normalizeDisplayNewlines(currentBody)) return;
     const nextRaw = draftDisplay.replace(/\n/g, this.lineEnding) + this.savedTail;
@@ -389,13 +392,12 @@ class HtmlBlockNodeView implements NodeView {
     const oldValue = String(this.node.attrs.value ?? '');
     const newValue = String(node.attrs.value ?? '');
     this.node = node;
-    this.syncDomAttributes();
 
     let body: string;
     if (this.editing && newValue.endsWith(this.savedTail)) {
       body = newValue.slice(0, newValue.length - this.savedTail.length);
     } else {
-      const split = splitRawTail(newValue);
+      const split = splitRawTail(newValue, this.defaultLineEnding());
       this.savedTail = split.tail;
       this.lineEnding = split.lineEnding;
       body = split.body;
@@ -489,7 +491,7 @@ export function htmlBlockPlugin(options: HtmlBlockPluginOptions = {}) {
       nodeViews: {
         [RAW_BLOCK_NODE_NAME]: (node, view, getPos) => (
           rawBlockKind(node.attrs.kind) === 'html'
-            ? new HtmlBlockNodeView(node, view, getPos, options.resolveImage)
+            ? new HtmlBlockNodeView(node, view, getPos, options.resolveImage, options.defaultLineEnding)
             // Fall back to default NodeViewDesc / toDOM for non-HTML preserved blocks.
             : (undefined as unknown as NodeView)
         ),
