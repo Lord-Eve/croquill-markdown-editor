@@ -33,7 +33,7 @@
 | `src/editor.ts` | 编辑核心：Crepe 所见即所得 + CodeMirror 源码模式，两者之间的同步 |
 | `src/session.ts` | 文档会话：路径、是否已修改、保存 / 打开 / 关闭流程 |
 | `src/fidelity.ts` | 保真检查：哪些语法要进入源码保护、结构是否等价、大纲提取 |
-| `src/inline-source*.ts` | 行内格式：文档里保留源码字符，显示层隐藏标记（见下方
+| `src/inline-source*.ts` | 行内格式：文档里保留源码字符，显示层隐藏标记（见上方“行内格式是源码文本”） |
 | `src/style.css` | 全部样式，主题变量在 `:root` 中 |
 | `src-tauri/src/documents.rs` | 读写文件、编码与换行检测、本地图片读取（含 Rust 单元测试） |
 | `src-tauri/src/lib.rs` | Tauri 命令注册 |

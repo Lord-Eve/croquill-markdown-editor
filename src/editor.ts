@@ -30,7 +30,7 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts, parseAlerts } from './alerts';
 import { highlightMark } from './highlight';
 import { configureInlineSource, flattenInlineSource } from './inline-source-markdown';
-import { handleSourceEnter, inlineSourcePlugin, linkInputHandlers, toggleInlineSyntax } from './inline-source-view';
+import { handleSourceArrow, handleSourceEnter, inlineSourcePlugin, linkInputHandlers, toggleInlineSyntax } from './inline-source-view';
 import { InputRule } from '@milkdown/kit/prose/inputrules';
 import { $inputRule } from '@milkdown/kit/utils';
 import { preserveRenderedSource } from './rendered-source';
@@ -593,7 +593,7 @@ export class MarkdownSurface {
           return false;
         },
         props: {
-          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) },
+          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event) },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();

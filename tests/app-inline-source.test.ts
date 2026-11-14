@@ -111,6 +111,21 @@ describe('inline Markdown as source text through the real app', () => {
     expect(stuck).toEqual([]);
   }, 30000);
 
+  // Keys sent back to back, faster than key repeat: each press must still see the
+  // markers the previous one brought on screen, or the caret jumps over them.
+  it.each([[0, 'ArrowLeft'], [30, 'ArrowLeft'], [0, 'ArrowRight'], [30, 'ArrowRight']] as const)('does not skip markers when arrow keys arrive %ims apart (%s)', async (gap, key) => {
+    await open(sample); await caret(key === 'ArrowLeft' ? ' 中间' : '前文', key === 'ArrowLeft' ? 1 : 2); await settle();
+    const expected = key === 'ArrowLeft'
+      ? ['前文 **加粗文字**| 中间', '前文 **加粗文字*|* 中间', '前文 **加粗文字|** 中间', '前文 **加粗文|字** 中间']
+      : ['前文 |**加粗文字** 中间', '前文 *|*加粗文字** 中间', '前文 **|加粗文字** 中间', '前文 **加|粗文字** 中间'];
+    for (let count = 1; count <= expected.length; count++) {
+      await caret(key === 'ArrowLeft' ? ' 中间' : '前文', key === 'ArrowLeft' ? 1 : 2); await settle();
+      for (let index = 0; index < count; index++) { await page.keyboard.down(key); await page.keyboard.up(key); if (gap) await page.waitForTimeout(gap); }
+      await page.waitForTimeout(150); await settle();
+      expect((await look()).caret.replace(/(中间).*$/, '$1'), `${count} presses`).toBe(expected[count - 1]);
+    }
+  }, 30000);
+
   it('re-renders at once when a marker is edited, and undo restores it after the caret has left', async () => {
     await open(sample); await caret('加粗文字**', 5); await settle();
     expect((await look()).caret).toContain('加粗文字*|*');

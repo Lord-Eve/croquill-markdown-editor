@@ -212,6 +212,32 @@ export function inlineSourcePlugin(): Plugin<ViewState> {
 }
 
 /**
+ * Left/Right next to a span whose markers are still hidden. The browser moves the caret
+ * by what is on screen, so from the right it steps over a hidden `**` straight to the end
+ * of the words, and two fast presses outrun the redraw that shows the markers. Bring the
+ * editor's selection up to date first, and take the one step onto a hidden span's edge
+ * ourselves; once the markers are showing, the browser's own movement is right.
+ */
+export function handleSourceArrow(view: EditorView, event: KeyboardEvent): boolean {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || view.composing) return false;
+  // The previous key's caret move reaches the editor on a later selectionchange.
+  (view as unknown as { domObserver?: { flush?: () => void } }).domObserver?.flush?.();
+  const { selection } = view.state, { $head } = selection;
+  if (!selection.empty || !isSourceBlock($head.parent)) return false;
+  const left = event.key === 'ArrowLeft', offset = $head.parentOffset, target = offset + (left ? -1 : 1);
+  const crossed = left ? $head.nodeBefore : $head.nodeAfter;
+  if (!crossed?.isText || target < 0 || target > $head.parent.content.size) return false;
+  // Leave a surrogate pair to the browser, which moves over both halves.
+  const code = $head.parent.textBetween(Math.min(offset, target), Math.max(offset, target)).charCodeAt(0);
+  if (code >= 0xD800 && code <= 0xDFFF) return false;
+  const touches = (position: number, span: InlineSpan) => span.from <= position && position <= span.to;
+  if (!blockSpans($head.parent).some(span => touches(target, span) && !touches(offset, span))) return false;
+  event.preventDefault();
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, $head.start() + target)).scrollIntoView());
+  return true;
+}
+
+/**
  * Enter inside formatted text: close the open markers before the break and reopen them
  * after it, so both halves keep their formatting instead of two dangling `**`.
  * Only adds the characters; the editor's own Enter then splits the block.
