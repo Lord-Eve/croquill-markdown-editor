@@ -1054,4 +1054,79 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
       afterMixedInsert.markdown.indexOf('![](mixed.png)'),
     );
   });
+
+  it('28. protects selected croquill_raw_block from format() across both HTML and mixed blocks without relying on focus', async () => {
+    const htmlOriginal = '前段\n\n<div>html原文</div>\n\n后段\n';
+    const mixedOriginal = '前段\n\n<div>\n\n[[双链]]\n\n</div>\n\n后段\n';
+
+    const selectRawBlock = async (kind: 'html' | 'mixed') => {
+      if (kind === 'html') {
+        await open(htmlOriginal);
+        await page.locator('.croquill-html-preview').click();
+        await page.evaluate(() => {
+          (document.querySelector('.croquill-html-source') as HTMLTextAreaElement).blur();
+        });
+      } else {
+        await open(mixedOriginal);
+        await page.evaluate(() => {
+          const view = (window as any).htmlHarness.surface.richView();
+          view.focus();
+          view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.near(view.state.doc.resolve(3))));
+        });
+        await page.keyboard.press('ArrowDown');
+      }
+      const selected = await page.evaluate(() => {
+        const node = (window as any).htmlHarness.surface.richView().state.selection.node;
+        return { type: node?.type.name ?? null, kind: node?.attrs.kind ?? null };
+      });
+      expect(selected).toEqual({ type: 'croquill_raw_block', kind: kind === 'html' ? 'html' : '' });
+    };
+
+    for (const [kind, marker] of [
+      ['html', '<div>html原文</div>'],
+      ['mixed', '<div>\n\n[[双链]]\n\n</div>'],
+    ] as const) {
+      const original = kind === 'html' ? htmlOriginal : mixedOriginal;
+
+      for (const action of ['quote', 'bold', 'heading', 'heading1', 'bullet', 'code-block'] as const) {
+        await selectRawBlock(kind);
+        const markdown = await page.evaluate(cmd => {
+          const h = (window as any).htmlHarness;
+          h.surface.format(cmd);
+          return h.surface.getMarkdown();
+        }, action);
+        expect(markdown, `${kind}:${action} should keep original`).toBe(original);
+      }
+
+      // link: inserts after the raw block and before 后段
+      await selectRawBlock(kind);
+      const afterLink = await page.evaluate(() => {
+        const h = (window as any).htmlHarness;
+        h.surface.format('link');
+        return h.surface.getMarkdown();
+      });
+      expect(afterLink).toContain(marker);
+      const rawEndForLink = afterLink.indexOf(marker) + marker.length;
+      const linkPos = afterLink.indexOf('[链接文字](https://example.com)');
+      const tailAfterLink = afterLink.indexOf('后段');
+      expect(linkPos).toBeGreaterThan(rawEndForLink);
+      expect(tailAfterLink).toBeGreaterThan(linkPos);
+
+      // table: inserts after the raw block and before 后段
+      await selectRawBlock(kind);
+      const afterTable = await page.evaluate(() => {
+        const h = (window as any).htmlHarness;
+        h.surface.format('table');
+        return h.surface.getMarkdown();
+      });
+      expect(afterTable).toContain(marker);
+      const rawEndForTable = afterTable.indexOf(marker) + marker.length;
+      const tableMatch = /\|(?:\s*:?-{1,}:?\s*\|){3}/.exec(afterTable.slice(rawEndForTable));
+      expect(tableMatch, `expected 3-col GFM table after raw block, got:\n${afterTable}`).not.toBeNull();
+      const tablePos = rawEndForTable + tableMatch!.index;
+      const tailAfterTable = afterTable.indexOf('后段');
+      expect(tablePos).toBeGreaterThan(rawEndForTable);
+      expect(tailAfterTable).toBeGreaterThan(tablePos);
+    }
+  });
 });

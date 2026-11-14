@@ -61,6 +61,22 @@ function insertBlockAfterRawSelection(view: RichView, node: RichNode): ProseTran
   return state.tr.replaceSelectionWith(node);
 }
 
+function moveCaretAfterRawSelection(view: RichView): void {
+  const { state } = view;
+  const { selection, schema } = state;
+  if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'croquill_raw_block') return;
+  const insertPos = selection.to;
+  const nextNode = state.doc.resolve(insertPos).nodeAfter;
+  if (nextNode?.type === schema.nodes.paragraph && nextNode.content.size === 0) {
+    view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, insertPos + 1)).scrollIntoView());
+    return;
+  }
+  const paragraph = schema.nodes.paragraph;
+  if (!paragraph) return;
+  const tr = state.tr.insert(insertPos, paragraph.create());
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, insertPos + 1)).scrollIntoView());
+}
+
 /** Ctrl+0 / Ctrl+= / Ctrl+-; `code` covers layouts and IME states that change `key`. */
 function headingLevelShortcut(event: KeyboardEvent): string | null {
   if (event.shiftKey) return null;
@@ -385,8 +401,18 @@ export class MarkdownSurface {
       else if (action === 'redo') { richRedo(view.state, view.dispatch, view); this.notifyRichChange(); }
       return;
     }
-    const { schema } = view.state;
+    const { selection, schema } = view.state;
     const command = (fn: Command) => fn(view.state, view.dispatch, view);
+    if (selection instanceof NodeSelection && selection.node.type.name === 'croquill_raw_block') {
+      if (action === 'undo' || action === 'redo') {
+        command(action === 'undo' ? richUndo : richRedo);
+        view.focus();
+        this.notifyRichChange();
+        return;
+      }
+      if (action !== 'image' && action !== 'table' && action !== 'link') return;
+      moveCaretAfterRawSelection(view);
+    }
     const syntax = ({ bold: 'strong', italic: 'em', strike: 'strike', code: 'code', 'inline-code': 'code', highlight: 'highlight' } as const)[action];
     if (syntax) toggleInlineSyntax(view, syntax);
     else if (nextHeadingLevel(action, 0) !== null) {
