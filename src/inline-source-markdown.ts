@@ -44,8 +44,21 @@ export function flattenInlineSource() {
     }
     function flatten(children: SourceNode[]): SourceNode[] {
       const result: SourceNode[] = [];
-      for (const child of children) {
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
         const from = child.position?.start.offset, to = child.position?.end.offset;
+        if (from == null && to == null && (child.type === 'text' || child.type === 'link')) {
+          const prevEnd = i > 0 ? children[i - 1].position?.end.offset : undefined;
+          let j = i;
+          while (j + 1 < children.length && children[j + 1].position?.start.offset == null &&
+              (children[j + 1].type === 'text' || children[j + 1].type === 'link')) j++;
+          const nextStart = j + 1 < children.length ? children[j + 1].position?.start.offset : undefined;
+          if (prevEnd != null && nextStart != null && prevEnd <= nextStart) {
+            result.push(...pieces(prevEnd, nextStart));
+            i = j;
+            continue;
+          }
+        }
         if (child.type === 'text') {
           if (from != null && to != null) result.push(...pieces(from, to));
           else if (child.value) result.push({ type: 'text', value: child.value === '\n' ? '\n' : escapeLiteralText(child.value) });
@@ -54,6 +67,23 @@ export function flattenInlineSource() {
             child.children[0].position?.start.offset != null && child.children.at(-1)!.position?.end.offset != null) {
           const innerFrom = child.children[0].position!.start.offset!, innerTo = child.children.at(-1)!.position!.end.offset!;
           result.push(...pieces(from, innerFrom), ...flatten(child.children), ...pieces(innerTo, to));
+        } else if (child.type === 'link') {
+          if (from != null && to != null) {
+            if (!child.children?.length) result.push(...pieces(from, to));
+            else if (child.children[0].position?.start.offset != null && child.children.at(-1)!.position?.end.offset != null) {
+              const innerFrom = child.children[0].position!.start.offset!, innerTo = child.children.at(-1)!.position!.end.offset!;
+              result.push(...pieces(from, innerFrom), ...flatten(child.children), ...pieces(innerTo, to));
+            } else {
+              child.children = flatten(child.children);
+              result.push(child);
+            }
+          } else if (child.children?.length === 1 && child.children[0].type === 'text' && child.children[0].value != null) {
+            // remark-gfm splits bare `www.` autolinks after CJK text into positionless link nodes; keep raw source text.
+            result.push({ type: 'text', value: child.children[0].value });
+          } else {
+            if (child.children) child.children = flatten(child.children);
+            result.push(child);
+          }
         } else {
           if (child.children && !['croquillInlineRaw', 'croquillRawBlock'].includes(child.type)) child.children = flatten(child.children);
           result.push(child);

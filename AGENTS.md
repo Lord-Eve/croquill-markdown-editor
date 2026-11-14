@@ -18,7 +18,7 @@
 
 ## 行内格式是源码文本
 
-所见即所得模式里，加粗、斜体、删除线、行内代码、高亮、反斜杠转义和实体**不是**编辑器的格式标记（mark），而是文档里的普通字符：`**加粗**` 就是 6 个字符。`src/inline-source-view.ts` 用显示层把标记藏起来、给内容加样式，光标碰到时再显示。设计依据和实测见 `docs/inline-source-spike.md`、`docs/inline-source-acceptance.md`。
+所见即所得模式里，加粗、斜体、删除线、行内代码、高亮、行内链接、尖括号与裸自动链接、反斜杠转义和实体**不是**编辑器的格式标记（mark），而是文档里的普通字符：`**加粗**` 就是 6 个字符，`[文字](地址)` 也是普通字符（引用式链接 `[文字][1]` 例外，目前仍沿用链接标记并进入源码保护）。`src/inline-source-view.ts` 用显示层把标记藏起来、给内容加样式，光标碰到时再显示。设计依据和实测见 `docs/inline-source-spike.md`、`docs/inline-source-acceptance.md`。
 
 - 不要再用 `toggleMark` 或输入规则生成这些格式的 mark。外来的 mark（网页粘贴）会被自动写回源码字符。
 - 读文字给人看（目录、预览、统计）时用 `visibleText`，不要直接用 `textContent`，否则会带出标记字符。

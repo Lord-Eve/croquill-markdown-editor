@@ -33,7 +33,15 @@ function blockSyntax(block: RichNode): BlockSyntax {
   });
   if (link) add(']()', block.content.size, 0);
   map.push(block.content.size);
-  const spans = inlineSyntaxSpans(run).map(span => ({ ...span, from: map[span.from], to: map[span.to], innerFrom: map[span.innerFrom], innerTo: map[span.innerTo] }));
+  const spans = inlineSyntaxSpans(run).map(span => ({
+    ...span,
+    from: map[span.from],
+    to: map[span.to],
+    innerFrom: map[span.innerFrom],
+    innerTo: map[span.innerTo],
+    ...(span.urlFrom != null && span.urlTo != null ? { urlFrom: map[span.urlFrom], urlTo: map[span.urlTo] } : {}),
+    ...(span.titleFrom != null && span.titleTo != null ? { titleFrom: map[span.titleFrom], titleTo: map[span.titleTo] } : {}),
+  })).filter(span => !(span.kind === 'link' && span.from === span.innerFrom && span.to === span.innerTo));
   const result = { run, spans };
   blocks.set(block, result);
   return result;
@@ -46,6 +54,37 @@ export function blockSpans(block: RichNode): InlineSpan[] { return isSourceBlock
 export function visibleText(text: string): string { return inlineSourceText(text); }
 
 const element: Partial<Record<InlineKind, string>> = { strong: 'strong', em: 'em', strike: 'del', code: 'code', highlight: 'mark' };
+const UNSAFE_HREF = /^(?:javascript|vbscript|data):/i;
+const isUnsafeHref = (href: string) => UNSAFE_HREF.test(href.replace(/[\u0000-\u0020]+/g, ''));
+
+function decorateLink(block: RichNode, base: number, span: InlineSpan, active: boolean, decorations: Decoration[]): void {
+  const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
+  const marker = { class: active ? 'md-marker' : 'md-marker md-hidden' };
+  if (innerFrom > from) decorations.push(Decoration.inline(from, innerFrom, marker));
+  if (innerTo > innerFrom) {
+    const attrs: Record<string, string> = { class: 'md-link' };
+    const href = span.href ?? '';
+    if (isUnsafeHref(href)) attrs['data-href'] = href;
+    else attrs.href = href;
+    if (span.title != null && span.title !== '') attrs.title = span.title;
+    decorations.push(Decoration.inline(innerFrom, innerTo, { nodeName: 'a', ...attrs }, { inclusiveStart: true, inclusiveEnd: true }));
+  }
+  if (!active || span.kind === 'autolink' || span.urlFrom == null || span.urlTo == null) {
+    if (to > innerTo) decorations.push(Decoration.inline(innerTo, to, marker));
+    return;
+  }
+  const urlFrom = base + span.urlFrom, urlTo = base + span.urlTo;
+  const bracketed = span.urlFrom > span.innerTo + 2 && span.urlTo + 1 < span.to &&
+    block.textBetween(span.urlFrom - 1, span.urlFrom) === '<' && block.textBetween(span.urlTo, span.urlTo + 1) === '>';
+  if (innerTo + 2 <= to) decorations.push(Decoration.inline(innerTo, innerTo + 2, { class: 'md-marker' }));
+  if (bracketed) decorations.push(Decoration.inline(urlFrom - 1, urlFrom, { class: 'md-marker' }));
+  if (urlTo > urlFrom) decorations.push(Decoration.inline(urlFrom, urlTo, { class: 'md-link-url' }, { inclusiveStart: true, inclusiveEnd: true }));
+  if (bracketed) decorations.push(Decoration.inline(urlTo, urlTo + 1, { class: 'md-marker' }));
+  if (span.titleFrom != null && span.titleTo != null && span.titleTo > span.titleFrom) {
+    decorations.push(Decoration.inline(base + span.titleFrom, base + span.titleTo, { class: 'md-link-title' }, { inclusiveStart: true, inclusiveEnd: true }));
+  }
+  if (to - 1 > innerTo) decorations.push(Decoration.inline(to - 1, to, { class: 'md-marker' }));
+}
 
 function decorateBlock(block: RichNode, position: number, selectionFrom: number, selectionTo: number): Decoration[] {
   const base = position + 1, decorations: Decoration[] = [];
@@ -53,6 +92,10 @@ function decorateBlock(block: RichNode, position: number, selectionFrom: number,
     const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
     // Touching counts: the caret right before `**` already shows it, as in Typora.
     const active = selectionFrom <= to && selectionTo >= from;
+    if (span.kind === 'link' || span.kind === 'autolink') {
+      decorateLink(block, base, span, active, decorations);
+      continue;
+    }
     const marker = { class: active ? 'md-marker' : 'md-marker md-hidden' };
     if (innerFrom > from) decorations.push(Decoration.inline(from, innerFrom, marker));
     if (to > innerTo) decorations.push(Decoration.inline(innerTo, to, marker));
@@ -92,7 +135,7 @@ function build(state: EditorState): ViewState {
   return { decorations: DecorationSet.create(state.doc, all), stale: false };
 }
 
-const syntaxMarks = ['strong', 'emphasis', 'strike_through', 'inlineCode', 'croquill_highlight'];
+const syntaxMarks = ['link', 'strong', 'emphasis', 'strike_through', 'inlineCode', 'croquill_highlight'];
 function markMarkers(mark: Mark, text: string): [string, string] {
   const marker = String(mark.attrs.marker || '*');
   if (mark.type.name === 'strong') return [marker + marker, marker + marker];
@@ -100,6 +143,27 @@ function markMarkers(mark: Mark, text: string): [string, string] {
   if (mark.type.name === 'strike_through') return ['~~', '~~'];
   if (mark.type.name === 'croquill_highlight') return ['==', '=='];
   return inlineMarkers('code', text);
+}
+
+function balancedParens(value: string): boolean {
+  let depth = 0;
+  for (const char of value) {
+    if (char === '(') depth++;
+    else if (char === ')') { if (depth === 0) return false; depth--; }
+  }
+  return depth === 0;
+}
+
+function linkMarkers(href: string, title: string, entries: { child: RichNode; syntax: Mark[] }[]): { markers: [string, string]; escapeBrackets: boolean } {
+  const plainAutolink = !title && /^(?:https?|ftp):\/\/\S+$/i.test(href) && !/[<>\u0000-\u001f\u007f]/.test(href) &&
+    entries.every(entry => entry.child.isText && entry.syntax.length === 1) &&
+    entries.map(entry => entry.child.text || '').join('') === href;
+  if (plainAutolink) return { markers: ['<', '>'], escapeBrackets: false };
+  const destination = /[\s\u0000-\u001f\u007f]/.test(href) || href.startsWith('<') || !balancedParens(href)
+    ? `<${href.replace(/[<>]/g, '\\$&')}>`
+    : href;
+  const suffix = title ? ` "${title.replace(/([\\"])/g, '\\$1')}"` : '';
+  return { markers: ['[', `](${destination}${suffix})`], escapeBrackets: true };
 }
 
 /**
@@ -118,19 +182,91 @@ function dissolveMarks(state: EditorState, from: number, to: number): Transactio
   });
   // Later blocks first, so earlier positions stay valid.
   for (const { position, block } of targets.reverse()) {
-    const children: RichNode[] = [], offsets: { oldStart: number; oldEnd: number; newStart: number; closing: number }[] = [];
-    let open: Mark[] = [], size = 0, previousPlain: readonly Mark[] = [];
-    const emit = (text: string, marks: readonly Mark[]) => { if (text) { children.push(state.schema.text(text, marks)); size += text.length; } };
-    const closeFrom = (keep: number) => { let length = 0; for (const mark of open.slice(keep).reverse()) { const text = markMarkers(mark, '')[1]; emit(text, previousPlain); length += text.length; } open = open.slice(0, keep); return length; };
+    interface Entry {
+      child: RichNode;
+      offset: number;
+      syntax: Mark[];
+      plain: Mark[];
+      linkMarkers?: [string, string];
+    }
+    const entries: Entry[] = [];
     block.forEach((child, offset) => {
-      const syntax = child.marks.filter(mark => syntaxMarks.includes(mark.type.name)), plain = child.marks.filter(mark => !syntaxMarks.includes(mark.type.name));
+      // Link always wraps outermost so `[**bold**](url)` dissolves as one link.
+      const syntax = [
+        ...child.marks.filter(mark => mark.type.name === 'link'),
+        ...child.marks.filter(mark => mark.type.name !== 'link' && syntaxMarks.includes(mark.type.name)),
+      ];
+      const plain = child.marks.filter(mark => !syntaxMarks.includes(mark.type.name));
+      entries.push({ child, offset, syntax, plain });
+    });
+    const escapedIndices = entries.map(() => new Set<number>());
+    for (let start = 0; start < entries.length;) {
+      const link = entries[start].syntax[0]?.type.name === 'link' ? entries[start].syntax[0] : null;
+      if (!link) { start++; continue; }
+      let end = start + 1;
+      while (end < entries.length && entries[end].syntax[0]?.type.name === 'link' && link.eq(entries[end].syntax[0])) end++;
+      const href = String(link.attrs.href ?? '');
+      const title = link.attrs.title ? String(link.attrs.title) : '';
+      const info = linkMarkers(href, title, entries.slice(start, end));
+      for (let i = start; i < end; i++) entries[i].linkMarkers = info.markers;
+      if (info.escapeBrackets) {
+        const openStack: { entryIndex: number; charIndex: number }[] = [];
+        for (let entryIndex = start; entryIndex < end; entryIndex++) {
+          const entry = entries[entryIndex];
+          if (!entry.child.isText || entry.syntax.some(mark => mark.type.name === 'inlineCode')) continue;
+          const text = entry.child.text || '';
+          let backslash = false;
+          for (let charIndex = 0; charIndex < text.length; charIndex++) {
+            const char = text[charIndex];
+            if (backslash) { backslash = false; continue; }
+            if (char === '\\') { backslash = true; continue; }
+            if (char === '[') openStack.push({ entryIndex, charIndex });
+            else if (char === ']') {
+              if (openStack.length) openStack.pop();
+              else escapedIndices[entryIndex].add(charIndex);
+            }
+          }
+        }
+        for (const { entryIndex, charIndex } of openStack) escapedIndices[entryIndex].add(charIndex);
+      }
+      start = end;
+    }
+
+    const children: RichNode[] = [];
+    const offsets: { oldStart: number; oldEnd: number; newStart: number; newEnd: number; closing: number; posMap?: number[] }[] = [];
+    let open: { mark: Mark; close: string }[] = [], size = 0, previousPlain: readonly Mark[] = [];
+    const emit = (text: string, marks: readonly Mark[]) => { if (text) { children.push(state.schema.text(text, marks)); size += text.length; } };
+    const closeFrom = (keep: number) => {
+      let length = 0;
+      for (const item of open.slice(keep).reverse()) { emit(item.close, previousPlain); length += item.close.length; }
+      open = open.slice(0, keep);
+      return length;
+    };
+    entries.forEach((entry, entryIndex) => {
       let common = 0;
-      while (common < open.length && common < syntax.length && open[common].eq(syntax[common])) common++;
+      while (common < open.length && common < entry.syntax.length && open[common].mark.eq(entry.syntax[common])) common++;
       const closed = closeFrom(common);
       if (offsets.length) offsets.at(-1)!.closing = closed;
-      for (const mark of syntax.slice(common)) { emit(markMarkers(mark, child.text || '')[0], plain); open.push(mark); }
-      offsets.push({ oldStart: offset, oldEnd: offset + child.nodeSize, newStart: size, closing: 0 });
-      children.push(child.mark(plain)); size += child.nodeSize; previousPlain = plain;
+      for (const mark of entry.syntax.slice(common)) {
+        const [opening, closing] = mark.type.name === 'link' ? entry.linkMarkers! : markMarkers(mark, entry.child.text || '');
+        emit(opening, entry.plain);
+        open.push({ mark, close: closing });
+      }
+      let nextChild = entry.child.mark(entry.plain);
+      let posMap: number[] | undefined;
+      if (escapedIndices[entryIndex].size && entry.child.isText) {
+        const raw = entry.child.text || '';
+        let escapedText = '';
+        posMap = [0];
+        for (let i = 0; i < raw.length; i++) {
+          if (escapedIndices[entryIndex].has(i)) escapedText += '\\';
+          escapedText += raw[i];
+          posMap.push(escapedText.length);
+        }
+        nextChild = state.schema.text(escapedText, entry.plain);
+      }
+      offsets.push({ oldStart: entry.offset, oldEnd: entry.offset + entry.child.nodeSize, newStart: size, newEnd: size + nextChild.nodeSize, closing: 0, posMap });
+      children.push(nextChild); size += nextChild.nodeSize; previousPlain = entry.plain;
     });
     const closed = closeFrom(0);
     if (offsets.length) offsets.at(-1)!.closing = closed;
@@ -140,7 +276,9 @@ function dissolveMarks(state: EditorState, from: number, to: number): Transactio
       if (offset < 0 || offset > block.content.size) return null;
       const child = offsets.find(entry => offset > entry.oldStart && offset <= entry.oldEnd) || offsets[0];
       if (!child || offset === 0) return start;
-      return start + child.newStart + (offset - child.oldStart) + (offset === child.oldEnd ? child.closing : 0);
+      if (offset === child.oldEnd) return start + child.newEnd + child.closing;
+      const inner = offset - child.oldStart;
+      return start + child.newStart + (child.posMap ? child.posMap[inner] : inner);
     };
     const anchor = mapOffset(selection.anchor), head = mapOffset(selection.head);
     tr = (tr || state.tr).replaceWith(start, start + block.content.size, Fragment.fromArray(children));
@@ -231,7 +369,7 @@ export function handleSourceArrow(view: EditorView, event: KeyboardEvent): boole
   const code = $head.parent.textBetween(Math.min(offset, target), Math.max(offset, target)).charCodeAt(0);
   if (code >= 0xD800 && code <= 0xDFFF) return false;
   const touches = (position: number, span: InlineSpan) => span.from <= position && position <= span.to;
-  if (!blockSpans($head.parent).some(span => touches(target, span) && !touches(offset, span))) return false;
+  if (!blockSpans($head.parent).some(span => (span.innerFrom > span.from || span.to > span.innerTo) && touches(target, span) && !touches(offset, span))) return false;
   event.preventDefault();
   view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, $head.start() + target)).scrollIntoView());
   return true;
@@ -247,7 +385,7 @@ export function handleSourceEnter(view: EditorView, event: KeyboardEvent): boole
   const { selection } = view.state, { $from } = selection;
   if (!selection.empty || !isSourceBlock($from.parent)) return false;
   const block = $from.parent, offset = $from.parentOffset;
-  const open = blockSpans(block).filter(span => !['escape', 'entity'].includes(span.kind) && span.innerFrom < offset && offset < span.innerTo);
+  const open = blockSpans(block).filter(span => !['escape', 'entity', 'autolink'].includes(span.kind) && span.innerFrom < offset && offset < span.innerTo);
   if (!open.length) return false;
   const text = (from: number, to: number) => block.textBetween(from, to, '\n', INLINE_OBJECT);
   // Outer spans come first: close inner-to-outer, reopen outer-to-inner.
@@ -258,27 +396,72 @@ export function handleSourceEnter(view: EditorView, event: KeyboardEvent): boole
   return false;
 }
 
-/** `[文字](地址 "标题")` and `<https://…>` become a link as their last character is typed. */
-export function linkInputHandlers(): { match: RegExp; handler: (state: EditorState, match: RegExpMatchArray, start: number, end: number) => Transaction | null }[] {
-  const outsideCode = (state: EditorState, start: number) => {
-    const $start = state.doc.resolve(start), offset = $start.parentOffset;
-    return isSourceBlock($start.parent) && !blockSpans($start.parent).some(span => span.kind === 'code' && span.from <= offset && offset < span.to);
-  };
-  return [{
-    match: /(?<![\\!])\[([^[\]\n]+)\]\(([^()\s]+)(?:[ \t]+"([^"\n]*)")?\)$/,
-    handler: (state, match, start, end) => {
-      const link = state.schema.marks.link;
-      if (!link || !outsideCode(state, start)) return null;
-      return state.tr.replaceWith(start, end, state.schema.text(match[1], [link.create({ href: match[2], title: match[3] || null })])).removeStoredMark(link);
-    },
-  }, {
-    match: /(?<!\\)<((?:https?|ftp):\/\/[^\s<>]+)>$/,
-    handler: (state, match, start, end) => {
-      const link = state.schema.marks.link;
-      if (!link || !outsideCode(state, start)) return null;
-      return state.tr.replaceWith(start, end, state.schema.text(match[1], [link.create({ href: match[1] })])).removeStoredMark(link);
-    },
-  }];
+/** Ctrl+K and Format -> Link: edit existing inline link URL, or insert source link brackets. */
+export function insertOrEditLink(view: EditorView): boolean {
+  const { state } = view, { $from, $to, empty } = state.selection;
+  if (!$from.sameParent($to) || !isSourceBlock($from.parent)) return false;
+  const block = $from.parent, base = $from.start(), from = $from.parentOffset, to = $to.parentOffset;
+  const spans = blockSpans(block);
+  const insideCode = spans.some(span => span.kind === 'code' && (empty ? span.from < from && from < span.to : span.from < to && from < span.to && !(from <= span.from && span.to <= to)));
+  const insideAutolink = spans.some(span => span.kind === 'autolink' && span.from <= from && to <= span.to);
+  if (insideCode || insideAutolink) return false;
+  const existing = spans.filter(span => span.kind === 'link' && span.from <= from && to <= span.to).at(-1);
+  const tr = state.tr;
+  if (existing) {
+    if (existing.urlFrom != null && existing.urlTo != null) {
+      tr.setSelection(TextSelection.create(tr.doc, base + existing.urlFrom, base + existing.urlTo));
+    } else {
+      const tail = block.textBetween(existing.innerTo, existing.to, '\n', INLINE_OBJECT);
+      const openParen = tail.indexOf('(');
+      if (openParen < 0) return false;
+      tr.setSelection(TextSelection.create(tr.doc, base + existing.innerTo + openParen + 1));
+    }
+  } else if (empty) {
+    tr.insertText('[]()', base + from);
+    tr.setSelection(TextSelection.create(tr.doc, base + from + 1));
+  } else {
+    const crossing = spans.some(span => (span.kind === 'link' || span.kind === 'autolink') && span.from < to && from < span.to && !(from <= span.from && span.to <= to));
+    if (crossing) return false;
+    tr.insertText(']()', base + to).insertText('[', base + from);
+    tr.setSelection(TextSelection.create(tr.doc, base + to + 3));
+  }
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+function rectContains(rect: DOMRect, x: number, y: number): boolean {
+  return rect.width > 0 && rect.height > 0 && x >= rect.left - 1 && x <= rect.right + 1 && y >= rect.top - 1 && y <= rect.bottom + 1;
+}
+
+function spanContainsPoint(view: EditorView, fromPos: number, toPos: number, clientX: number, clientY: number): boolean {
+  if (toPos <= fromPos || fromPos < 0 || toPos > view.state.doc.content.size) return false;
+  try {
+    const start = view.domAtPos(fromPos), end = view.domAtPos(toPos);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    return Array.from(range.getClientRects()).some(rect => rectContains(rect, clientX, clientY));
+  } catch {
+    return false;
+  }
+}
+
+/** Find the inline `link` / `autolink` span directly beneath a pointer coordinate. */
+export function linkAtCoords(view: EditorView, clientX: number, clientY: number, target: EventTarget | null): InlineSpan | null {
+  if (target instanceof Element && target.closest('[data-croquill-html], .croquill-html-source, [data-croquill-toc], [data-footnote-reference], .milkdown-code-block, pre')) {
+    return null;
+  }
+  const coords = view.posAtCoords({ left: clientX, top: clientY });
+  if (!coords) return null;
+  const $pos = view.state.doc.resolve(coords.pos);
+  if (!isSourceBlock($pos.parent)) return null;
+  const blockStart = $pos.start(), offset = $pos.parentOffset;
+  return blockSpans($pos.parent).find(span =>
+    (span.kind === 'link' || span.kind === 'autolink') &&
+    span.from <= offset && offset <= span.to &&
+    (spanContainsPoint(view, blockStart + span.from, blockStart + span.to, clientX, clientY) ||
+      spanContainsPoint(view, blockStart + span.innerFrom, blockStart + span.innerTo, clientX, clientY)),
+  ) || null;
 }
 
 type FormatKind = 'strong' | 'em' | 'strike' | 'code' | 'highlight';

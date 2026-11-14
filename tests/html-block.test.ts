@@ -1107,7 +1107,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
       });
       expect(afterLink).toContain(marker);
       const rawEndForLink = afterLink.indexOf(marker) + marker.length;
-      const linkPos = afterLink.indexOf('[链接文字](https://example.com)');
+      const linkPos = afterLink.indexOf('[]()');
       const tailAfterLink = afterLink.indexOf('后段');
       expect(linkPos).toBeGreaterThan(rawEndForLink);
       expect(tailAfterLink).toBeGreaterThan(linkPos);

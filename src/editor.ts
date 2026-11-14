@@ -30,9 +30,7 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts, parseAlerts } from './alerts';
 import { highlightMark } from './highlight';
 import { configureInlineSource, flattenInlineSource } from './inline-source-markdown';
-import { handleSourceArrow, handleSourceEnter, inlineSourcePlugin, linkInputHandlers, toggleInlineSyntax } from './inline-source-view';
-import { InputRule } from '@milkdown/kit/prose/inputrules';
-import { $inputRule } from '@milkdown/kit/utils';
+import { handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
 import { preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, parseTocFootnotes, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import { SearchPanel, type SearchReplaceResult } from './search-panel';
@@ -109,7 +107,12 @@ export interface MarkdownSurfaceOptions {
   resolveImage: (src: string) => Promise<string>;
   onImageFiles?: (files: File[], clipboard: boolean) => void;
   uploadImage?: (file: File) => Promise<string | null>;
+  onOpenLink?: (href: string) => void;
+  onLinkHint?: (message: string) => void;
 }
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+const isOpenLinkClick = (event: MouseEvent) => (isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) && !event.altKey && !event.shiftKey;
 
 /** Two mature editing surfaces, with the unmodified Markdown kept independently. */
 export class MarkdownSurface {
@@ -141,6 +144,7 @@ export class MarkdownSurface {
   private unreliableRich?: string;
   private richDefaultNewline = '\n';
   private richContexts = new Map<string, { base: string; origin: RichNode | undefined; originText: string; notice: string | null }>();
+  private linkHintShown = false;
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
     this.searchPainter = new RichSearchPainter(options.richRoot);
@@ -444,13 +448,7 @@ export class MarkdownSurface {
       const type = schema.nodes['image-block'];
       if (type) view.dispatch(insertBlockAfterRawSelection(view, type.create({ src: '', alt: '' })).scrollIntoView());
     }
-    else if (action === 'link') {
-      const { from, to } = view.state.selection;
-      const label = view.state.doc.textBetween(from, to) || '链接文字';
-      const node = schema.text(label, [schema.marks.link.create({ href: 'https://example.com' })]);
-      const transaction = view.state.tr.replaceSelectionWith(node, false);
-      view.dispatch(transaction.setSelection(TextSelection.create(transaction.doc, from, from + label.length)));
-    }
+    else if (action === 'link') insertOrEditLink(view);
     view.focus();
     this.notifyRichChange();
   }
@@ -556,13 +554,11 @@ export class MarkdownSurface {
           [Crepe.Feature.Toolbar]: false,
           [Crepe.Feature.TopBar]: false,
           [Crepe.Feature.AI]: false,
+          [Crepe.Feature.LinkTooltip]: false,
           [Crepe.Feature.Latex]: true,
         },
         featureConfigs: {
           [Crepe.Feature.Placeholder]: { text: '从这里开始写作…', mode: 'doc' },
-          [Crepe.Feature.LinkTooltip]: {
-            inputPlaceholder: '输入链接地址',
-          },
           [Crepe.Feature.ImageBlock]: {
             inlineUploadButton: '选择图片', inlineConfirmButton: '确定',
             inlineUploadPlaceholderText: '输入图片地址或相对路径',
@@ -591,7 +587,7 @@ export class MarkdownSurface {
       crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({
         resolveImage: this.options.resolveImage,
         defaultLineEnding: () => this.richDefaultNewline,
-      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
@@ -669,7 +665,33 @@ export class MarkdownSurface {
           return false;
         },
         props: {
-          handleDOMEvents: { keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event) },
+          handleDOMEvents: {
+            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            mousedown: (view, event) => {
+              if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
+              if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;
+              event.preventDefault();
+              return true;
+            },
+            click: (view, event) => {
+              if (view.composing || event.button !== 0) return false;
+              if (isOpenLinkClick(event)) {
+                const hit = linkAtCoords(view, event.clientX, event.clientY, event.target);
+                if (!hit) return false;
+                event.preventDefault();
+                this.options.onOpenLink?.(hit.href ?? '');
+                return true;
+              }
+              if (!event.ctrlKey && !event.metaKey && !event.altKey && !this.linkHintShown && view.state.selection.empty) {
+                const hit = linkAtCoords(view, event.clientX, event.clientY, event.target);
+                if (hit) {
+                  this.linkHintShown = true;
+                  this.options.onLinkHint?.('按 Ctrl + 点击以打开此链接');
+                }
+              }
+              return false;
+            },
+          },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();

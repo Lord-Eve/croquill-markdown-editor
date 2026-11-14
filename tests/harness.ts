@@ -98,7 +98,7 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = async () => {
       await surface.load('待办'); surface.format('task');
       assert(surface.getMarkdown().includes('[ ] 待办'), '任务列表插入失败');
       await surface.load(''); surface.format('link');
-      assert(surface.getMarkdown().includes('[链接文字](https://example.com)'), '链接插入失败');
+      assert(surface.getMarkdown().includes('[]()'), '链接插入失败');
       await surface.load(''); surface.format('image');
       assert(!!richRoot.querySelector('.milkdown-image-block'), '图片插入面板未出现');
     });

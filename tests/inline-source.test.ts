@@ -48,7 +48,59 @@ describe('inline source spans', () => {
 
   it('gives the visible text', () => {
     expect(inlineSourceText('标题 **粗** 与 `码` \\* &lt; ==亮==')).toBe('标题 粗 与 码 * < 亮');
+    expect(inlineSourceText('[文 **字**](https://a.com "标") 与 <https://b.com> 和 www.c.com')).toBe('文 字 与 https://b.com 和 www.c.com');
     expect(inlineSourceText('没有语法')).toBe('没有语法');
+  });
+
+  it('recognizes inline links, angle autolinks, and bare autolinks with URL/title ranges', () => {
+    const s1 = '[x](<a b> \'v\')';
+    expect(inlineSyntaxSpans(s1)).toEqual([{
+      kind: 'link', from: 0, to: 14, innerFrom: 1, innerTo: 2,
+      urlFrom: 5, urlTo: 8, titleFrom: 10, titleTo: 13, href: 'a b', title: 'v',
+    }]);
+
+    const s2 = '[x](u (括号标题))';
+    expect(inlineSyntaxSpans(s2)).toEqual([{
+      kind: 'link', from: 0, to: 13, innerFrom: 1, innerTo: 2,
+      urlFrom: 4, urlTo: 5, titleFrom: 6, titleTo: 12, href: 'u', title: '括号标题',
+    }]);
+
+    const s3 = '[n\\]n](u(1))';
+    expect(inlineSyntaxSpans(s3)).toEqual([
+      { kind: 'link', from: 0, to: 12, innerFrom: 1, innerTo: 5, urlFrom: 7, urlTo: 11, href: 'u(1)' },
+      { kind: 'escape', from: 2, to: 4, innerFrom: 3, innerTo: 4 },
+    ]);
+
+    const s4 = '[t **b** `c`](u "v")';
+    expect(inlineSyntaxSpans(s4)).toEqual([
+      { kind: 'link', from: 0, to: 20, innerFrom: 1, innerTo: 12, urlFrom: 14, urlTo: 15, titleFrom: 16, titleTo: 19, href: 'u', title: 'v' },
+      { kind: 'strong', from: 3, to: 8, innerFrom: 5, innerTo: 6 },
+      { kind: 'code', from: 9, to: 12, innerFrom: 10, innerTo: 11 },
+    ]);
+
+    expect(inlineSyntaxSpans('<me@q.com>')).toEqual([
+      { kind: 'autolink', from: 0, to: 10, innerFrom: 1, innerTo: 9, href: 'mailto:me@q.com' },
+    ]);
+    expect(inlineSyntaxSpans('www.y.com')).toEqual([
+      { kind: 'autolink', from: 0, to: 9, innerFrom: 0, innerTo: 9, href: 'http://www.y.com' },
+    ]);
+    expect(inlineSyntaxSpans('me@z.com')).toEqual([
+      { kind: 'autolink', from: 0, to: 8, innerFrom: 0, innerTo: 8, href: 'mailto:me@z.com' },
+    ]);
+    expect(inlineSyntaxSpans('、www.example.com')).toEqual([
+      { kind: 'autolink', from: 1, to: 16, innerFrom: 1, innerTo: 16, href: 'http://www.example.com' },
+    ]);
+    expect(inlineSyntaxSpans('裸网址：www.example.com ==ok==')).toEqual([
+      { kind: 'autolink', from: 4, to: 19, innerFrom: 4, innerTo: 19, href: 'http://www.example.com' },
+      { kind: 'highlight', from: 20, to: 26, innerFrom: 22, innerTo: 24 },
+    ]);
+  });
+
+  it('ignores non-links such as escaped brackets, links in code, empty-text links, and unresolved refs', () => {
+    expect(inlineSyntaxSpans('\\[e](f)')).toEqual([{ kind: 'escape', from: 0, to: 2, innerFrom: 1, innerTo: 2 }]);
+    expect(inlineSyntaxSpans('`[c](d)`')).toEqual([{ kind: 'code', from: 0, to: 8, innerFrom: 1, innerTo: 7 }]);
+    expect(inlineSyntaxSpans('[](u)')).toEqual([]);
+    expect(inlineSyntaxSpans('[r][1]')).toEqual([]);
   });
 });
 
@@ -69,6 +121,11 @@ describe('writing source text', () => {
     expect(guard('```js')).toBe('\\```js');
     expect(guard('```码``` 行内')).toBe('```码``` 行内');
     expect(guard('<div>')).toBe('\\<div>');
+    expect(guard('<span>')).toBe('\\<span>');
+    expect(guard('</div>')).toBe('\\</div>');
+    expect(guard('<my-tag attr="1">')).toBe('\\<my-tag attr="1">');
+    expect(guard('<https://solo.com>')).toBe('<https://solo.com>');
+    expect(guard('<me@q.com>')).toBe('<me@q.com>');
     expect(guard('<3 爱')).toBe('<3 爱');
     expect(guard('[标签]: 链接')).toBe('\\[标签]: 链接');
     expect(guard('  缩进')).toBe('&#x20; 缩进');
