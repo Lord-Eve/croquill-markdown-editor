@@ -8,7 +8,7 @@ import { docSchema, emphasisKeymap, emphasisStarInputRule, emphasisUnderscoreInp
 import { insertTableCommand, strikethroughInputRule, strikethroughKeymap } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $prose } from '@milkdown/kit/utils';
-import { Plugin, TextSelection, type Command } from '@milkdown/kit/prose/state';
+import { NodeSelection, Plugin, Selection, TextSelection, type Command, type Transaction as ProseTransaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView as RichView } from '@milkdown/kit/prose/view';
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -22,7 +22,7 @@ import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@cod
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
-import { preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
+import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
@@ -41,6 +41,41 @@ import { applySourceChanges, normalizedOffset, normalizedSource, replacementProb
 import { setSourceMatches, setSourceVersion, sourceSearchHighlights, sourceVersion, sourceVersionHistory } from './source-search-state';
 import { nextHeadingLevel, sourceHeadingChange } from './heading-level';
 import './rendered-syntax.css';
+
+function insertBlockAfterRawSelection(view: RichView, node: RichNode): ProseTransaction {
+  const { state } = view;
+  const { selection } = state;
+  if (selection instanceof NodeSelection && selection.node.type.name === 'croquill_raw_block') {
+    const insertPos = selection.to;
+    let tr = state.tr.insert(insertPos, node);
+    const afterPos = insertPos + node.nodeSize;
+    const next = Selection.findFrom(tr.doc.resolve(afterPos), 1);
+    if (next) return tr.setSelection(next);
+    const paragraph = state.schema.nodes.paragraph;
+    if (paragraph) {
+      tr = tr.insert(afterPos, paragraph.create());
+      return tr.setSelection(Selection.near(tr.doc.resolve(afterPos), 1));
+    }
+    return tr.setSelection(Selection.near(tr.doc.resolve(afterPos), -1));
+  }
+  return state.tr.replaceSelectionWith(node);
+}
+
+function moveCaretAfterRawSelection(view: RichView): void {
+  const { state } = view;
+  const { selection, schema } = state;
+  if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'croquill_raw_block') return;
+  const insertPos = selection.to;
+  const nextNode = state.doc.resolve(insertPos).nodeAfter;
+  if (nextNode?.type === schema.nodes.paragraph && nextNode.content.size === 0) {
+    view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, insertPos + 1)).scrollIntoView());
+    return;
+  }
+  const paragraph = schema.nodes.paragraph;
+  if (!paragraph) return;
+  const tr = state.tr.insert(insertPos, paragraph.create());
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, insertPos + 1)).scrollIntoView());
+}
 
 /** Ctrl+0 / Ctrl+= / Ctrl+-; `code` covers layouts and IME states that change `key`. */
 function headingLevelShortcut(event: KeyboardEvent): string | null {
@@ -104,6 +139,7 @@ export class MarkdownSurface {
   private sourceExactSources = new Map<string, string>();
   private richContextVersion = '';
   private unreliableRich?: string;
+  private richDefaultNewline = '\n';
   private richContexts = new Map<string, { base: string; origin: RichNode | undefined; originText: string; notice: string | null }>();
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
@@ -152,7 +188,22 @@ export class MarkdownSurface {
     }
   }
 
+  private isEditingHtmlSource(target?: EventTarget | null): boolean {
+    return this.currentMode === 'rich' && (
+      isFocusedHtmlSource(this.options.richRoot) ||
+      (target instanceof Element && !!target.closest('textarea.croquill-html-source'))
+    );
+  }
+
   private handleImagePaste = (event: ClipboardEvent): void => {
+    if (this.isEditingHtmlSource(event.target)) {
+      const files = Array.from(event.clipboardData?.files || []).filter(isImageFile);
+      if (files.length) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      return;
+    }
     const html = event.clipboardData?.getData('text/html') || '';
     // A copied web image keeps its URL instead of uploading a browser-provided bitmap.
     if (/<img\b[^>]*\bsrc=["']https?:/i.test(html)) return;
@@ -166,7 +217,7 @@ export class MarkdownSurface {
     // Ignore non-image files too: neither the browser nor an editor plugin may open them.
     event.preventDefault(); event.stopImmediatePropagation();
     const files = Array.from(event.dataTransfer?.files || []).filter(isImageFile);
-    if (!files.length || this.isComposing()) return;
+    if (!files.length || this.isComposing() || this.isEditingHtmlSource(event.target)) return;
     this.placeImageCursor(event.clientX, event.clientY);
     this.options.onImageFiles?.(files, false);
   };
@@ -175,7 +226,7 @@ export class MarkdownSurface {
   };
 
   placeImageCursor(x: number, y: number): void {
-    if (this.isComposing()) return;
+    if (this.isComposing() || this.isEditingHtmlSource()) return;
     if (this.currentMode === 'source' && this.source) {
       const pos = this.source.posAtCoords({ x, y });
       if (pos !== null) this.source.dispatch({ selection: { anchor: pos } });
@@ -187,7 +238,7 @@ export class MarkdownSurface {
   }
 
   insertImage(src: string): void {
-    if (this.isComposing() || this.destroyed) return;
+    if (this.isComposing() || this.destroyed || this.isEditingHtmlSource()) return;
     if (this.currentMode === 'source' && this.source) {
       const { from, to } = this.source.state.selection.main;
       const text = `![](${src})`;
@@ -195,7 +246,7 @@ export class MarkdownSurface {
     } else if (this.crepe) {
       const view = this.richView();
       const type = view.state.schema.nodes['image-block'];
-      view.dispatch(view.state.tr.replaceSelectionWith(type.create({ src, alt: '' })).scrollIntoView());
+      view.dispatch(insertBlockAfterRawSelection(view, type.create({ src, alt: '' })).scrollIntoView());
       this.notifyRichChange();
     }
   }
@@ -298,7 +349,9 @@ export class MarkdownSurface {
     this.deferredFocus = () => { requested = true; };
     return () => {
       this.deferredFocus = undefined;
-      if (!requested || this.destroyed || document.querySelector('dialog[open], [popover]:popover-open')) return;
+      const hasOpenOverlay = Array.from(document.querySelectorAll('dialog[open], [popover]:popover-open'))
+        .some(element => !element.closest('[data-croquill-html]'));
+      if (!requested || this.destroyed || hasOpenOverlay) return;
       const current = document.activeElement;
       // Respect a dialog/control the user moved to while native IO was pending.
       if (current && current !== document.body && current !== previous && !ownsFocus(current)) return;
@@ -309,7 +362,7 @@ export class MarkdownSurface {
   }
 
   isComposing(): boolean {
-    return this.find.composing || (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
+    return this.find.composing || (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && (this.richView().composing || isHtmlSourceComposing(this.options.richRoot)));
   }
 
   /** A blurred editor may retain its IME flag until the platform sends end. */
@@ -317,7 +370,9 @@ export class MarkdownSurface {
     const focused = document.activeElement;
     if (focused && this.find.root.contains(focused)) return this.find.composing;
     const root = this.currentMode === 'source' ? this.options.sourceRoot : this.options.richRoot;
-    return !!focused && root.contains(focused) && (this.currentMode === 'source' ? !!this.source?.composing : !!this.crepe && this.richView().composing);
+    if (!focused || !root.contains(focused)) return false;
+    if (this.currentMode === 'source') return !!this.source?.composing;
+    return isFocusedHtmlSource(this.options.richRoot) ? isHtmlSourceComposing(this.options.richRoot) : !!this.crepe && this.richView().composing;
   }
 
   getOutline(): { level: number; text: string; line: number }[] { return markdownOutline(this.getMarkdown()); }
@@ -330,7 +385,8 @@ export class MarkdownSurface {
       this.source.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: 'start' }) });
       this.source.focus();
     } else {
-      const heading = this.options.richRoot.querySelectorAll('h1,h2,h3,h4,h5,h6')[index];
+      const heading = Array.from(this.options.richRoot.querySelectorAll('h1,h2,h3,h4,h5,h6'))
+        .filter(element => !element.closest('[data-croquill-html]'))[index];
       heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
   }
@@ -340,8 +396,23 @@ export class MarkdownSurface {
     if (this.currentMode === 'source') { this.formatSource(action); return; }
     if (!this.crepe) return;
     const view = this.richView();
-    const { schema } = view.state;
+    if (isFocusedHtmlSource(this.options.richRoot)) {
+      if (action === 'undo') { richUndo(view.state, view.dispatch, view); this.notifyRichChange(); }
+      else if (action === 'redo') { richRedo(view.state, view.dispatch, view); this.notifyRichChange(); }
+      return;
+    }
+    const { selection, schema } = view.state;
     const command = (fn: Command) => fn(view.state, view.dispatch, view);
+    if (selection instanceof NodeSelection && selection.node.type.name === 'croquill_raw_block') {
+      if (action === 'undo' || action === 'redo') {
+        command(action === 'undo' ? richUndo : richRedo);
+        view.focus();
+        this.notifyRichChange();
+        return;
+      }
+      if (action !== 'image' && action !== 'table' && action !== 'link') return;
+      moveCaretAfterRawSelection(view);
+    }
     const syntax = ({ bold: 'strong', italic: 'em', strike: 'strike', code: 'code', 'inline-code': 'code', highlight: 'highlight' } as const)[action];
     if (syntax) toggleInlineSyntax(view, syntax);
     else if (nextHeadingLevel(action, 0) !== null) {
@@ -371,7 +442,7 @@ export class MarkdownSurface {
     else if (action === 'table') this.crepe.editor.action((ctx) => ctx.get(commandsCtx).call(insertTableCommand.key, { row: 3, col: 3 }));
     else if (action === 'image') {
       const type = schema.nodes['image-block'];
-      if (type) view.dispatch(view.state.tr.replaceSelectionWith(type.create({ src: '', alt: '' })).scrollIntoView());
+      if (type) view.dispatch(insertBlockAfterRawSelection(view, type.create({ src: '', alt: '' })).scrollIntoView());
     }
     else if (action === 'link') {
       const { from, to } = view.state.selection;
@@ -452,6 +523,7 @@ export class MarkdownSurface {
       view.dispatch(closeHistory(view.state.tr));
       const document = view.state.doc;
       this.raw = next; this.richInput = next; this.richSnapshot = document; this.richOriginDocument = document; this.richOriginText = next; this.richContextVersion = version;
+      this.richDefaultNewline = /\r\n|\r|\n/.exec(next)?.[0] || '\n';
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', preservedMarkdownBlocks(parts.body).length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       this.richExactSources.set(JSON.stringify(document.toJSON()), next);
       this.richContexts.set(version, { base: next, origin: document, originText: next, notice: this.richNotice });
@@ -473,6 +545,7 @@ export class MarkdownSurface {
       this.options.richRoot.replaceChildren();
       this.richExactSources.clear(); this.richContexts.clear(); this.richContextVersion = '';
       const parts = splitFrontmatter(this.raw);
+      this.richDefaultNewline = /\r\n|\r|\n/.exec(this.raw)?.[0] || '\n';
       const blocks = preservedMarkdownBlocks(parts.body);
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       const crepe = new Crepe({
@@ -515,7 +588,10 @@ export class MarkdownSurface {
       });
       this.crepe = crepe;
       this.inlineRaw = createInlineRawMarkdown();
-      crepe.editor.use(rawMarkdownBlock).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({
+        resolveImage: this.options.resolveImage,
+        defaultLineEnding: () => this.richDefaultNewline,
+      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(linkInputHandlers().map(rule => $inputRule(() => new InputRule(rule.match, rule.handler)))).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
@@ -593,7 +669,7 @@ export class MarkdownSurface {
           return false;
         },
         props: {
-          handleDOMEvents: { keydown: (view, event) => handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event) },
+          handleDOMEvents: { keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event) },
           handleKeyDown: (view, event) => {
             if (event.isComposing || view.composing || !(event.ctrlKey || event.metaKey) || event.altKey) return false;
             const key = event.key.toLowerCase();
