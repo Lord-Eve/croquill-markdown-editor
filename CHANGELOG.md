@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.5.0] - 2026-11-14
+
 ### 新增
 
 - 行内格式的标记随光标显隐，行为对齐官方 Typora：光标进入加粗、斜体、删除线、行内代码、高亮时，两侧显示灰色的 `**`、`*`、`~~`、反引号、`==`，离开后隐藏；方向键可以一格一格走进标记，标记可以直接增删，改完立刻按新写法重新排版。同一时刻只显示光标所在那一处。向左、向右以及快速连按方向键，光标都逐格经过标记
@@ -154,10 +156,11 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.4.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.5.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
 
 [0.3.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.2.0...v0.3.0
 [0.4.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.3.0...v0.4.0
+[0.5.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.4.0...v0.5.0
