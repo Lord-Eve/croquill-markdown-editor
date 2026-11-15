@@ -117,6 +117,12 @@ const surface = new MarkdownSurface({
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
   onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },
   onWarning: toast,
+  onLinkHint: toast,
+  onOpenLink: (href) => {
+    if (!/^(?:https?:\/\/|mailto:)/i.test(href)) { toast('暂不支持打开此类链接'); return; }
+    if (!desktop) return;
+    void invoke('open_external_link', { url: href }).catch(error => toast(String(error)));
+  },
   onImageFiles: (files, clipboard) => { void insertImages(files.map(file => ({ file, clipboard }))); },
   uploadImage: async file => {
     let src: string | null = null;
@@ -331,7 +337,9 @@ installGlobalShortcuts({composing:()=>surface.hasFocusedComposition(),modal:()=>
   if(event.key==='Escape'){document.querySelectorAll('.menubar details[open]').forEach(e=>e.removeAttribute('open'));return;}
 }});
 // Keep links inside the document from navigating away from the editor.
-$('rich-root').addEventListener('click',event=>{if((event.target as HTMLElement).closest('a'))event.preventDefault();});
+const preventLinkNavigation = (event: MouseEvent) => { if ((event.target as HTMLElement | null)?.closest('a')) event.preventDefault(); };
+$('rich-root').addEventListener('click', preventLinkNavigation);
+$('rich-root').addEventListener('auxclick', preventLinkNavigation);
 setSidebarTab(localStorage.getItem('croquill-sidebar-tab') === 'outline' ? 'outline' : 'files', false);
 setSidebarVisible(localStorage.getItem('croquill-sidebar') !== 'false');
 await run(async()=>{

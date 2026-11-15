@@ -42,18 +42,89 @@ export function flattenInlineSource() {
       });
       return result;
     }
-    function flatten(children: SourceNode[]): SourceNode[] {
+    function trimRightSpaces(from: number, to: number): number {
+      while (to > from && (source[to - 1] === ' ' || source[to - 1] === '\t')) to--;
+      return to;
+    }
+    function contentBounds(node: SourceNode): { from: number; to: number } | null {
+      const from = node.position?.start.offset, to = node.position?.end.offset;
+      if (from == null || to == null) return null;
+      if (node.type === 'paragraph') return { from, to: trimRightSpaces(from, to) };
+      if (node.type === 'heading') {
+        const raw = source.slice(from, to);
+        const atxOpen = /^#{1,6}(?:[ \t]+|$)/.exec(raw);
+        if (atxOpen) {
+          const start = from + atxOpen[0].length;
+          let end = trimRightSpaces(start, to);
+          const atxClose = /(?:^|[ \t]+)#+$/.exec(source.slice(start, end));
+          if (atxClose) end = trimRightSpaces(start, end - atxClose[0].length);
+          return { from: start, to: end };
+        }
+        const setextEnd = raw.replace(/\r?\n[ \t>]*[=-]+[ \t]*$/, '').length;
+        return { from, to: trimRightSpaces(from, from + setextEnd) };
+      }
+      if (node.type === 'tableCell') {
+        const raw = source.slice(from, to);
+        const lead = /^[ \t]*\|?[ \t]*/.exec(raw)![0].length;
+        const start = from + lead;
+        let end = trimRightSpaces(start, to);
+        if (end > start && source[end - 1] === '|') {
+          let slashes = 0;
+          for (let at = end - 2; at >= start && source[at] === '\\'; at--) slashes++;
+          if (slashes % 2 === 0) end = trimRightSpaces(start, end - 1);
+        }
+        return { from: start, to: end };
+      }
+      if (node.type === 'strong' || node.type === 'emphasis' || node.type === 'delete') {
+        const marker = node.type === 'strong' ? 2 : node.type === 'emphasis' ? 1
+          : source.startsWith('~~', from) && source.endsWith('~~', to) ? 2 : 1;
+        return { from: from + marker, to: Math.max(from + marker, to - marker) };
+      }
+      return { from, to };
+    }
+    function flatten(children: SourceNode[], parentFrom?: number, parentTo?: number): SourceNode[] {
       const result: SourceNode[] = [];
-      for (const child of children) {
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
         const from = child.position?.start.offset, to = child.position?.end.offset;
+        if (from == null && to == null && (child.type === 'text' || child.type === 'link')) {
+          const prevEnd = i > 0 ? children[i - 1].position?.end.offset : parentFrom;
+          let j = i;
+          while (j + 1 < children.length && children[j + 1].position?.start.offset == null &&
+              (children[j + 1].type === 'text' || children[j + 1].type === 'link')) j++;
+          const nextStart = j + 1 < children.length ? children[j + 1].position?.start.offset : parentTo;
+          if (prevEnd != null && nextStart != null && prevEnd <= nextStart) {
+            result.push(...pieces(prevEnd, nextStart));
+            i = j;
+            continue;
+          }
+        }
         if (child.type === 'text') {
           if (from != null && to != null) result.push(...pieces(from, to));
           else if (child.value) result.push({ type: 'text', value: child.value === '\n' ? '\n' : escapeLiteralText(child.value) });
         } else if (child.type === 'inlineCode' && from != null && to != null) result.push(...pieces(from, to));
-        else if (['strong', 'emphasis', 'delete'].includes(child.type) && from != null && to != null && child.children?.length &&
-            child.children[0].position?.start.offset != null && child.children.at(-1)!.position?.end.offset != null) {
-          const innerFrom = child.children[0].position!.start.offset!, innerTo = child.children.at(-1)!.position!.end.offset!;
-          result.push(...pieces(from, innerFrom), ...flatten(child.children), ...pieces(innerTo, to));
+        else if (['strong', 'emphasis', 'delete'].includes(child.type) && from != null && to != null && child.children?.length) {
+          const bounds = contentBounds(child)!;
+          const innerFrom = child.children[0].position?.start.offset ?? bounds.from;
+          const innerTo = child.children.at(-1)!.position?.end.offset ?? bounds.to;
+          result.push(...pieces(from, innerFrom), ...flatten(child.children, innerFrom, innerTo), ...pieces(innerTo, to));
+        } else if (child.type === 'link') {
+          if (from != null && to != null) {
+            if (!child.children?.length) result.push(...pieces(from, to));
+            else if (child.children[0].position?.start.offset != null && child.children.at(-1)!.position?.end.offset != null) {
+              const innerFrom = child.children[0].position!.start.offset!, innerTo = child.children.at(-1)!.position!.end.offset!;
+              result.push(...pieces(from, innerFrom), ...flatten(child.children, innerFrom, innerTo), ...pieces(innerTo, to));
+            } else {
+              child.children = flatten(child.children);
+              result.push(child);
+            }
+          } else if (child.children?.length === 1 && child.children[0].type === 'text' && child.children[0].value != null) {
+            // Fallback for positionless bare autolinks when parent bounds are unavailable.
+            result.push({ type: 'text', value: child.children[0].value });
+          } else {
+            if (child.children) child.children = flatten(child.children);
+            result.push(child);
+          }
         } else {
           if (child.children && !['croquillInlineRaw', 'croquillRawBlock'].includes(child.type)) child.children = flatten(child.children);
           result.push(child);
@@ -69,7 +140,11 @@ export function flattenInlineSource() {
       }, []);
     }
     function visit(node: SourceNode): void {
-      if (['paragraph', 'heading', 'tableCell'].includes(node.type)) { node.children = flatten(node.children || []); return; }
+      if (['paragraph', 'heading', 'tableCell'].includes(node.type)) {
+        const bounds = contentBounds(node);
+        node.children = flatten(node.children || [], bounds?.from, bounds?.to);
+        return;
+      }
       if (['code', 'html', 'math', 'croquillRawBlock', 'croquillHtmlComment', 'croquillToc'].includes(node.type)) return;
       node.children?.forEach(visit);
     }
