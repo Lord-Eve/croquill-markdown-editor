@@ -156,10 +156,12 @@ const cache = new Map<string, InlineSpan[]>();
  * The syntax spans of one text block's source, as offsets into `run`. Soft line breaks
  * are "\n" and non-text inline nodes are INLINE_OBJECT, so offsets map 1:1 to positions.
  */
-export function inlineSyntaxSpans(run: string): InlineSpan[] {
+export function inlineSyntaxSpans(run: string, options?: { emptyLinks?: boolean }): InlineSpan[] {
   if (!/[*_`~=\\&[<@]|(?:www\.|:\/\/)/i.test(run)) return [];
-  const cached = cache.get(run);
-  if (cached) return cached;
+  if (!options?.emptyLinks) {
+    const cached = cache.get(run);
+    if (cached) return cached;
+  }
   const spans: InlineSpan[] = [];
   function visit(node: SourceNode): void {
     const delimMarkerWidth = (n: SourceNode, r: { from: number; to: number }) =>
@@ -168,10 +170,21 @@ export function inlineSyntaxSpans(run: string): InlineSpan[] {
     const isGuard = (n: SourceNode) => n.position?.end.offset != null && n.position.end.offset <= GUARD.length;
     if (node.type === 'link') {
       const range = offsets(node);
-      if (!range || range.from < 0 || !node.children?.length) return;
+      if (!range || range.from < 0) return;
+      const raw = run.slice(range.from, range.to), href = node.url ?? '';
+      if (!node.children?.length) {
+        if (!options?.emptyLinks || !raw.startsWith('[]')) return;
+        const inner = range.from + 1;
+        const parts = splitInlineLinkTail(run, inner, range.to, href, node.title ?? '');
+        spans.push({
+          kind: 'link', ...range, innerFrom: inner, innerTo: inner, href,
+          ...(node.title != null ? { title: node.title } : {}),
+          ...(parts || {}),
+        });
+        return;
+      }
       const first = offsets(node.children[0]), last = offsets(node.children.at(-1)!);
       if (!first || !last) return;
-      const raw = run.slice(range.from, range.to), href = node.url ?? '';
       if (first.from === range.from && last.to === range.to) {
         spans.push({ kind: 'autolink', ...range, innerFrom: range.from, innerTo: range.to, href });
         return;
@@ -267,8 +280,10 @@ export function inlineSyntaxSpans(run: string): InlineSpan[] {
   }
   visit(parser.parse(GUARD + run) as unknown as SourceNode);
   spans.sort((a, b) => a.from - b.from || b.to - a.to);
-  if (cache.size > 4000) cache.clear();
-  cache.set(run, spans);
+  if (!options?.emptyLinks) {
+    if (cache.size > 4000) cache.clear();
+    cache.set(run, spans);
+  }
   return spans;
 }
 

@@ -367,6 +367,34 @@ describe('inline link source editing through the real app', () => {
     expect(await markdown()).toBe('前[]()后\n');
     expect((await look()).caret).toBe('前[|]()后');
 
+    // Empty-text link with Ctrl+K: double Ctrl+K moves from [|]() into [](|); Ctrl+K inside [](u) selects 'u' and renders no decorations
+    await open('x\n');
+    await caret('x', 1);
+    await page.keyboard.press('Control+k');
+    await settle();
+    expect(await markdown()).toBe('x[]()\n');
+    expect((await look()).caret).toBe('x[|]()');
+    await page.keyboard.press('Control+k');
+    await settle();
+    expect(await markdown()).toBe('x[]()\n');
+    expect((await look()).caret).toBe('x[](|)');
+    expect(await page.locator('#rich-root a').count()).toBe(0);
+    expect(await page.locator('#rich-root .md-marker').count()).toBe(0);
+
+    await open('[](u)\n\n尾\n');
+    await caret('[](u)', 1);
+    await page.keyboard.press('Control+k');
+    await settle();
+    expect(await markdown()).toBe('[](u)\n\n尾\n');
+    const emptyLinkUrlSel = await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      const s = view.state.selection;
+      return view.state.doc.textBetween(s.from, s.to);
+    });
+    expect(emptyLinkUrlSel).toBe('u');
+    expect(await page.locator('#rich-root a').count()).toBe(0);
+    expect(await page.locator('#rich-root .md-marker').count()).toBe(0);
+
     // Selection inside existing inline link -> selects URL; empty URL puts caret inside ()
     await open('[文字](https://a.com "t") 与 [空]()\n');
     await caret('文字', 1);
@@ -513,6 +541,35 @@ describe('inline link source editing through the real app', () => {
         return a ? { href: a.getAttribute('href'), title: a.getAttribute('title') } : null;
       });
       expect(reloaded).toEqual({ href: tc.expectedHref, title: tc.expectedTitle });
+    }
+
+    // Backslashes in pasted link text (trailing \, \], \[, double \\) keep link valid and literal visible text
+    for (const tc of [
+      { html: '<p><a href="https://e.com">目录\\</a></p>', expectedText: '目录\\' },
+      { html: '<p><a href="https://e.com">a\\]b</a></p>', expectedText: 'a\\]b' },
+      { html: '<p><a href="https://e.com">a\\[b</a></p>', expectedText: 'a\\[b' },
+      { html: '<p><a href="https://e.com">a\\\\</a></p>', expectedText: 'a\\\\' },
+    ]) {
+      await open('试：\n\n另\n'); await caret('试：', 2);
+      await pasteHtml(tc.html);
+      await caret('另');
+      await settle();
+      const checkLink = () => page.evaluate(() => {
+        const p = document.querySelector('#rich-root p') as HTMLElement;
+        const hrefs = [...new Set([...p.querySelectorAll('a')].map(a => a.getAttribute('href')))];
+        const bareText = [...p.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('');
+        const view = (window as any).fileApp.surface.richView();
+        const block = view.state.doc.firstChild!;
+        const marks = (() => { let n = 0; block.descendants((c: any) => { if (c.marks?.some((m: any) => m.type.name === 'link')) n++; }); return n; })();
+        return { marks, hrefs, bareText, text: p.innerText };
+      });
+      expect(await checkLink()).toEqual({ marks: 0, hrefs: ['https://e.com'], bareText: '试：', text: `试：${tc.expectedText}` });
+      await page.evaluate(async () => { const h = (window as any).fileApp; h.session.edit(h.surface.getMarkdown()); await h.session.save(); });
+      const savedCase = await page.evaluate(() => (window as any).fileApp.writes.at(-1).text);
+      await open(savedCase);
+      await caret('另');
+      await settle();
+      expect(await checkLink()).toEqual({ marks: 0, hrefs: ['https://e.com'], bareText: '试：', text: `试：${tc.expectedText}` });
     }
   }, 30000);
 

@@ -3,10 +3,22 @@ import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/
 import { Fragment, type Mark, type Node as RichNode } from '@milkdown/kit/prose/model';
 import { INLINE_OBJECT, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
 
-interface BlockSyntax { run: string; spans: InlineSpan[] }
+interface BlockSyntax { run: string; map: number[]; spans: InlineSpan[] }
 const blocks = new WeakMap<RichNode, BlockSyntax>();
 
 const isSourceBlock = (node: RichNode) => node.isTextblock && !node.type.spec.code;
+
+function mapSpans(spans: InlineSpan[], map: number[]): InlineSpan[] {
+  return spans.map(span => ({
+    ...span,
+    from: map[span.from],
+    to: map[span.to],
+    innerFrom: map[span.innerFrom],
+    innerTo: map[span.innerTo],
+    ...(span.urlFrom != null && span.urlTo != null ? { urlFrom: map[span.urlFrom], urlTo: map[span.urlTo] } : {}),
+    ...(span.titleFrom != null && span.titleTo != null ? { titleFrom: map[span.titleFrom], titleTo: map[span.titleTo] } : {}),
+  })).filter(span => !(span.kind === 'link' && span.from === span.innerFrom && span.to === span.innerTo));
+}
 
 /**
  * One text block as the Markdown it will be saved as, with spans mapped back to offsets
@@ -33,22 +45,19 @@ function blockSyntax(block: RichNode): BlockSyntax {
   });
   if (link) add(']()', block.content.size, 0);
   map.push(block.content.size);
-  const spans = inlineSyntaxSpans(run).map(span => ({
-    ...span,
-    from: map[span.from],
-    to: map[span.to],
-    innerFrom: map[span.innerFrom],
-    innerTo: map[span.innerTo],
-    ...(span.urlFrom != null && span.urlTo != null ? { urlFrom: map[span.urlFrom], urlTo: map[span.urlTo] } : {}),
-    ...(span.titleFrom != null && span.titleTo != null ? { titleFrom: map[span.titleFrom], titleTo: map[span.titleTo] } : {}),
-  })).filter(span => !(span.kind === 'link' && span.from === span.innerFrom && span.to === span.innerTo));
-  const result = { run, spans };
+  const result = { run, map, spans: mapSpans(inlineSyntaxSpans(run), map) };
   blocks.set(block, result);
   return result;
 }
 
 /** Syntax spans of a text block, as offsets into its content. */
 export function blockSpans(block: RichNode): InlineSpan[] { return isSourceBlock(block) ? blockSyntax(block).spans : []; }
+
+function blockEditSpans(block: RichNode): InlineSpan[] {
+  if (!isSourceBlock(block)) return [];
+  const { run, map } = blockSyntax(block);
+  return mapSpans(inlineSyntaxSpans(run, { emptyLinks: true }), map);
+}
 
 /** A block's text as the reader sees it (for the table of contents and previews). */
 export function visibleText(text: string): string { return inlineSourceText(text); }
@@ -216,11 +225,10 @@ function dissolveMarks(state: EditorState, from: number, to: number): Transactio
           const entry = entries[entryIndex];
           if (!entry.child.isText || entry.syntax.some(mark => mark.type.name === 'inlineCode')) continue;
           const text = entry.child.text || '';
-          let backslash = false;
           for (let charIndex = 0; charIndex < text.length; charIndex++) {
             const char = text[charIndex];
-            if (backslash) { backslash = false; continue; }
-            if (char === '\\') { backslash = true; continue; }
+            // Pasted HTML backslashes are literal characters, so escape each one before pairing brackets.
+            if (char === '\\') { escapedIndices[entryIndex].add(charIndex); continue; }
             if (char === '[') openStack.push({ entryIndex, charIndex });
             else if (char === ']') {
               if (openStack.length) openStack.pop();
@@ -402,7 +410,7 @@ export function insertOrEditLink(view: EditorView): boolean {
   const { state } = view, { $from, $to, empty } = state.selection;
   if (!$from.sameParent($to) || !isSourceBlock($from.parent)) return false;
   const block = $from.parent, base = $from.start(), from = $from.parentOffset, to = $to.parentOffset;
-  const spans = blockSpans(block);
+  const spans = blockEditSpans(block);
   const insideCode = spans.some(span => span.kind === 'code' && (empty ? span.from < from && from < span.to : span.from < to && from < span.to && !(from <= span.from && span.to <= to)));
   const insideAutolink = spans.some(span => span.kind === 'autolink' && span.from <= from && to <= span.to);
   if (insideCode || insideAutolink) return false;

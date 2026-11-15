@@ -132,6 +132,12 @@ describe('inline source spans', () => {
     expect(inlineSyntaxSpans('\\[e](f)')).toEqual([{ kind: 'escape', from: 0, to: 2, innerFrom: 1, innerTo: 2 }]);
     expect(inlineSyntaxSpans('`[c](d)`')).toEqual([{ kind: 'code', from: 0, to: 8, innerFrom: 1, innerTo: 7 }]);
     expect(inlineSyntaxSpans('[](u)')).toEqual([]);
+    expect(inlineSyntaxSpans('[](u)', { emptyLinks: true })).toEqual([
+      { kind: 'link', from: 0, to: 5, innerFrom: 1, innerTo: 1, urlFrom: 3, urlTo: 4, href: 'u' },
+    ]);
+    expect(inlineSyntaxSpans('[]()', { emptyLinks: true })).toEqual([
+      { kind: 'link', from: 0, to: 4, innerFrom: 1, innerTo: 1, urlFrom: 3, urlTo: 3, href: '' },
+    ]);
     expect(inlineSyntaxSpans('[r][1]')).toEqual([]);
   });
 });
