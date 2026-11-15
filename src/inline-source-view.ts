@@ -1,7 +1,7 @@
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { Fragment, type Mark, type Node as RichNode } from '@milkdown/kit/prose/model';
-import { INLINE_OBJECT, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
+import { INLINE_OBJECT, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
 
 interface BlockSyntax { run: string; spans: InlineSpan[] }
 const blocks = new WeakMap<RichNode, BlockSyntax>();
@@ -159,10 +159,11 @@ function linkMarkers(href: string, title: string, entries: { child: RichNode; sy
     entries.every(entry => entry.child.isText && entry.syntax.length === 1) &&
     entries.map(entry => entry.child.text || '').join('') === href;
   if (plainAutolink) return { markers: ['<', '>'], escapeBrackets: false };
+  const escapedHref = escapeLinkValue(href);
   const destination = /[\s\u0000-\u001f\u007f]/.test(href) || href.startsWith('<') || !balancedParens(href)
-    ? `<${href.replace(/[<>]/g, '\\$&')}>`
-    : href;
-  const suffix = title ? ` "${title.replace(/([\\"])/g, '\\$1')}"` : '';
+    ? `<${escapedHref.replace(/[<>]/g, '\\$&')}>`
+    : escapedHref;
+  const suffix = title ? ` "${escapeLinkValue(title).replace(/"/g, '\\"')}"` : '';
   return { markers: ['[', `](${destination}${suffix})`], escapeBrackets: true };
 }
 
@@ -420,8 +421,8 @@ export function insertOrEditLink(view: EditorView): boolean {
     tr.insertText('[]()', base + from);
     tr.setSelection(TextSelection.create(tr.doc, base + from + 1));
   } else {
-    const crossing = spans.some(span => (span.kind === 'link' || span.kind === 'autolink') && span.from < to && from < span.to && !(from <= span.from && span.to <= to));
-    if (crossing) return false;
+    const overlapsLink = spans.some(span => (span.kind === 'link' || span.kind === 'autolink') && span.from < to && from < span.to);
+    if (overlapsLink) return false;
     tr.insertText(']()', base + to).insertText('[', base + from);
     tr.setSelection(TextSelection.create(tr.doc, base + to + 3));
   }

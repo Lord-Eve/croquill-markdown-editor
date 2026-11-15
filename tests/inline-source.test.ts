@@ -94,6 +94,38 @@ describe('inline source spans', () => {
       { kind: 'autolink', from: 4, to: 19, innerFrom: 4, innerTo: 19, href: 'http://www.example.com' },
       { kind: 'highlight', from: 20, to: 26, innerFrom: 22, innerTo: 24 },
     ]);
+    expect(show('、www.x.com')).toEqual([
+      'autolink:|www.x.com|',
+    ]);
+    expect(show('见、www.x.com 与 &amp;')).toEqual([
+      'autolink:|www.x.com|',
+      'entity:&amp;||',
+    ]);
+    expect(show('*斜*、www.x.com &amp;')).toEqual([
+      'em:*|斜|*',
+      'autolink:|www.x.com|',
+      'entity:&amp;||',
+    ]);
+    expect(show('a\\_b、www.x.com *斜*')).toEqual([
+      'escape:\\|_|',
+      'autolink:|www.x.com|',
+      'em:*|斜|*',
+    ]);
+    expect(show('*斜、www.e.com &amp;*')).toEqual([
+      'em:*|斜、www.e.com &amp;|*',
+      'autolink:|www.e.com|',
+      'entity:&amp;||',
+    ]);
+    expect(show('**粗、www.e.com &amp;**')).toEqual([
+      'strong:**|粗、www.e.com &amp;|**',
+      'autolink:|www.e.com|',
+      'entity:&amp;||',
+    ]);
+    expect(show('~~删、www.e.com &amp;~~')).toEqual([
+      'strike:~~|删、www.e.com &amp;|~~',
+      'autolink:|www.e.com|',
+      'entity:&amp;||',
+    ]);
   });
 
   it('ignores non-links such as escaped brackets, links in code, empty-text links, and unresolved refs', () => {

@@ -69,8 +69,8 @@ pub fn validate_external_link_url(url: &str) -> Result<(), String> {
     if url.len() > 2048 {
         return Err("链接地址过长".to_string());
     }
-    if url.chars().any(|c| c.is_whitespace() || c.is_ascii_control()) {
-        return Err("链接地址包含非法空白或控制字符".to_string());
+    if url.chars().any(|c| c.is_whitespace() || c.is_ascii_control() || c == '"') {
+        return Err("链接地址包含非法空白、引号或控制字符".to_string());
     }
     let lower = url.to_ascii_lowercase();
     if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")) {
@@ -177,6 +177,7 @@ mod tests {
             "https://example.com/a\nb",
             "https://example.com/a\rb",
             "https://example.com/a\tb",
+            r#"https://example.com/?a="b""#,
             "",
         ] {
             assert!(validate_external_link_url(bad).is_err(), "expected rejection for {bad:?}");

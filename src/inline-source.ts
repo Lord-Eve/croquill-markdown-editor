@@ -50,11 +50,21 @@ const entityParser = unified().use(remarkParse);
 const entities = new Map<string, string>();
 function decodeEntity(raw: string): string {
   if (!entities.has(raw)) {
-    const paragraph = entityParser.parse(raw).children[0] as SourceNode | undefined;
+    const paragraph = entityParser.parse(`a${raw}b`).children[0] as SourceNode | undefined;
     const first = paragraph?.type === 'paragraph' ? paragraph.children?.[0] : undefined;
-    entities.set(raw, first?.type === 'text' && paragraph!.children!.length === 1 ? first.value || raw : raw);
+    const text = first?.type === 'text' && paragraph!.children!.length === 1 ? first.value : undefined;
+    const inner = text && text.startsWith('a') && text.endsWith('b') ? text.slice(1, -1) : undefined;
+    entities.set(raw, inner !== undefined ? inner : raw);
   }
   return entities.get(raw)!;
+}
+
+const LINK_ENTITY_OR_BACKSLASH = new RegExp(`\\\\|${ENTITY.source.slice(1)}`, 'g');
+/** Escape backslashes and Markdown-decodable entities inside link destinations/titles so they roundtrip verbatim. */
+export function escapeLinkValue(value: string): string {
+  return value.replace(LINK_ENTITY_OR_BACKSLASH, match =>
+    match === '\\' ? '\\\\' : decodeEntity(match) !== match ? `\\${match}` : match,
+  );
 }
 
 function offsets(node: SourceNode): { from: number; to: number } | null {
@@ -152,6 +162,10 @@ export function inlineSyntaxSpans(run: string): InlineSpan[] {
   if (cached) return cached;
   const spans: InlineSpan[] = [];
   function visit(node: SourceNode): void {
+    const delimMarkerWidth = (n: SourceNode, r: { from: number; to: number }) =>
+      n.type === 'strong' ? 2 : n.type === 'emphasis' ? 1
+        : n.type === 'delete' ? (run.startsWith('~~', r.from) && run.endsWith('~~', r.to) ? 2 : 1) : 0;
+    const isGuard = (n: SourceNode) => n.position?.end.offset != null && n.position.end.offset <= GUARD.length;
     if (node.type === 'link') {
       const range = offsets(node);
       if (!range || range.from < 0 || !node.children?.length) return;
@@ -179,8 +193,11 @@ export function inlineSyntaxSpans(run: string): InlineSpan[] {
           const fence = /^`+/.exec(run.slice(range.from, range.to))?.[0].length || 0;
           if (fence && range.to - range.from >= fence * 2) spans.push({ kind, ...range, innerFrom: range.from + fence, innerTo: range.to - fence });
         } else {
+          const marker = delimMarkerWidth(node, range);
           const first = node.children?.[0] && offsets(node.children[0]), last = node.children?.length ? offsets(node.children.at(-1)!) : null;
-          if (first && last) spans.push({ kind, ...range, innerFrom: first.from, innerTo: last.to });
+          const innerFrom = first ? first.from : range.from + marker;
+          const innerTo = last ? last.to : range.to - marker;
+          if (innerFrom <= innerTo) spans.push({ kind, ...range, innerFrom, innerTo });
         }
       }
     }
@@ -204,14 +221,15 @@ export function inlineSyntaxSpans(run: string): InlineSpan[] {
     // `==` pairs only among the direct text of one parent, as the previous parser did.
     const delimiters: { from: number; to: number }[] = [];
     const nodeRange = offsets(node);
-    const parentMarker = nodeRange ? (node.type === 'strong' ? 2 : node.type === 'emphasis' ? 1
-      : node.type === 'delete' ? (run.startsWith('~~', nodeRange.from) ? 2 : 1) : 0) : 0;
+    const parentMarker = nodeRange ? delimMarkerWidth(node, nodeRange) : 0;
     for (let i = 0; i < node.children.length; i++) {
-      const child = node.children[i], childRange = offsets(child);
+      const child = node.children[i];
+      if (isGuard(child)) continue;
+      const childRange = offsets(child);
       if (!childRange) {
         let j = i;
-        while (j + 1 < node.children.length && !offsets(node.children[j + 1])) j++;
-        const prevEnd = i > 0 ? offsets(node.children[i - 1])?.to : undefined;
+        while (j + 1 < node.children.length && !offsets(node.children[j + 1]) && !isGuard(node.children[j + 1])) j++;
+        const prevEnd = i > 0 && !isGuard(node.children[i - 1]) ? offsets(node.children[i - 1])?.to : undefined;
         const nextStart = j + 1 < node.children.length ? offsets(node.children[j + 1])?.from : undefined;
         let cursor = prevEnd ?? (nodeRange ? Math.max(0, nodeRange.from + parentMarker) : -1);
         const limit = nextStart ?? (nodeRange ? nodeRange.to - parentMarker : -1);

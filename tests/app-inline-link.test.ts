@@ -383,10 +383,27 @@ describe('inline link source editing through the real app', () => {
     await settle();
     expect((await look()).caret).toBe('[文字](https://a.com "t") 与 [空](|)');
 
-    // Selection inside code / autolink / multi-block -> no-op
-    await open('`代码` 与 <https://a.com> 和 https://b.com\n\n下一段\n');
+    // Selection inside code / autolink / multi-block / enclosing a link -> no-op
+    await open('`代码` 与 <https://a.com> 和 https://b.com\n\n下一段\n\n前 [旧](https://old.example) 后\n\n包 <https://a.com> 尾\n\n包 https://b.com 和 www.c.com 尾\n');
     for (const [text, offset, len] of [['代码', 1, 1], ['a.com', 2, 0], ['b.com', 2, 0]] as const) {
       await caret(text, offset, len);
+      await page.keyboard.press('Control+k');
+      await settle();
+    }
+    for (const line of ['前 ', '包 https://a.com', '包 https://b.com']) {
+      await page.evaluate(prefix => {
+        const view = (window as any).fileApp.surface.richView();
+        const SelBase = Object.getPrototypeOf(view.state.selection.constructor);
+        const TextSel = SelBase.near(view.state.doc.resolve(1)).constructor;
+        let found: { from: number; to: number } | null = null;
+        view.state.doc.descendants((node: any, pos: number) => {
+          if (!found && node.isTextblock && node.textContent.startsWith(prefix)) {
+            found = { from: pos + 1, to: pos + 1 + node.content.size };
+          }
+        });
+        view.dispatch(view.state.tr.setSelection(TextSel.create(view.state.doc, found!.from, found!.to)));
+        view.focus();
+      }, line === '包 https://a.com' ? '包 <https://a.com>' : line);
       await page.keyboard.press('Control+k');
       await settle();
     }
@@ -399,7 +416,7 @@ describe('inline link source editing through the real app', () => {
     });
     await page.keyboard.press('Control+k');
     await settle();
-    expect(await markdown()).toBe('`代码` 与 <https://a.com> 和 https://b.com\n\n下一段\n');
+    expect(await markdown()).toBe('`代码` 与 <https://a.com> 和 https://b.com\n\n下一段\n\n前 [旧](https://old.example) 后\n\n包 <https://a.com> 尾\n\n包 https://b.com 和 www.c.com 尾\n');
 
     // IME composing ignores Ctrl+K
     await open('甲乙丙\n');
@@ -472,6 +489,31 @@ describe('inline link source editing through the real app', () => {
     await open(saved);
     expect(await page.evaluate(() => (document.querySelector('#rich-root p') as HTMLElement).innerText)).toBe('丙，x[y]z[w');
     expect(await page.evaluate(() => [...document.querySelectorAll('#rich-root a')].map(a => a.getAttribute('href')))).toEqual(['https://u.com', 'https://u.com', 'https://u.com']);
+
+    // Entities, quotes, and \* / \( inside pasted href & title must survive Markdown roundtrip verbatim
+    for (const tc of [
+      { html: '<p><a href="https://example.com/?q=&amp;copy;">文字</a></p>', expectedHref: 'https://example.com/?q=&copy;', expectedTitle: null },
+      { html: '<p><a href="u" title="t&amp;amp; &quot;q&quot;">a</a></p>', expectedHref: 'u', expectedTitle: 't&amp; "q"' },
+      { html: '<p><a href="https://example.com/a\\*b\\(c">特符</a></p>', expectedHref: 'https://example.com/a\\*b\\(c', expectedTitle: null },
+      { html: '<p><a href="https://example.com/a\\*b\\(c\\)">平衡</a></p>', expectedHref: 'https://example.com/a\\*b\\(c\\)', expectedTitle: null },
+    ]) {
+      await open('试：\n'); await caret('试：', 2);
+      await pasteHtml(tc.html);
+      await settle();
+      const live = await page.evaluate(() => {
+        const a = document.querySelector('#rich-root a');
+        return a ? { href: a.getAttribute('href'), title: a.getAttribute('title') } : null;
+      });
+      expect(live).toEqual({ href: tc.expectedHref, title: tc.expectedTitle });
+      await page.evaluate(async () => { const h = (window as any).fileApp; h.session.edit(h.surface.getMarkdown()); await h.session.save(); });
+      const savedCase = await page.evaluate(() => (window as any).fileApp.writes.at(-1).text);
+      await open(savedCase);
+      const reloaded = await page.evaluate(() => {
+        const a = document.querySelector('#rich-root a');
+        return a ? { href: a.getAttribute('href'), title: a.getAttribute('title') } : null;
+      });
+      expect(reloaded).toEqual({ href: tc.expectedHref, title: tc.expectedTitle });
+    }
   }, 30000);
 
   it('shows hint once on normal click, opens on Ctrl+Click anywhere on link/URL without moving caret, and blocks navigation', async () => {
@@ -617,5 +659,76 @@ describe('inline link source editing through the real app', () => {
       ['www.example.com', 'http://www.example.com'],
       ['me@example.org', 'mailto:me@example.org'],
     ]);
+  }, 30000);
+
+  it('preserves positionless GFM www splits byte-for-byte across all containers and positions', async () => {
+    const lines = [
+      '、www.x.com',
+      '',
+      'a_b、www.x.com',
+      '',
+      '见、www.x.com 与 &amp;',
+      '',
+      'a\\_b、www.x.com 尾\\*巴 &copy;',
+      '',
+      '首a_b、www.x.com *斜*',
+      '',
+      '*斜*、www.x.com 尾 &amp;',
+      '',
+      '# a_b、www.h.com 与 &amp;',
+      '',
+      '## a_b、www.h.com *斜*',
+      '',
+      '## *斜*、www.h.com &amp;',
+      '',
+      '| 栏                   | 栏2                  |',
+      '| ------------------- | ------------------- |',
+      '| a_b、www.t.com &amp; | *e*、www.t.com &amp; |',
+      '',
+      '- a_b、www.l.com &amp;',
+      '',
+      '- *斜*、www.l.com &amp;',
+      '',
+      '> a_b、www.q.com &amp;',
+      '',
+      '> a_b、www.q.com *斜*',
+      '',
+      '*斜、www.e.com &amp;* 与 **粗、www.e.com &amp;** 及 ~~删、www.e.com &amp;~~',
+      '',
+      '行一 &amp;\n行二、www.s.com a_b',
+      '',
+      '普通段',
+      '',
+    ];
+    const source = lines.join('\n');
+    await open(source);
+    // Verify *斜、www.e.com &amp;* etc. also keep their inline formatting & entity decorations visually!
+    expect(await page.evaluate(() => {
+      const p = [...document.querySelectorAll('#rich-root p')].find(el => el.textContent?.includes('www.e.com'))!;
+      return {
+        text: (p as HTMLElement).innerText,
+        linkFormats: [
+          p.querySelector('em a')?.textContent,
+          p.querySelector('strong a')?.textContent,
+          p.querySelector('del a')?.textContent,
+        ],
+        hrefs: [...p.querySelectorAll('a')].map(a => a.getAttribute('href')),
+      };
+    })).toEqual({
+      text: '斜、www.e.com & 与 粗、www.e.com & 及 删、www.e.com &',
+      linkFormats: ['www.e.com', 'www.e.com', 'www.e.com'],
+      hrefs: ['http://www.e.com', 'http://www.e.com', 'http://www.e.com'],
+    });
+    await caret('普通段', 3);
+    await page.keyboard.insertText('改');
+    await settle();
+    expect(await markdown()).toBe(source.replace('普通段', '普通段改'));
+
+    // Closing ATX # and Setext headings also preserve escapes/entities around bare www. without leaking markers
+    await open('## a_b、www.h.com *斜* ##\n\n## *斜*、www.h.com &amp; ##\n\na_b、www.h2.com &amp;\n===\n\n尾\n');
+    await caret('尾', 1);
+    await page.keyboard.insertText('改');
+    await settle();
+    expect(await markdown()).toBe('## a_b、www.h.com *斜*\n\n## *斜*、www.h.com &amp;\n\n# a_b、www.h2.com &amp;\n\n尾改\n');
   }, 30000);
 });
