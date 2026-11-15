@@ -1,6 +1,6 @@
 [package]
 name = "croquill"
-version = "0.5.0"
+version = "0.6.0"
 description = "本地 Markdown 写作编辑器"
 edition = "2021"
 license = "MIT"

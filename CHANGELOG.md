@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.6.0] - 2026-11-15
+
 ### 新增
 
 - 所见即所得模式下支持纯块级 HTML 的安全渲染与原位编辑：`<div align="center">`、`<details>`/`<summary>`、本地相对路径图片等不再显示为灰色等宽原文；单击预览区（`<summary>` 除外）或选中后按回车展开原位等宽源码框，输入实时写入文档并更新下方预览，保留块尾空白与 LF / CRLF 换行格式；未改动直接退出保持文档未修改且保存逐字节一致，支持编辑器内 Ctrl+Z / Ctrl+Y 撤销重做、输入法组词隔离、清空离开转为空段落、方向键上下离开、查找替换与复制粘贴
@@ -176,7 +178,7 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.5.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.6.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
@@ -184,3 +186,4 @@
 [0.3.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.2.0...v0.3.0
 [0.4.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.3.0...v0.4.0
 [0.5.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.4.0...v0.5.0
+[0.6.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.5.0...v0.6.0
