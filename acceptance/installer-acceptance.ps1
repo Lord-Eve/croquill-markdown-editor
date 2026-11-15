@@ -651,12 +651,14 @@ try {
                 return $null
             } 10 250
             if ($null -ne $shellDirectProc) {
-                $launchedDesc = "pid=$($shellDirectProc.Id) name=$($shellDirectProc.ProcessName) exe=$(Get-ProcessExePath $shellDirectProc.Id)"
-                try { if (-not $shellDirectProc.HasExited) { Stop-Process -Id $shellDirectProc.Id -Force -ErrorAction SilentlyContinue } } catch {}
+                $procExe = Get-ProcessExePath $shellDirectProc.Id
+                $launchedDesc = "pid=$($shellDirectProc.Id) name=$($shellDirectProc.ProcessName) exe=$procExe"
+                if ($shellDirectProc.ProcessName -ine 'explorer') {
+                    try { if (-not $shellDirectProc.HasExited) { Stop-Process -Id $shellDirectProc.Id -Force -ErrorAction SilentlyContinue } } catch {}
+                }
             } elseif ($null -ne $spawned) {
                 $first = $spawned[0]
-                $launchedDesc = "pid=$($first.Id) name=$($first.ProcessName) exe=$(Get-ProcessExePath $first.Id)"
-                foreach ($sp in $spawned) { try { Stop-Process -Id $sp.Id -Force -ErrorAction SilentlyContinue } catch {} }
+                $launchedDesc = "pid=$($first.Id) name=$($first.ProcessName) exe=$(Get-ProcessExePath $first.Id) (observed only, not killed)"
             } else {
                 $launchedDesc = "no new process observed within 10s"
             }
@@ -840,7 +842,7 @@ finally {
         testFiles = @($script:TestFilesReport)
         registry = $script:RegDump
     }
-    $payload | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $OutDir 'results.json') -Encoding UTF8
+    $payload | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $OutDir 'results.json') -Encoding UTF8
 
     $lines = New-Object System.Collections.ArrayList
     [void]$lines.Add('# Croquill Windows installer acceptance')
@@ -859,7 +861,7 @@ finally {
     [void]$lines.Add('## Post-install registry dump')
     [void]$lines.Add('')
     [void]$lines.Add('```json')
-    [void]$lines.Add(($script:RegDump['postInstall'] | ConvertTo-Json -Depth 10))
+    [void]$lines.Add(($script:RegDump['postInstall'] | ConvertTo-Json -Depth 20))
     [void]$lines.Add('```')
     ($lines -join "`r`n") | Set-Content -LiteralPath (Join-Path $OutDir 'report.md') -Encoding UTF8
 
