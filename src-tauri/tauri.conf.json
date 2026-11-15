@@ -24,8 +24,28 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
-    "icon": ["icons/icon.ico"]
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Lord-Eve",
+    "homepage": "https://github.com/Lord-Eve/croquill-markdown-editor",
+    "copyright": "Copyright (c) 2026 Lord-Eve",
+    "license": "MIT",
+    "shortDescription": "本地 Markdown 写作编辑器",
+    "icon": ["icons/icon.ico"],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Croquill.Markdown",
+        "description": "Markdown 文档",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }
