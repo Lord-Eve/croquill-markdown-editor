@@ -142,10 +142,16 @@ Var CroquillEnumTmp
   ClearErrors
   EnumRegKey $CroquillEnumTmp HKCU "Software\Classes\.${EXT}" 0
   ${If} ${Errors}
+  ${OrIf} $CroquillEnumTmp == ""
     ClearErrors
-    EnumRegValue $CroquillEnumTmp HKCU "Software\Classes\.${EXT}" 0
+    ReadRegStr $CroquillEnumTmp HKCU "Software\Classes\.${EXT}" ""
     ${If} ${Errors}
-      DeleteRegKey /ifempty HKCU "Software\Classes\.${EXT}"
+      ClearErrors
+      EnumRegValue $CroquillEnumTmp HKCU "Software\Classes\.${EXT}" 0
+      ${If} ${Errors}
+      ${OrIf} $CroquillEnumTmp == ""
+        DeleteRegKey /ifempty HKCU "Software\Classes\.${EXT}"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
   ClearErrors
