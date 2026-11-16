@@ -86,6 +86,26 @@ jobs:
           -ExamplesDir (Join-Path $PWD "examples")
           -OutDir (Join-Path $PWD "acceptance-output")
 
+      - name: Build Windows NSIS installer
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Locate NSIS installer
+        id: installer
+        shell: pwsh
+        run: |
+          $nsisDir = Join-Path $PWD "src-tauri\target\release\bundle\nsis"
+          $setup = Get-ChildItem -LiteralPath $nsisDir -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $setup) { throw "NSIS setup exe (*-setup.exe) not found in $nsisDir" }
+          "path=$($setup.FullName)" >> $env:GITHUB_OUTPUT
+          $setup | Select-Object FullName, Length, LastWriteTime
+
+      - name: Installer acceptance
+        shell: pwsh
+        run: >
+          .\acceptance\installer-acceptance.ps1
+          -InstallerPath "${{ steps.installer.outputs.path }}"
+          -OutDir (Join-Path $PWD "installer-acceptance-output")
+
       - name: Upload acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,6 +113,8 @@ jobs:
           name: windows-acceptance-${{ github.sha }}
           path: |
             acceptance-output/**
+            installer-acceptance-output/**
             src-tauri/target/release/croquill.exe
+            src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: warn
           retention-days: 30

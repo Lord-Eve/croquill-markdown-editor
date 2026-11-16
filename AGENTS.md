@@ -41,6 +41,8 @@
 | `tests/` | Vitest 单元测试；`harness.html` / `harness.ts` 是浏览器中运行的编辑内核测试页 |
 | `examples/` | 手动验收用的示例文档 |
 | `docs/` | 路线图、Typora 对照验收、技术验证记录 |
+| `package.ps1` | 打包 Windows 安装程序（`Croquill_<版本>_x64-setup.exe`） |
+| `acceptance/installer-acceptance.ps1` | CI 自动验收：安装包安装、文件关联、打开与卸载恢复 |
 
 ## 改完之后必须做
 

@@ -32,6 +32,28 @@ Croquill（读作 kro-KWILL）由 croquis（速写）和 crow quill（绘图用�
 
 **还没做或和 Typora 有差距**：见 [路线图](docs/roadmap.md)。
 
+## 安装
+
+Croquill 提供**安装版**和**便携版**两种方式，均支持 Windows 10/11，且共用同一份本地设置与最近打开记录：
+
+- **安装版（推荐日常使用）**：下载运行 `Croquill_<版本>_x64-setup.exe`。安装界面为简体中文，默认安装到当前用户目录（`%LOCALAPPDATA%\Croquill`），**不需要管理员权限**，会自动创建开始菜单快捷方式并在注册表中登记 `.md` 与 `.markdown` 文件关联（ProgID 为 `Croquill.Markdown`）。
+- **便携版**：直接下载并运行单文件 `croquill.exe`（或按下方“运行”步骤自行构建），无需安装，适合随用随走；不会主动向系统登记文件关联。
+
+### 设为默认打开方式
+
+- **未曾手动固定过其他程序时**：安装程序会把当前用户的 `.md` 与 `.markdown` 默认关联设为 `Croquill.Markdown`。如果系统里尚未通过 `UserChoice` 固定过别的软件，安装后直接打开或双击 `.md` / `.markdown` 文件就会由 Croquill 启动。
+- **之前已选过其他默认软件时**：Windows 会优先保留用户已选定的默认应用。如需切换为 Croquill，请右键任意 `.md`（或 `.markdown`）文件 → **打开方式** → **选择其他应用** → 找到 **Croquill** 并选择**始终**；也可以在 Windows **设置 → 应用 → 默认应用** 中按 `.md` / `.markdown` 扩展名指定 Croquill。
+
+### 未签名时的安全提示
+
+目前提供的安装包和便携版 `croquill.exe` 尚未进行代码签名。从网络下载后首次运行若出现“Windows 已保护你的电脑”（SmartScreen）拦截提示，请确认文件来源为本项目的官方 GitHub Releases，然后点击**更多信息** → **仍要运行**即可继续。
+
+### 卸载
+
+- 在 Windows **设置 → 应用 → 已安装的应用**（或控制面板“程序和功能”）中找到 **Croquill** 选择卸载，或直接运行安装目录中的 `uninstall.exe`。
+- 卸载确认页中的**删除应用程序数据**选项默认不勾选，保留最近打开列表、主题与字号等设置；静默卸载同样不删除应用数据。
+- 用户的 Markdown 文档不会被改动。文件关联方面：卸载时若 `.md` / `.markdown` 仍指向 Croquill，会恢复安装前的默认关联（原本没有默认值的会删除默认项并清理因此变空的扩展名键）；若用户安装后已自行改为其他默认程序，卸载时不会改回原备份，同时清除 Croquill 留下的关联备份值。
+
 ## 运行
 
 需要 Windows 10/11。
@@ -40,6 +62,7 @@ Croquill（读作 kro-KWILL）由 croquis（速写）和 crow quill（绘图用�
 | --- | --- |
 | 启动已构建的程序 | 右键 `start.ps1` →“使用 PowerShell 运行” |
 | 改完代码后重新构建 | 右键 `build.ps1` →“使用 PowerShell 运行”，结束后得到 `src-tauri\target\release\croquill.exe` |
+| 打出 Windows 安装包 | 右键 `package.ps1` →“使用 PowerShell 运行”，结束后在 `src-tauri\target\release\bundle\nsis\` 得到 `Croquill_<版本>_x64-setup.exe` |
 | 开发时实时预览 | 运行 `dev.ps1` |
 | 文件夹占用太大时清理 | 右键 `clean.ps1` →“使用 PowerShell 运行”，只删测试和预览的编译缓存，程序照常能用 |
 | 彻底清理编译缓存 | 右键 `clean-all.ps1` →“使用 PowerShell 运行”，只保留 `croquill.exe`；下次构建会整份重新编译，耗时较长 |
@@ -71,6 +94,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 - [路线图与已知问题](docs/roadmap.md)
 - [更新记录](CHANGELOG.md)
+- [发布流程](docs/release.md)
 - [官方 Typora 对照与验收记录](docs/typora-acceptance.md)
 - [编辑内核技术验证](docs/editor-core-verification.md)
 - [参考仓库与 Tauri 文档核查](docs/reference-research.md)
