@@ -7,8 +7,8 @@
 ### 新增
 
 - 新增 Windows NSIS 安装程序（`Croquill_<版本>_x64-setup.exe`）与 `package.ps1` 打包脚本：安装到当前用户目录，无需管理员权限，界面为简体中文，附带开始菜单快捷方式与卸载程序
-- 安装时登记 `.md` 与 `.markdown` 文件关联（ProgID 为 `Croquill.Markdown`），支持从文件关联和“打开方式”直接启动 Croquill 打开对应文件；卸载时恢复安装前的扩展名默认关联并保留应用数据与用户文档；单文件便携版 `croquill.exe` 与 `build.ps1` 照旧提供
-- GitHub Actions Windows 自动验收新增安装包构建与 `acceptance/installer-acceptance.ps1` 安装、文件关联及卸载全流程验收
+- 安装时登记 `.md` 与 `.markdown` 文件关联（ProgID 为 `Croquill.Markdown`），并通过 `installerHooks` 保留首次安装前的默认关联（区分“无默认值”与空字符串，同版本重装或覆盖安装时不覆写首次备份）；卸载时若仍指向 Croquill 则恢复原状态（原本无默认值时删除默认值及由此变空的扩展名键），若用户已改用其他默认程序则保持用户选择不变，并清除相关关联备份值；应用数据默认保留、用户文档不被改动；单文件便携版 `croquill.exe` 与 `build.ps1` 照旧提供
+- GitHub Actions Windows 自动验收新增安装包构建与 `acceptance/installer-acceptance.ps1` 安装、文件关联、连续安装两次卸载、安装后改默认程序卸载及原状态还原全流程验收
 
 ## [0.6.0] - 2026-11-15
 

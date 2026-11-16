@@ -91,9 +91,11 @@ $RegPathMdnChoice   = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileEx
 $RegPathManuProduct = 'Software\Lord-Eve\Croquill'
 
 $PriorProgId = 'CroquillTest.Prior'
+$LaterProgId = 'CroquillTest.Later'
 $PreMdSnapshot = $null
 $PreMarkdownSnapshot = $null
 $PreRegistrySaved = $false
+$script:ScenarioRegDumps = [ordered]@{}
 
 function Add-Result([string]$Id, [string]$Status, [string]$Detail) {
     [void]$script:Results.Add([ordered]@{ id = $Id; status = $Status; detail = $Detail })
@@ -385,6 +387,121 @@ function Invoke-UninstallIfPresent([string]$UninstallCmdString) {
     return $exitCode
 }
 
+function Invoke-SilentInstall([string]$InstallerExePath) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $InstallerExePath
+    $psi.Arguments = '/S'
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $exited = Wait-Condition { $proc.HasExited } 180 250
+    if (-not $exited) {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        return [PSCustomObject]@{ Exited = $false; ExitCode = -1 }
+    }
+    return [PSCustomObject]@{ Exited = $true; ExitCode = $proc.ExitCode }
+}
+
+function Get-CroquillAssocLeftovers($Snap) {
+    $leftovers = New-Object System.Collections.ArrayList
+    if ($null -eq $Snap -or (-not $Snap.exists)) { return @() }
+    foreach ($vn in $Snap.values.Keys) {
+        if ($vn -eq '(Default)') { continue }
+        $isCroquillName = $vn.StartsWith('Croquill.Markdown', [System.StringComparison]::OrdinalIgnoreCase)
+        $isCroquillData = ([string]$Snap.values[$vn].data) -ieq 'Croquill.Markdown'
+        if ($isCroquillName -or $isCroquillData) {
+            [void]$leftovers.Add($vn)
+        }
+    }
+    return @($leftovers)
+}
+
+function Test-NoDefaultExtClean($Snap) {
+    if ($null -eq $Snap) { return $false }
+    if (-not $Snap.exists) { return $true }
+    if ($Snap.defaultValueExists) { return $false }
+    return (@(Get-CroquillAssocLeftovers $Snap).Count -eq 0)
+}
+
+function Test-ExpectedDefaultExtClean($Snap, [string]$ExpectedDefault) {
+    if ($null -eq $Snap -or (-not $Snap.exists)) { return $false }
+    if (-not $Snap.defaultValueExists) { return $false }
+    if ([string]$Snap.defaultValue -ne $ExpectedDefault) { return $false }
+    return (@(Get-CroquillAssocLeftovers $Snap).Count -eq 0)
+}
+
+function Format-ExtSnapSummary($Snap) {
+    if ($null -eq $Snap) { return 'null' }
+    $leftovers = @(Get-CroquillAssocLeftovers $Snap)
+    $defVal = if ($Snap.defaultValueExists) { "'$($Snap.defaultValue)'" } else { '<absent>' }
+    return "exists=$($Snap.exists) defaultExists=$($Snap.defaultValueExists) default=$defVal leftovers=[$($leftovers -join ',')]"
+}
+
+function Get-PostInstallAssocSnapshot {
+    return [ordered]@{
+        uninstall = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUninstall)
+        progId = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathProgId)
+        hkcuMd = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd)
+        hkcuMarkdown = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown)
+        fileExtsMd = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathFileExtsMd)
+        fileExtsMarkdown = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathFileExtsMdn)
+        manuProduct = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathManuProduct)
+    }
+}
+
+function Get-PostUninstallAssocSnapshot {
+    return [ordered]@{
+        uninstall = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUninstall)
+        progId = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathProgId)
+        hkcuMd = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd)
+        hkcuMarkdown = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown)
+        manuProduct = (Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathManuProduct)
+    }
+}
+
+function Test-UninstallArtifactsCleared {
+    $uninstSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUninstall
+    $progIdSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathProgId
+    $dirGone = -not (Test-Path -LiteralPath $script:InstalledDir)
+    $uninstKeyGone = -not $uninstSnap.exists
+    $shortcutGone = -not (Test-Path -LiteralPath $script:StartMenuShortcut)
+    $progIdGone = -not $progIdSnap.exists
+    $desktopGone = -not (Test-Path -LiteralPath $script:DesktopShortcut)
+    return [PSCustomObject]@{
+        Ok = ($dirGone -and $uninstKeyGone -and $shortcutGone -and $progIdGone)
+        DirGone = $dirGone
+        UninstKeyGone = $uninstKeyGone
+        ShortcutGone = $shortcutGone
+        ProgIdGone = $progIdGone
+        DesktopGone = $desktopGone
+    }
+}
+
+function Reset-ScenarioRegistryBaseline([string]$MdDefault, [bool]$SetMdnEmptyDefault) {
+    Close-CroquillProcesses
+    $existingUninst = Join-Path $script:InstalledDir 'uninstall.exe'
+    if (-not [string]::IsNullOrEmpty($script:InstalledDir) -and (Test-Path -LiteralPath $existingUninst)) {
+        [void](Invoke-UninstallIfPresent -UninstallCmdString $existingUninst)
+    }
+    Restore-HkcuExtSnapshot -SubKeyPath $RegPathMd -Snapshot $PreMdSnapshot
+    Restore-HkcuExtSnapshot -SubKeyPath $RegPathMarkdown -Snapshot $PreMarkdownSnapshot
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($RegPathProgId, $false)
+
+    if (-not [string]::IsNullOrEmpty($MdDefault)) {
+        Set-HkcuDefaultValue -SubKeyPath $RegPathMd -Value $MdDefault
+        $verifyMd = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd
+        if (-not ($verifyMd.exists -and $verifyMd.defaultValueExists -and [string]$verifyMd.defaultValue -eq $MdDefault)) {
+            throw "Failed to reset HKCU\$RegPathMd default to '$MdDefault'"
+        }
+    }
+    if ($SetMdnEmptyDefault) {
+        Set-HkcuDefaultValue -SubKeyPath $RegPathMarkdown -Value ''
+        $verifyMdn = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown
+        if (-not ($verifyMdn.exists -and $verifyMdn.defaultValueExists -and [string]$verifyMdn.defaultValue -eq '')) {
+            throw "Failed to set HKCU\$RegPathMarkdown explicit empty string default"
+        }
+    }
+}
+
 # ---------------------------------------------------------------- setup
 if (-not (Test-Path -LiteralPath $InstallerPath)) { throw "Installer not found: $InstallerPath" }
 if ([string]::IsNullOrEmpty($ExpectedVersion)) {
@@ -431,45 +548,28 @@ try {
     }
 
     # ---------------------------------------- 3. Silent install (/S, non-elevated)
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $installerFile.FullName
-    $psi.Arguments = '/S'
-    $psi.UseShellExecute = $false
-    $installProc = [System.Diagnostics.Process]::Start($psi)
-    $exited = Wait-Condition { $installProc.HasExited } 180 250
-    if (-not $exited) {
-        try { Stop-Process -Id $installProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    $installRes = Invoke-SilentInstall -InstallerExePath $installerFile.FullName
+    Save-Screenshot '02-after-install'
+    if (-not $installRes.Exited) {
         Add-Result 'silent-install' 'FAIL' 'Installer timed out after 180s.'
-        Save-Screenshot '02-after-install'
         throw 'Installer timed out.'
     }
-    $installExit = $installProc.ExitCode
-    Save-Screenshot '02-after-install'
-    if ($installExit -eq 0) {
-        Add-Result 'silent-install' 'PASS' 'Silent install (/S) completed with exit code 0 without elevation prompt.'
+    if ($installRes.ExitCode -eq 0) {
+        Add-Result 'silent-install' 'PASS' 'Silent install (/S) launched non-elevated (UseShellExecute=false) and exited with code 0.'
     } else {
-        Add-Result 'silent-install' 'FAIL' "Silent install (/S) exited with code $installExit."
-        throw "Installer failed with code $installExit."
+        Add-Result 'silent-install' 'FAIL' "Silent install (/S) exited with code $($installRes.ExitCode)."
+        throw "Installer failed with code $($installRes.ExitCode)."
     }
 
     # ---------------------------------------- 4 & 5. Install dir & Add/Remove Programs
-    $postUninstSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUninstall
-    $postProgIdSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathProgId
-    $postMdSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd
-    $postMdnSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown
-    $postFileExtsMd = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathFileExtsMd
-    $postFileExtsMdn = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathFileExtsMdn
-    $postManuSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathManuProduct
-
-    $script:RegDump['postInstall'] = [ordered]@{
-        uninstall = $postUninstSnap
-        progId = $postProgIdSnap
-        hkcuMd = $postMdSnap
-        hkcuMarkdown = $postMdnSnap
-        fileExtsMd = $postFileExtsMd
-        fileExtsMarkdown = $postFileExtsMdn
-        manuProduct = $postManuSnap
-    }
+    $script:RegDump['postInstall'] = Get-PostInstallAssocSnapshot
+    $postUninstSnap = $script:RegDump['postInstall'].uninstall
+    $postProgIdSnap = $script:RegDump['postInstall'].progId
+    $postMdSnap = $script:RegDump['postInstall'].hkcuMd
+    $postMdnSnap = $script:RegDump['postInstall'].hkcuMarkdown
+    $postFileExtsMd = $script:RegDump['postInstall'].fileExtsMd
+    $postFileExtsMdn = $script:RegDump['postInstall'].fileExtsMarkdown
+    $postManuSnap = $script:RegDump['postInstall'].manuProduct
 
     $installLocRaw = if ($postUninstSnap.exists -and $postUninstSnap.values.Contains('InstallLocation')) {
         [string]$postUninstSnap.values['InstallLocation'].data
@@ -730,51 +830,39 @@ try {
     }
 
     # ---------------------------------------- 16. Verify install artifacts removed
-    $afterUninstSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUninstall
-    $afterProgIdSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathProgId
-    $afterMdSnap     = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd
-    $afterMdnSnap    = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown
-    $afterManuSnap   = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathManuProduct
+    $script:RegDump['postUninstall'] = Get-PostUninstallAssocSnapshot
+    $afterUninstSnap = $script:RegDump['postUninstall'].uninstall
+    $afterProgIdSnap = $script:RegDump['postUninstall'].progId
+    $afterMdSnap     = $script:RegDump['postUninstall'].hkcuMd
+    $afterMdnSnap    = $script:RegDump['postUninstall'].hkcuMarkdown
+    $afterManuSnap   = $script:RegDump['postUninstall'].manuProduct
 
-    $script:RegDump['postUninstall'] = [ordered]@{
-        uninstall = $afterUninstSnap
-        progId = $afterProgIdSnap
-        hkcuMd = $afterMdSnap
-        hkcuMarkdown = $afterMdnSnap
-        manuProduct = $afterManuSnap
+    $script:ScenarioRegDumps['scenarioA'] = [ordered]@{
+        postInstall = $script:RegDump['postInstall']
+        postUninstall = $script:RegDump['postUninstall']
     }
 
-    $dirGone = -not (Test-Path -LiteralPath $script:InstalledDir)
-    $uninstKeyGone = -not $afterUninstSnap.exists
-    $shortcutGone = -not (Test-Path -LiteralPath $script:StartMenuShortcut)
-    $progIdGone = -not $afterProgIdSnap.exists
-    $desktopGone = -not (Test-Path -LiteralPath $script:DesktopShortcut)
-    if ($dirGone -and $uninstKeyGone -and $shortcutGone -and $progIdGone) {
-        Add-Result 'verify-uninstall-cleanup' 'PASS' "Install dir, Uninstall key, Start Menu shortcut, and Croquill.Markdown ProgID are all removed (desktopShortcutGone=$desktopGone)."
+    $cleanupA = Test-UninstallArtifactsCleared
+    if ($cleanupA.Ok) {
+        Add-Result 'verify-uninstall-cleanup' 'PASS' "Install dir, Uninstall key, Start Menu shortcut, and Croquill.Markdown ProgID are all removed (desktopShortcutGone=$($cleanupA.DesktopGone))."
     } else {
-        Add-Result 'verify-uninstall-cleanup' 'FAIL' "dirGone=$dirGone uninstKeyGone=$uninstKeyGone shortcutGone=$shortcutGone progIdGone=$progIdGone desktopGone=$desktopGone"
+        Add-Result 'verify-uninstall-cleanup' 'FAIL' "dirGone=$($cleanupA.DirGone) uninstKeyGone=$($cleanupA.UninstKeyGone) shortcutGone=$($cleanupA.ShortcutGone) progIdGone=$($cleanupA.ProgIdGone) desktopGone=$($cleanupA.DesktopGone)"
     }
 
-    # ---------------------------------------- 17. Verify .md and .markdown restored
-    $mdRestored = ($afterMdSnap.exists -and $afterMdSnap.defaultValue -eq $PriorProgId)
-    $mdnDefaultStr = if ($null -eq $afterMdnSnap.defaultValue) { "" } else { [string]$afterMdnSnap.defaultValue }
-    $mdnPointsToCroquill = $false
-    foreach ($vn in $afterMdnSnap.values.Keys) {
-        if ([string]$afterMdnSnap.values[$vn].data -eq 'Croquill.Markdown') {
-            $mdnPointsToCroquill = $true
-        }
+    # ---------------------------------------- 17. Verify .md and .markdown restored (Scenario A strict)
+    $mdRestored = Test-ExpectedDefaultExtClean $afterMdSnap $PriorProgId
+    $mdnExpectBaseline = ($PreMarkdownSnapshot.exists -and $PreMarkdownSnapshot.defaultValueExists)
+    $mdnRestored = if ($mdnExpectBaseline) {
+        Test-ExpectedDefaultExtClean $afterMdnSnap ([string]$PreMarkdownSnapshot.defaultValue)
+    } else {
+        Test-NoDefaultExtClean $afterMdnSnap
     }
-    $mdnRestored = (-not $mdnPointsToCroquill) -and ([string]::IsNullOrEmpty($mdnDefaultStr))
+    $mdSummary = Format-ExtSnapSummary $afterMdSnap
+    $mdnSummary = Format-ExtSnapSummary $afterMdnSnap
     if ($mdRestored -and $mdnRestored) {
-        Add-Result 'verify-ext-restored' 'PASS' (
-            "HKCU\.md default restored to '$($afterMdSnap.defaultValue)'; " +
-            "HKCU\.markdown exists=$($afterMdnSnap.exists) default='$mdnDefaultStr' pointsToCroquill=$mdnPointsToCroquill."
-        )
+        Add-Result 'verify-ext-restored' 'PASS' "HKCU\.md ($mdSummary); HKCU\.markdown ($mdnSummary)."
     } else {
-        Add-Result 'verify-ext-restored' 'FAIL' (
-            "mdRestored=$mdRestored (default='$($afterMdSnap.defaultValue)') " +
-            "mdnRestored=$mdnRestored (exists=$($afterMdnSnap.exists) default='$mdnDefaultStr' pointsToCroquill=$mdnPointsToCroquill)"
-        )
+        Add-Result 'verify-ext-restored' 'FAIL' "mdRestored=$mdRestored ($mdSummary); mdnRestored=$mdnRestored ($mdnSummary)"
     }
 
     # ---------------------------------------- 18. Verify test docs intact after uninstall
@@ -795,8 +883,132 @@ try {
     } else {
         Add-Result 'verify-hashes-after-uninstall' 'FAIL' ($afterUninstMismatches -join '; ')
     }
+
+    # ---------------------------------------- B. Install twice (overwrite reinstall) then uninstall
+    Reset-ScenarioRegistryBaseline -MdDefault $PriorProgId -SetMdnEmptyDefault $false
+    $bInst1 = Invoke-SilentInstall -InstallerExePath $installerFile.FullName
+    if (-not $bInst1.Exited -or $bInst1.ExitCode -ne 0) {
+        Add-Result 'scenarioB-reinstall-uninstall' 'FAIL' "Scenario B first install failed: exited=$($bInst1.Exited) code=$($bInst1.ExitCode)"
+    } else {
+        $bPostFirstInstall = Get-PostInstallAssocSnapshot
+        $bInst2 = Invoke-SilentInstall -InstallerExePath $installerFile.FullName
+        if (-not $bInst2.Exited -or $bInst2.ExitCode -ne 0) {
+            Add-Result 'scenarioB-reinstall-uninstall' 'FAIL' "Scenario B second install failed: exited=$($bInst2.Exited) code=$($bInst2.ExitCode)"
+        } else {
+            $bPostInstall = Get-PostInstallAssocSnapshot
+            $bUninstCode = Invoke-UninstallIfPresent -UninstallCmdString (Join-Path $script:InstalledDir 'uninstall.exe')
+            Save-Screenshot '09-scenarioB-after-uninstall'
+            $bPostUninstall = Get-PostUninstallAssocSnapshot
+            $script:ScenarioRegDumps['scenarioB'] = [ordered]@{
+                postFirstInstall = $bPostFirstInstall
+                postInstall = $bPostInstall
+                postUninstall = $bPostUninstall
+            }
+
+            $bCleanup = Test-UninstallArtifactsCleared
+            if ($bUninstCode -eq 0 -and $bCleanup.Ok) {
+                Add-Result 'scenarioB-uninstall-cleanup' 'PASS' "After 2x install and /S uninstall: exit=$bUninstCode, install dir, Uninstall key, shortcut, ProgID removed."
+            } else {
+                Add-Result 'scenarioB-uninstall-cleanup' 'FAIL' "uninstCode=$bUninstCode dirGone=$($bCleanup.DirGone) uninstKeyGone=$($bCleanup.UninstKeyGone) shortcutGone=$($bCleanup.ShortcutGone) progIdGone=$($bCleanup.ProgIdGone)"
+            }
+
+            $bMdOk = Test-ExpectedDefaultExtClean $bPostUninstall.hkcuMd $PriorProgId
+            $bMdnOk = if ($mdnExpectBaseline) {
+                Test-ExpectedDefaultExtClean $bPostUninstall.hkcuMarkdown ([string]$PreMarkdownSnapshot.defaultValue)
+            } else {
+                Test-NoDefaultExtClean $bPostUninstall.hkcuMarkdown
+            }
+            $bMdSum = Format-ExtSnapSummary $bPostUninstall.hkcuMd
+            $bMdnSum = Format-ExtSnapSummary $bPostUninstall.hkcuMarkdown
+            if ($bMdOk -and $bMdnOk) {
+                Add-Result 'scenarioB-ext-restored' 'PASS' "After 2x install + uninstall: HKCU\.md ($bMdSum); HKCU\.markdown ($bMdnSum)."
+            } else {
+                Add-Result 'scenarioB-ext-restored' 'FAIL' "bMdOk=$bMdOk ($bMdSum); bMdnOk=$bMdnOk ($bMdnSum)"
+            }
+        }
+    }
+
+    # ---------------------------------------- C. Install, change .md default to CroquillTest.Later, then uninstall
+    Reset-ScenarioRegistryBaseline -MdDefault $PriorProgId -SetMdnEmptyDefault $false
+    $cInst = Invoke-SilentInstall -InstallerExePath $installerFile.FullName
+    if (-not $cInst.Exited -or $cInst.ExitCode -ne 0) {
+        Add-Result 'scenarioC-user-override-uninstall' 'FAIL' "Scenario C install failed: exited=$($cInst.Exited) code=$($cInst.ExitCode)"
+    } else {
+        $cPostInstall = Get-PostInstallAssocSnapshot
+        Set-HkcuDefaultValue -SubKeyPath $RegPathMd -Value $LaterProgId
+        $cOverrideSnap = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd
+        if ([string]$cOverrideSnap.defaultValue -ne $LaterProgId) {
+            Add-Result 'scenarioC-user-override-uninstall' 'FAIL' "Failed to write override '$LaterProgId' before uninstall."
+        } else {
+            $cUninstCode = Invoke-UninstallIfPresent -UninstallCmdString (Join-Path $script:InstalledDir 'uninstall.exe')
+            Save-Screenshot '10-scenarioC-after-uninstall'
+            $cPostUninstall = Get-PostUninstallAssocSnapshot
+            $script:ScenarioRegDumps['scenarioC'] = [ordered]@{
+                postInstall = $cPostInstall
+                postUninstall = $cPostUninstall
+            }
+
+            $cCleanup = Test-UninstallArtifactsCleared
+            if ($cUninstCode -eq 0 -and $cCleanup.Ok) {
+                Add-Result 'scenarioC-uninstall-cleanup' 'PASS' "After user override and /S uninstall: exit=$cUninstCode, install dir, Uninstall key, shortcut, ProgID removed."
+            } else {
+                Add-Result 'scenarioC-uninstall-cleanup' 'FAIL' "uninstCode=$cUninstCode dirGone=$($cCleanup.DirGone) uninstKeyGone=$($cCleanup.UninstKeyGone) shortcutGone=$($cCleanup.ShortcutGone) progIdGone=$($cCleanup.ProgIdGone)"
+            }
+
+            $cMdOk = Test-ExpectedDefaultExtClean $cPostUninstall.hkcuMd $LaterProgId
+            $cMdnOk = if ($mdnExpectBaseline) {
+                Test-ExpectedDefaultExtClean $cPostUninstall.hkcuMarkdown ([string]$PreMarkdownSnapshot.defaultValue)
+            } else {
+                Test-NoDefaultExtClean $cPostUninstall.hkcuMarkdown
+            }
+            $cMdSum = Format-ExtSnapSummary $cPostUninstall.hkcuMd
+            $cMdnSum = Format-ExtSnapSummary $cPostUninstall.hkcuMarkdown
+            if ($cMdOk -and $cMdnOk) {
+                Add-Result 'scenarioC-ext-preserved' 'PASS' "User override kept without Croquill leftovers: HKCU\.md ($cMdSum); HKCU\.markdown ($cMdnSum)."
+            } else {
+                Add-Result 'scenarioC-ext-preserved' 'FAIL' "cMdOk=$cMdOk ($cMdSum); cMdnOk=$cMdnOk ($cMdnSum)"
+            }
+        }
+    }
+
+    # ---------------------------------------- D. Pre-install explicit empty string "" default distinguished from absent
+    if (-not $mdnExpectBaseline) {
+        Reset-ScenarioRegistryBaseline -MdDefault $PriorProgId -SetMdnEmptyDefault $true
+        $dInst = Invoke-SilentInstall -InstallerExePath $installerFile.FullName
+        if (-not $dInst.Exited -or $dInst.ExitCode -ne 0) {
+            Add-Result 'scenarioD-empty-string-uninstall' 'FAIL' "Scenario D install failed: exited=$($dInst.Exited) code=$($dInst.ExitCode)"
+        } else {
+            $dPostInstall = Get-PostInstallAssocSnapshot
+            $dUninstCode = Invoke-UninstallIfPresent -UninstallCmdString (Join-Path $script:InstalledDir 'uninstall.exe')
+            $dPostUninstall = Get-PostUninstallAssocSnapshot
+            $script:ScenarioRegDumps['scenarioD'] = [ordered]@{
+                postInstall = $dPostInstall
+                postUninstall = $dPostUninstall
+            }
+
+            $dCleanup = Test-UninstallArtifactsCleared
+            if ($dUninstCode -eq 0 -and $dCleanup.Ok) {
+                Add-Result 'scenarioD-uninstall-cleanup' 'PASS' "After empty-string baseline install and /S uninstall: exit=$dUninstCode, artifacts removed."
+            } else {
+                Add-Result 'scenarioD-uninstall-cleanup' 'FAIL' "uninstCode=$dUninstCode dirGone=$($dCleanup.DirGone) uninstKeyGone=$($dCleanup.UninstKeyGone) shortcutGone=$($dCleanup.ShortcutGone) progIdGone=$($dCleanup.ProgIdGone)"
+            }
+
+            $dMdOk = Test-ExpectedDefaultExtClean $dPostUninstall.hkcuMd $PriorProgId
+            $dMdnOk = Test-ExpectedDefaultExtClean $dPostUninstall.hkcuMarkdown ''
+            $dMdSum = Format-ExtSnapSummary $dPostUninstall.hkcuMd
+            $dMdnSum = Format-ExtSnapSummary $dPostUninstall.hkcuMarkdown
+            if ($dMdOk -and $dMdnOk) {
+                Add-Result 'scenarioD-empty-string-preserved' 'PASS' "Explicit empty string preserved: HKCU\.md ($dMdSum); HKCU\.markdown ($dMdnSum)."
+            } else {
+                Add-Result 'scenarioD-empty-string-preserved' 'FAIL' "dMdOk=$dMdOk ($dMdSum); dMdnOk=$dMdnOk ($dMdnSum)"
+            }
+        }
+    }
+
+    $script:RegDump['scenarios'] = $script:ScenarioRegDumps
 }
 catch {
+    $script:RegDump['scenarios'] = $script:ScenarioRegDumps
     Add-Result 'harness' 'FAIL' "Harness stopped early: $($_.Exception.Message)"
 }
 finally {
@@ -820,8 +1032,8 @@ finally {
 
         $finalMd = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd
         $finalMdn = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown
-        $mdOk = ($finalMd.exists -eq $PreMdSnapshot.exists) -and ($finalMd.defaultValue -eq $PreMdSnapshot.defaultValue)
-        $mdnOk = ($finalMdn.exists -eq $PreMarkdownSnapshot.exists) -and ($finalMdn.defaultValue -eq $PreMarkdownSnapshot.defaultValue)
+        $mdOk = ($finalMd.exists -eq $PreMdSnapshot.exists) -and ($finalMd.defaultValueExists -eq $PreMdSnapshot.defaultValueExists) -and ($finalMd.defaultValue -eq $PreMdSnapshot.defaultValue) -and (@(Get-CroquillAssocLeftovers $finalMd).Count -eq 0)
+        $mdnOk = ($finalMdn.exists -eq $PreMarkdownSnapshot.exists) -and ($finalMdn.defaultValueExists -eq $PreMarkdownSnapshot.defaultValueExists) -and ($finalMdn.defaultValue -eq $PreMarkdownSnapshot.defaultValue) -and (@(Get-CroquillAssocLeftovers $finalMdn).Count -eq 0)
         if ($mdOk -and $mdnOk) {
             Add-Result 'cleanup-registry-restored' 'PASS' 'Cleared test ProgID and restored HKCU\.md and HKCU\.markdown to pre-install state.'
         } else {
