@@ -66,8 +66,8 @@ describe('mode switch caret and scroll preservation through the real app', () =>
           }
         });
         if (target === null) throw new Error('Snippet not found in Rich doc: ' + snippet);
-        const TextSel = view.state.selection.constructor;
-        view.dispatch(view.state.tr.setSelection(TextSel.create(view.state.doc, target)).setMeta('addToHistory', false));
+        const selection = view.state.selection.constructor.near(view.state.doc.resolve(target));
+        view.dispatch(view.state.tr.setSelection(selection).setMeta('addToHistory', false));
         view.focus();
       },
       { snippet, offsetInside },
@@ -299,6 +299,54 @@ describe('mode switch caret and scroll preservation through the real app', () =>
       await pressModeToggle(); // -> Source
       expect(await sourceHeadOffset()).toBe(doc.indexOf(blockStart));
     }
+  });
+
+  it.each([
+    {
+      name: 'HTML split by blank lines',
+      doc: '<div>\n\n内容甲\n\n内容乙\n\n</div>\n\n后续正文 TAILA 结束\n\n另一段 TAILB 结束\n',
+      needles: ['TAILA', 'TAILB'],
+    },
+    {
+      name: 'a protected container between paragraphs',
+      doc: '前文\n\n::: note\n\n内容甲\n\n内容乙\n\n:::\n\n后续正文 TAILA 结束\n\n另一段 TAILB 结束\n',
+      needles: ['前文', 'TAILA', 'TAILB'],
+    },
+    {
+      name: 'details with Markdown-like content',
+      doc: '<details>\n<summary>标题</summary>\n\n隐藏 **内容**\n\n- 项一\n- 项二\n\n</details>\n\n## 后续标题 TAILH\n\n正文 TAILP 结束\n',
+      needles: ['TAILH', 'TAILP'],
+    },
+  ])('preserves exact offsets on both mode switches around $name', async ({ doc, needles }) => {
+    await open(doc);
+    for (const needle of needles) {
+      await setRichCaretBySubstring(needle, 1);
+      const richHead = await richHeadPos();
+      await pressModeToggle();
+      expect(await sourceHeadOffset()).toBe(doc.indexOf(needle) + 1);
+      await pressModeToggle();
+      expect(await richHeadPos()).toBe(richHead);
+    }
+  });
+
+  it.each([
+    ['list', '段一\n\n- 项一\n- 项二 LASTITEM\n'],
+    ['table', '段一\n\n| 甲 | 乙 |\n| --- | --- |\n| 一 | 二 |\n'],
+  ])('maps the synthetic empty paragraph after a final %s to source EOF and back', async (_, doc) => {
+    await open(doc);
+    const richHead = await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      const paragraph = view.state.doc.lastChild;
+      if (paragraph.type.name !== 'paragraph' || paragraph.content.size !== 0) throw new Error('Missing trailing caret paragraph');
+      const pos = view.state.doc.content.size - 1;
+      const selection = view.state.selection.constructor.create(view.state.doc, pos);
+      view.dispatch(view.state.tr.setSelection(selection));
+      return pos;
+    });
+    await pressModeToggle();
+    expect(await sourceHeadOffset()).toBe(doc.length);
+    await pressModeToggle();
+    expect(await richHeadPos()).toBe(richHead);
   });
 
   it('keeps relative viewport position within 24 CSS px when caret is visible and aligns topmost block when caret is offscreen', async () => {

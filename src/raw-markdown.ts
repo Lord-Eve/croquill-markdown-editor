@@ -509,14 +509,22 @@ export function preserveRawMarkdown() {
     if (!blocks.length || !rawTree.children) return tree;
     const next: RawTreeNode[] = [];
     let index = 0;
+    let merged: RawTreeNode | undefined;
     for (const child of rawTree.children) {
       const from = child.position?.start.offset;
-      while (from != null && blocks[index] && from >= blocks[index].to) index++;
+      while (from != null && blocks[index] && from >= blocks[index].to) {
+        index++;
+        merged = undefined;
+      }
       const block = blocks[index];
       if (block && from != null && from >= block.from && from < block.to) {
         if (from === block.from) {
           const kind: RawBlockKind = block.categories.length === 1 && block.categories[0] === 'HTML' ? 'html' : '';
-          next.push({ type: 'croquillRawBlock', value: block.raw, kind, position: child.position });
+          merged = { type: 'croquillRawBlock', value: block.raw, kind, position: child.position };
+          next.push(merged);
+        } else if (merged?.position && child.position) {
+          // The node spans the whole protected block. Its value also keeps the separator after it.
+          merged.position = { start: merged.position.start, end: child.position.end };
         }
       } else next.push(child);
     }

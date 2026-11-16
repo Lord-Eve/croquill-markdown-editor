@@ -3,21 +3,29 @@ import type { EditorView as CMView } from '@codemirror/view';
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView as PMView } from '@milkdown/kit/prose/view';
-
-const MODE_POSITION_META = 'croquill-mode-position';
+import { tocMarkerOf } from './document-syntax';
 import { parseMarkdownAst, splitFrontmatter } from './fidelity';
+import { isHtmlComment } from './html-comments';
+import { preserveRawMarkdown } from './raw-markdown';
 import { normalizedOffset, sourceOffset } from './search-core';
 
+const MODE_POSITION_META = 'croquill-mode-position';
+
 type AstPosition = {
-  start?: { offset?: number };
-  end?: { offset?: number };
+  start: { offset?: number };
+  end: { offset?: number };
 };
 
 interface AstNodeLike {
   type: string;
   depth?: number;
   checked?: boolean | null;
+  ordered?: boolean;
   value?: string;
+  label?: string;
+  url?: string;
+  alt?: string | null;
+  title?: string | null;
   position?: AstPosition;
   children?: AstNodeLike[];
 }
@@ -50,6 +58,7 @@ export interface DocumentAlignment {
   prefixLen: number;
   blocks: AlignedBlock[];
   containers: AlignedContainer[];
+  unverifiedRanges: { rawStart: number; rawEnd: number }[];
 }
 
 export type ModeScrollAnchor =
@@ -295,36 +304,43 @@ function verifyTextblockSegments(
   return { exact: true, segments, rawEmptyOffset: prefixLen + rawPos };
 }
 
-function isAstImageParagraph(astNode: AstNodeLike): boolean {
-  return astNode.type === 'paragraph' && (astNode.children?.length ?? 0) === 1 && astNode.children?.[0]?.type === 'image';
-}
-
-function isAstTocParagraph(body: string, astNode: AstNodeLike): boolean {
-  if (astNode.type !== 'paragraph') return false;
-  const start = astNode.position?.start?.offset;
-  const end = astNode.position?.end?.offset;
-  if (start == null || end == null) return false;
-  return body.slice(start, end).trim() === '[TOC]';
+function editableAst(body: string): AstNodeLike {
+  return preserveRawMarkdown()(parseMarkdownAst(body), { value: body }) as AstNodeLike;
 }
 
 function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode): 'container' | 'textblock' | 'degenerate' | 'mismatch' {
   const pmType = pmNode.type.name;
-  if (pmType === 'croquill_raw_block' || pmType === 'croquill_html_comment') return 'degenerate';
-  if (pmType === 'croquill_toc' && isAstTocParagraph(body, astNode)) return 'degenerate';
-  if (pmType === 'image-block' && isAstImageParagraph(astNode)) return 'degenerate';
-  if (pmType === 'table' && astNode.type === 'table') return 'degenerate';
+  const start = astNode.position?.start.offset;
+  const end = astNode.position?.end.offset;
+  if (start == null || end == null) return 'mismatch';
+
+  if (pmType === 'croquill_raw_block' && astNode.type === 'croquillRawBlock' && typeof pmNode.attrs.value === 'string') {
+    // The editor may still hold the previous separator whitespace after a neighboring edit.
+    const valueEnd = start + pmNode.attrs.value.length;
+    if (valueEnd >= end && valueEnd <= start + (astNode.value?.length ?? 0) && body.slice(start, valueEnd) === pmNode.attrs.value) {
+      return 'degenerate';
+    }
+  }
+  if (pmType === 'croquill_html_comment' && astNode.type === 'html' && isHtmlComment(astNode.value ?? '') &&
+    pmNode.attrs.value === body.slice(start, end)) return 'degenerate';
+  if (pmType === 'croquill_toc' && tocMarkerOf(astNode, body) === pmNode.attrs.value) return 'degenerate';
+  if (pmType === 'image-block' && astNode.type === 'paragraph' && astNode.children?.length === 1) {
+    const image = astNode.children[0];
+    if (image.type === 'image' && image.url === pmNode.attrs.src && (image.alt ?? '') === pmNode.attrs.alt &&
+      (image.title ?? '') === pmNode.attrs.caption) return 'degenerate';
+  }
+  if (pmType === 'table' && astNode.type === 'table' && astNode.children?.length === pmNode.childCount) return 'degenerate';
   if ((pmType === 'code_block' || pmType === 'math_block') && (astNode.type === 'code' || astNode.type === 'math')) {
-    return 'degenerate';
+    if (pmNode.textContent.replace(/\r\n?/g, '\n') === astNode.value?.replace(/\r\n?/g, '\n')) return 'degenerate';
   }
   if (pmType === 'hr' && astNode.type === 'thematicBreak') return 'degenerate';
-  if (pmType === 'footnote_definition' && astNode.type === 'footnoteDefinition') return 'degenerate';
+  if (pmType === 'footnote_definition' && astNode.type === 'footnoteDefinition' && pmNode.attrs.label === astNode.label) return 'degenerate';
 
   if (pmType === 'paragraph' && astNode.type === 'paragraph') return 'textblock';
   if (pmType === 'heading' && astNode.type === 'heading' && Number(pmNode.attrs.level) === astNode.depth) return 'textblock';
 
   if (pmType === 'blockquote' && astNode.type === 'blockquote') return 'container';
-  if (pmType === 'croquill_alert' && astNode.type === 'blockquote') return 'container';
-  if ((pmType === 'bullet_list' || pmType === 'ordered_list') && astNode.type === 'list') return 'container';
+  if (astNode.type === 'list' && pmType === (astNode.ordered ? 'ordered_list' : 'bullet_list')) return 'container';
   if (pmType === 'list_item' && astNode.type === 'listItem') return 'container';
 
   return 'mismatch';
@@ -334,14 +350,12 @@ function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode):
 export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAlignment {
   const { prefix, body } = splitFrontmatter(raw);
   const prefixLen = prefix.length;
-  const astRoot = parseMarkdownAst(body) as AstNodeLike;
+  const astRoot = editableAst(body);
   const blocks: AlignedBlock[] = [];
   const containers: AlignedContainer[] = [];
+  const unverifiedRanges: DocumentAlignment['unverifiedRanges'] = [];
 
-  function pushDegenerate(astNode: AstNodeLike, pmNode: PMNode, richPos: number): number {
-    const start = astNode.position?.start?.offset;
-    const end = astNode.position?.end?.offset;
-    if (start == null || end == null) return -1;
+  function pushDegenerate(start: number, end: number, pmNode: PMNode, richPos: number): number {
     const blockIndex = blocks.length;
     blocks.push({
       rawStart: prefixLen + start,
@@ -367,109 +381,112 @@ export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAl
     const pmChildren: { node: PMNode; pos: number }[] = [];
     pmParent.forEach((child, offset) => pmChildren.push({ node: child, pos: pmContentStart + offset }));
 
-    // Empty list items or an empty document contain a single synthetic empty paragraph in ProseMirror.
-    if (astChildren.length === 0 && pmChildren.length === 1 && isEmptyParagraphPm(pmChildren[0].node)) {
-      const parentEnd = astParent?.position?.end?.offset ?? body.length;
-      const parentStart = astParent?.position?.start?.offset ?? body.length;
-      const emptyIdx = blocks.length;
+    // Crepe appends a caret paragraph after a final non-paragraph, non-heading node.
+    const last = pmChildren.at(-1);
+    const beforeLast = pmChildren.at(-2)?.node.type.name;
+    const trailing = astParent === null && pmChildren.length === astChildren.length + 1 &&
+      last && isEmptyParagraphPm(last.node) && beforeLast && !['paragraph', 'heading'].includes(beforeLast)
+      ? pmChildren.pop() : undefined;
+
+    function appendEmptyParagraph(child: (typeof pmChildren)[number], start: number, end: number): void {
+      childBlocks.push(blocks.length);
       blocks.push({
-        rawStart: prefixLen + parentStart,
-        rawEnd: prefixLen + parentEnd,
-        richPos: pmChildren[0].pos,
-        richEnd: pmChildren[0].pos + pmChildren[0].node.nodeSize,
+        rawStart: prefixLen + start,
+        rawEnd: prefixLen + end,
+        richPos: child.pos,
+        richEnd: child.pos + child.node.nodeSize,
         isTextblock: true,
         canNodeSelect: false,
         contentSize: 0,
-        rawEmptyOffset: prefixLen + parentEnd,
+        rawEmptyOffset: prefixLen + end,
         segments: [],
       });
-      childBlocks.push(emptyIdx);
+    }
+
+    // Empty list items and empty documents have a synthetic paragraph too.
+    if (astChildren.length === 0 && pmChildren.length === 1 && isEmptyParagraphPm(pmChildren[0].node)) {
+      const parentEnd = astParent?.position?.end?.offset ?? body.length;
+      const parentStart = astParent?.position?.start?.offset ?? body.length;
+      appendEmptyParagraph(pmChildren[0], parentStart, parentEnd);
       return childBlocks;
     }
 
-    const pairCount = Math.min(astChildren.length, pmChildren.length);
-    for (let i = 0; i < pairCount; i++) {
+    const sameCount = astChildren.length === pmChildren.length;
+    for (let i = 0; i < astChildren.length; i++) {
       const astChild = astChildren[i];
-      const { node: pmChild, pos: pmPos } = pmChildren[i];
-      const kind = nodePairCompatible(body, astChild, pmChild);
-
-      if (kind === 'degenerate') {
-        const idx = pushDegenerate(astChild, pmChild, pmPos);
-        if (idx !== -1) childBlocks.push(idx);
-        continue;
-      }
-
-      if (kind === 'textblock') {
-        const start = astChild.position?.start?.offset;
-        const end = astChild.position?.end?.offset;
-        if (start == null || end == null) continue;
-        const verified = verifyTextblockSegments(body, prefixLen, astChild, astParent, i === 0, pmChild);
-        const blockIndex = blocks.length;
-        blocks.push({
-          rawStart: prefixLen + start,
-          rawEnd: prefixLen + end,
-          richPos: pmPos,
-          richEnd: pmPos + pmChild.nodeSize,
-          isTextblock: true,
-          canNodeSelect: false,
-          contentSize: pmChild.content.size,
-          rawEmptyOffset: verified.exact ? verified.rawEmptyOffset : prefixLen + start,
-          segments: verified.exact ? verified.segments : null,
-        });
-        childBlocks.push(blockIndex);
-        continue;
-      }
-
-      if (kind === 'container') {
-        const start = astChild.position?.start?.offset;
-        const end = astChild.position?.end?.offset;
-        const nestedAstChildren = astChild.children ?? [];
-        // Keep mismatched containers intact at container granularity rather than crossing blocks.
-        const countMatches =
-          nestedAstChildren.length === pmChild.childCount ||
-          (astChild.type === 'listItem' && nestedAstChildren.length === 0 && pmChild.childCount === 1 && isEmptyParagraphPm(pmChild.child(0)));
-        if (!countMatches) {
-          const idx = pushDegenerate(astChild, pmChild, pmPos);
-          if (idx !== -1) childBlocks.push(idx);
+      const start = astChild.position?.start.offset;
+      const end = astChild.position?.end.offset;
+      const pm = pmChildren[i];
+      if (pm && start != null && end != null) {
+        const { node: pmChild, pos: pmPos } = pm;
+        const kind = nodePairCompatible(body, astChild, pmChild);
+        if (kind === 'degenerate') {
+          childBlocks.push(pushDegenerate(start, end, pmChild, pmPos));
           continue;
         }
-        const nestedIndices = alignChildren(nestedAstChildren, astChild, pmChild, pmPos + 1);
-        if (start != null && end != null && nestedIndices.length > 0) {
-          containers.push({
+        if (kind === 'container' && sameCount) {
+          const nestedIndices = alignChildren(astChild.children ?? [], astChild, pmChild, pmPos + 1);
+          if (nestedIndices.length > 0) {
+            containers.push({
+              rawStart: prefixLen + start,
+              rawEnd: prefixLen + end,
+              richPos: pmPos,
+              richEnd: pmPos + pmChild.nodeSize,
+              childBlockIndices: nestedIndices,
+            });
+            childBlocks.push(...nestedIndices);
+            continue;
+          }
+        }
+        const verified = kind === 'textblock' && verifyTextblockSegments(body, prefixLen, astChild, astParent, i === 0, pmChild);
+        if (verified && verified.exact) {
+          childBlocks.push(blocks.length);
+          blocks.push({
             rawStart: prefixLen + start,
             rawEnd: prefixLen + end,
             richPos: pmPos,
             richEnd: pmPos + pmChild.nodeSize,
-            childBlockIndices: nestedIndices,
+            isTextblock: true,
+            canNodeSelect: false,
+            contentSize: pmChild.content.size,
+            rawEmptyOffset: verified.rawEmptyOffset,
+            segments: verified.segments,
           });
+          continue;
         }
-        childBlocks.push(...nestedIndices);
-        continue;
       }
 
-      // Stop walking further siblings once a structural mismatch appears.
-      if (astParent !== null) {
-        const idx = pushDegenerate(astParent, pmParent, Math.max(0, pmContentStart - 1));
-        if (idx !== -1) childBlocks.push(idx);
+      // Different sibling counts leave later ordinals ambiguous after a mismatch.
+      const unverifiedEnd = sameCount ? end : astChildren.at(-1)?.position?.end.offset;
+      if (start != null && unverifiedEnd != null) {
+        unverifiedRanges.push({ rawStart: prefixLen + start, rawEnd: prefixLen + unverifiedEnd });
       }
-      break;
+      if (!sameCount) break;
     }
 
+    if (trailing) appendEmptyParagraph(trailing, body.length, body.length);
     return childBlocks;
   }
 
   alignChildren(astRoot.children ?? [], null, richDoc, 0);
-  return { prefixLen, blocks, containers };
+  return { prefixLen, blocks, containers, unverifiedRanges };
 }
 
 function findDeepestRichBlock(alignment: DocumentAlignment, richPos: number): AlignedBlock | null {
   let match: AlignedBlock | null = null;
   for (const block of alignment.blocks) {
-    if (richPos >= block.richPos && richPos <= block.richEnd) {
+    if (richPos >= block.richPos && richPos < block.richEnd) {
       if (!match || block.richPos >= match.richPos) match = block;
     }
   }
   return match;
+}
+
+function previousAlignedBlock(alignment: DocumentAlignment, end: 'rawEnd' | 'richEnd', offset: number): AlignedBlock | undefined {
+  for (let i = alignment.blocks.length - 1; i >= 0; i--) {
+    const block = alignment.blocks[i];
+    if (block[end] <= offset) return block;
+  }
 }
 
 /** Maps the head of a Rich ProseMirror selection to an exact raw Markdown character offset. */
@@ -483,13 +500,11 @@ export function mapRichSelectionToRawOffset(alignment: DocumentAlignment, rawLen
     if (enclosing) return clampRaw(enclosing.rawStart);
   }
 
-  const head = selection.head;
+  const head = selection instanceof NodeSelection ? selection.from : selection.head;
   const block = findDeepestRichBlock(alignment, head);
   if (!block) {
-    for (const container of alignment.containers) {
-      if (head >= container.richPos && head <= container.richEnd) return clampRaw(container.rawStart);
-    }
-    return clampRaw(alignment.prefixLen);
+    const previous = previousAlignedBlock(alignment, 'richEnd', head);
+    return clampRaw(previous?.rawEnd ?? alignment.prefixLen);
   }
 
   if (!block.segments || !block.isTextblock) {
@@ -574,6 +589,13 @@ function createDegenerateBlockSelection(richDoc: PMNode, block: AlignedBlock): S
   return Selection.near(richDoc.resolve(block.richPos), 1);
 }
 
+function selectBlockEnd(richDoc: PMNode, block: AlignedBlock): Selection {
+  if (block.isTextblock) return TextSelection.create(richDoc, block.richPos + 1 + block.contentSize);
+  const end = richDoc.resolve(block.richEnd - 1);
+  const inside = Selection.findFrom(end, -1, true);
+  return inside && inside.from >= block.richPos ? inside : createDegenerateBlockSelection(richDoc, block);
+}
+
 /** Maps a raw Markdown character offset to a Rich ProseMirror selection, falling back safely to block starts. */
 export function mapRawOffsetToRichSelection(
   alignment: DocumentAlignment,
@@ -585,6 +607,10 @@ export function mapRawOffsetToRichSelection(
 
   const blockIndex = findDeepestRawBlockIndex(alignment, rawOffset);
   if (blockIndex === -1) {
+    if (alignment.unverifiedRanges.some(range => rawOffset >= range.rawStart && rawOffset <= range.rawEnd)) {
+      const previous = previousAlignedBlock(alignment, 'rawEnd', rawOffset);
+      return previous ? selectBlockEnd(richDoc, previous) : Selection.atStart(richDoc);
+    }
     // Check if inside a container blank line before picking next or last block.
     for (let c = alignment.containers.length - 1; c >= 0; c--) {
       const container = alignment.containers[c];
@@ -603,11 +629,7 @@ export function mapRawOffsetToRichSelection(
       return block.isTextblock ? TextSelection.create(richDoc, block.richPos + 1) : createDegenerateBlockSelection(richDoc, block);
     }
 
-    const last = alignment.blocks[alignment.blocks.length - 1];
-    if (last.isTextblock) {
-      return TextSelection.create(richDoc, last.richPos + 1 + last.contentSize);
-    }
-    return createDegenerateBlockSelection(richDoc, last);
+    return selectBlockEnd(richDoc, alignment.blocks[alignment.blocks.length - 1]);
   }
 
   const block = alignment.blocks[blockIndex];
@@ -683,7 +705,7 @@ function measureRichBlockBox(view: PMView, block: AlignedBlock): { top: number; 
 function collectAstBlockRanges(raw: string): { rawStart: number; rawEnd: number }[] {
   const { prefix, body } = splitFrontmatter(raw);
   const prefixLen = prefix.length;
-  const astRoot = parseMarkdownAst(body) as AstNodeLike;
+  const astRoot = editableAst(body);
   const ranges: { rawStart: number; rawEnd: number }[] = [];
 
   const visit = (node: AstNodeLike) => {

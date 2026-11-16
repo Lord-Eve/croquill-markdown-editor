@@ -149,7 +149,6 @@ export class OutlineController {
   private collapsedKeys = new Set<string>();
   private targetActiveIndex = -1;
   private visibleActiveIndex = -1;
-  private lastRevealedVisible = -1;
   private pinnedIndex: number | null = null;
   private programmaticScrolling = false;
   private jumpStartScrollTop = 0;
@@ -158,6 +157,7 @@ export class OutlineController {
   private jumpSettledScrollTop = 0;
   private jumpWatchRaf = 0;
   private syncRaf = 0;
+  private revealPending = false;
   private destroyed = false;
 
   private readonly onUserScrollStart = () => {
@@ -198,7 +198,6 @@ export class OutlineController {
     this.pinnedIndex = null;
     this.targetActiveIndex = -1;
     this.visibleActiveIndex = -1;
-    this.lastRevealedVisible = -1;
     this.stopJumpWatch();
   }
 
@@ -284,17 +283,19 @@ export class OutlineController {
   /** Schedules a single rAF-throttled follow sync unless mid programmatic click-scroll. */
   scheduleSync(revealIfHidden = false): void {
     if (this.destroyed) return;
-    if (this.programmaticScrolling) return;
-    if (revealIfHidden) this.lastRevealedVisible = -1;
+    if (revealIfHidden) this.revealPending = true;
+    if (this.programmaticScrolling && !this.revealPending) return;
     if (this.syncRaf) return;
     this.syncRaf = requestAnimationFrame(() => {
       this.syncRaf = 0;
-      if (!this.destroyed) this.syncNow(true);
+      const reveal = this.revealPending;
+      this.revealPending = false;
+      if (!this.destroyed) this.syncNow(true, reveal);
     });
   }
 
   /** Synchronizes highlight immediately against current viewport or active pin. */
-  syncNow(allowScrollIntoView = true): void {
+  syncNow(allowScrollIntoView = true, revealCurrent = false): void {
     if (!this.headings.length) {
       this.targetActiveIndex = -1;
       this.applyVisibleHighlight(-1, false);
@@ -306,11 +307,14 @@ export class OutlineController {
     } else if (!this.programmaticScrolling) {
       const vpRect = this.options.scrollContainer.getBoundingClientRect();
       const boxes = this.options.measureBoxes();
-      this.targetActiveIndex = pickVisibleHeadingIndex(boxes, vpRect.top, vpRect.bottom);
+      // The published outline can be one edit behind the live ProseMirror headings.
+      this.targetActiveIndex = boxes.length === this.headings.length
+        ? pickVisibleHeadingIndex(boxes, vpRect.top, vpRect.bottom)
+        : -1;
     }
 
     const visible = visibleOutlineTarget(this.meta, this.collapsedKeys, this.targetActiveIndex);
-    this.applyVisibleHighlight(visible, allowScrollIntoView);
+    this.applyVisibleHighlight(visible, allowScrollIntoView, revealCurrent);
   }
 
   destroy(): void {
@@ -357,7 +361,7 @@ export class OutlineController {
     }
   }
 
-  private applyVisibleHighlight(nextVisible: number, allowScrollIntoView: boolean): void {
+  private applyVisibleHighlight(nextVisible: number, allowScrollIntoView: boolean, revealCurrent = false): void {
     const prevVisible = this.visibleActiveIndex;
     this.visibleActiveIndex = nextVisible;
     for (let i = 0; i < this.items.length; i++) {
@@ -371,14 +375,10 @@ export class OutlineController {
     if (
       allowScrollIntoView &&
       nextVisible !== -1 &&
-      nextVisible !== prevVisible &&
-      nextVisible !== this.lastRevealedVisible &&
+      (revealCurrent || nextVisible !== prevVisible) &&
       this.options.isOutlineVisible()
     ) {
       this.revealOutlineItem(this.items[nextVisible]);
-      this.lastRevealedVisible = nextVisible;
-    } else if (nextVisible !== prevVisible && this.options.isOutlineVisible()) {
-      this.lastRevealedVisible = nextVisible;
     }
   }
 

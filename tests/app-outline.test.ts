@@ -235,6 +235,90 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     expect(Math.abs(afterRebuild.scrollTop - 120)).toBeLessThanOrEqual(2);
   });
 
+  it.each(['files tab', 'collapsed sidebar'])('reveals the already-active item when returning from the %s', async hiddenBy => {
+    const doc = Array.from({ length: 40 }, (_, i) => `# 标题 ${i + 1}\n\n${filler('正文', 6)}`).join('\n\n');
+    await open(doc);
+    const sidebarButton = page.locator('[data-action="sidebar"].icon-button');
+    if (hiddenBy === 'files tab') await page.locator('#files-tab').click();
+    else await sidebarButton.click();
+
+    await page.evaluate(() => {
+      const editor = document.getElementById('editor-scroll')!;
+      editor.scrollTop = editor.scrollHeight;
+    });
+    await page.waitForFunction(() => document.querySelector('#outline .outline-item.active')?.textContent === '标题 40');
+
+    if (hiddenBy === 'files tab') await page.locator('#outline-tab').click();
+    else await sidebarButton.click();
+    await settleFrames();
+    expect(await page.evaluate(() => {
+      const outline = document.getElementById('outline')!;
+      const item = outline.querySelector('.outline-item.active')!;
+      const bounds = outline.getBoundingClientRect();
+      const row = item.getBoundingClientRect();
+      return { text: item.textContent, inView: row.top >= bounds.top - 1 && row.bottom <= bounds.bottom + 1 };
+    })).toEqual({ text: '标题 40', inView: true });
+  });
+
+  it('follows input and scroll frames without serializing before idle or during composition', async () => {
+    await page.clock.install();
+    await open(Array.from({ length: 40 }, (_, i) => `# 标题 ${i + 1}\n\n正文`).join('\n\n'));
+    await focusApp(page, 'rich');
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + 1000));
+    await page.evaluate(() => {
+      const app = (window as any).fileApp;
+      const serialize = app.surface.serializeRich.bind(app.surface);
+      app.serializations = 0;
+      app.surface.serializeRich = () => { app.serializations++; return serialize(); };
+      app.insertInHeading = (text: string) => {
+        const view = app.surface.richView();
+        view.dispatch(view.state.tr.insertText(text, view.state.doc.firstChild.nodeSize - 1));
+      };
+    });
+    const serializations = () => page.evaluate(() => (window as any).fileApp.serializations as number);
+    const firstHeading = page.locator('#outline .outline-item').first();
+
+    for (const char of 'abcdefghij') {
+      await page.evaluate(text => (window as any).fileApp.insertInHeading(text), char);
+      await page.clock.runFor(30);
+    }
+    expect(await serializations()).toBe(0);
+    expect(await firstHeading.textContent()).toBe('标题 1');
+
+    await page.evaluate(() => {
+      const app = (window as any).fileApp;
+      app.insertInHeading('k');
+      const editor = document.getElementById('editor-scroll')!;
+      editor.scrollTop = editor.scrollHeight;
+      editor.dispatchEvent(new Event('scroll'));
+    });
+    await page.clock.runFor(30);
+    expect(await serializations()).toBe(0);
+    expect(await page.locator('#outline .outline-item.active').count()).toBe(1);
+
+    await page.clock.runFor(600);
+    expect(await serializations()).toBe(1);
+    expect(await firstHeading.textContent()).toBe('标题 1abcdefghijk');
+
+    await page.evaluate(() => {
+      const app = (window as any).fileApp;
+      app.serializations = 0;
+      app.surface.richView().dom.dispatchEvent(new CompositionEvent('compositionstart', { data: '字', bubbles: true }));
+      app.insertInHeading('组词');
+    });
+    await page.clock.runFor(600);
+    expect(await page.evaluate(() => (window as any).fileApp.surface.richView().composing)).toBe(true);
+    expect(await serializations()).toBe(0);
+    expect(await firstHeading.textContent()).toBe('标题 1abcdefghijk');
+
+    await page.evaluate(() => (window as any).fileApp.surface.richView().dom.dispatchEvent(
+      new CompositionEvent('compositionend', { data: '组词', bubbles: true }),
+    ));
+    await page.clock.runFor(600);
+    expect(await serializations()).toBe(1);
+    expect(await firstHeading.textContent()).toBe('标题 1abcdefghijk组词');
+  });
+
   it('folds descendants cleanly, keeps independent child states, blocks jump auto-expand, and uses nearest visible ancestor', async () => {
     const doc = [
       '# 章',

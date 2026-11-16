@@ -191,4 +191,31 @@ describe('mode-position deterministic alignment unit tests', () => {
     const rangeSel = TextSelection.create(richDoc, afterBlock.richPos + 1 + 4, afterBlock.richPos + 1 + 1);
     expect(mapRichSelectionToRawOffset(alignment, raw.length, rangeSel)).toBe(afterStart + 1);
   });
+
+  it('rejects unverified raw and text pairs and keeps verified neighbors usable', () => {
+    const before = '前段正文';
+    const raw = `${before}\n\n<div>\n\n原文\n\n</div>\n\n> 中段正文\n\n后段正文`;
+    const first = testSchema.node('paragraph', null, [testSchema.text(before)]);
+    const opaque = testSchema.node('croquill_raw_block', { value: '<div>\n\n别的原文\n\n</div>' });
+    const mismatch = testSchema.node('blockquote', null, [
+      testSchema.node('paragraph', null, [testSchema.text('未通过校验')]),
+    ]);
+    const last = testSchema.node('paragraph', null, [testSchema.text('后段正文')]);
+    const richDoc = testSchema.node('doc', null, [first, opaque, mismatch, last]);
+    const alignment = buildDocumentAlignment(raw, richDoc);
+
+    const rawSelection = NodeSelection.create(richDoc, first.nodeSize);
+    const textSelection = TextSelection.create(richDoc, first.nodeSize + opaque.nodeSize + 3);
+    for (const selection of [rawSelection, textSelection]) {
+      expect(mapRichSelectionToRawOffset(alignment, raw.length, selection)).toBe(before.length);
+    }
+    for (const offset of [raw.indexOf('原文'), raw.indexOf('> 中段'), raw.indexOf('中段') + 1]) {
+      expect(mapRawOffsetToRichSelection(alignment, richDoc, offset).head).toBe(first.nodeSize - 1);
+    }
+
+    const lastOffset = raw.indexOf('后段正文') + 1;
+    const lastSelection = mapRawOffsetToRichSelection(alignment, richDoc, lastOffset);
+    expect(lastSelection.head).toBe(first.nodeSize + opaque.nodeSize + mismatch.nodeSize + 2);
+    expect(mapRichSelectionToRawOffset(alignment, raw.length, lastSelection)).toBe(lastOffset);
+  });
 });

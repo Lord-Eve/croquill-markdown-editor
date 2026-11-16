@@ -422,7 +422,8 @@ export class MarkdownSurface {
   }
 
   getOutline(): MarkdownOutlineItem[] {
-    const text = this.getMarkdown();
+    // Outline labels follow the last published source, including after idle serialization.
+    const text = this.raw;
     if (this.outlineCache?.raw !== text) {
       this.outlineCache = { raw: text, items: markdownOutline(text) };
     }
@@ -449,11 +450,10 @@ export class MarkdownSurface {
 
   /** Measures vertical viewport bounds for every outline heading in the active editor. */
   getOutlineHeadingBoxes(): (OutlineHeadingBox | null)[] {
-    const outline = this.getOutline();
     if (this.currentMode === 'source' && this.source) {
       const cm = this.source;
       const lines = cm.state.doc.lines;
-      return outline.map(heading => {
+      return this.getOutline().map(heading => {
         const line = cm.state.doc.line(Math.max(1, Math.min(lines, heading.line)));
         const block = cm.lineBlockAt(line.from);
         return { top: cm.documentTop + block.top, bottom: cm.documentTop + block.bottom };
