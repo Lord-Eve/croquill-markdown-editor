@@ -155,7 +155,35 @@ export function hasEquivalentMarkdownStructure(before: string, after: string): b
     JSON.stringify(semanticTree(markdownParser.parse(b.body), b.body));
 }
 
-export function markdownOutline(markdown: string): { level: number; text: string; line: number }[] {
+/** A top-level Markdown heading extracted for the document outline. */
+export interface MarkdownOutlineItem {
+  level: number;
+  text: string;
+  line: number;
+}
+
+/** Extracts visible plain text from a Remark AST node tree. */
+export function astNodeVisibleText(node: unknown): string {
+  const item = node as { value?: string; alt?: string; children?: unknown[] };
+  return item.value ?? item.alt ?? item.children?.map(astNodeVisibleText).join('') ?? '';
+}
+
+/** Parses Markdown using Croquill's shared Remark parser. */
+export function parseMarkdownAst(markdown: string) {
+  return markdownParser.parse(markdown);
+}
+
+/** Counts direct top-level heading nodes in a Markdown fragment (e.g. a protected raw block). */
+export function countTopLevelAstHeadings(markdown: string): number {
+  const ast = markdownParser.parse(markdown);
+  let count = 0;
+  for (const child of ast.children) {
+    if (child.type === 'heading') count += 1;
+  }
+  return count;
+}
+
+export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
   const rows = markdown.split('\n');
   const first = rows[0]?.replace(/^\uFEFF/, '').trim();
   if (first === '---' || first === '+++') {
@@ -164,14 +192,10 @@ export function markdownOutline(markdown: string): { level: number; text: string
     for (let index = 0; index < length; index++) rows[index] = '';
   }
   const ast = markdownParser.parse(rows.join('\n'));
-  const headings: { level: number; text: string; line: number }[] = [];
-  function textOf(node: unknown): string {
-    const item = node as { value?: string; alt?: string; children?: unknown[] };
-    return item.value ?? item.alt ?? item.children?.map(textOf).join('') ?? '';
-  }
+  const headings: MarkdownOutlineItem[] = [];
   for (const child of ast.children) {
     if (child.type === 'heading') {
-      headings.push({ level: child.depth, text: textOf(child), line: child.position?.start.line ?? 1 });
+      headings.push({ level: child.depth, text: astNodeVisibleText(child), line: child.position?.start.line ?? 1 });
     }
   }
   return headings;

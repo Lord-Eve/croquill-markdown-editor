@@ -41,7 +41,7 @@ Croquill 提供**安装版**和**便携版**两种方式，均支持 Windows 10/
 
 ### 设为默认打开方式
 
-- **未曾手动固定过其他程序时**：安装程序会把当前用户的 `.md` 与 `.markdown` 默认关联设为 `Croquill.Markdown`。如果系统里尚未通过 `UserChoice` 固定过别的软件，安装后直接打开或双击 `.md` / `.markdown` 文件就会由 Croquill 启动。
+- **未曾手动固定过其他程序时**：如果系统此前没有为 `.md` 或 `.markdown` 固定过其他默认打开方式，安装后直接打开或双击 `.md` / `.markdown` 文件就会由 Croquill 启动。
 - **之前已选过其他默认软件时**：Windows 会优先保留用户已选定的默认应用。如需切换为 Croquill，请右键任意 `.md`（或 `.markdown`）文件 → **打开方式** → **选择其他应用** → 找到 **Croquill** 并选择**始终**；也可以在 Windows **设置 → 应用 → 默认应用** 中按 `.md` / `.markdown` 扩展名指定 Croquill。
 
 ### 未签名时的安全提示

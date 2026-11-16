@@ -13,7 +13,7 @@
 | 块语法与当前块 | [Quick Start](https://support.typora.io/Quick-Start/) 说明块样式输入时或 Enter 到下一段时形成，渲染后隐藏块标记 | 当前激活块有 class 装饰，标题左侧显示不可编辑的 `#` 提示；它不是可直接编辑的原始 Markdown 源码 | 输入标题、引用、任务项后 Enter；返回该块、Home/End、Backspace；对照官方能否直接更改标记与块类型 |
 | 普通编辑与焦点模式 | [Focus / Typewriter](https://support.typora.io/Focus-and-Typewriter-Mode/) 将淡化非当前块的 Focus Mode 定义为可选视图功能；[快捷键](https://support.typora.io/Shortcut-Keys/) 为 F8 | 当前块提示已实现；尚无 F8 焦点模式与非当前内容淡化 | 普通模式先验收光标与显隐；单独开启官方 F8，记录淡化范围，不能将“当前块编辑”等同于焦点模式 |
 | 打字机模式 | [Focus / Typewriter](https://support.typora.io/Focus-and-Typewriter-Mode/) 说明打字时将光标保持在窗口中部；[快捷键](https://support.typora.io/Shortcut-Keys/) 为 F9 | 当前没有实现打字机模式 | 单独打开 F9 观察键入与鼠标跳转滚动；属于后续差距，不纳入首版已完成声明 |
-| 源码切换 | [快捷键](https://support.typora.io/Shortcut-Keys/) 的 Windows 源码切换为 Ctrl+/；[Typora 1.13](https://support.typora.io/What's-New-1.13/) 说明切换保留滚动位置 | `setMode()` 同步正文且保留未编辑原文；本应用已采用 Ctrl+/，兼容 Ctrl+Shift+M；跨模式精确光标映射、滚动位置与统一撤销链尚未实现 | 连续切换时原文、dirty、光标、选区、滚动分别记录；中间两种模式各编辑，再测试切回与撤销。内容同步的技术验证不代替官方客户端对照 |
+| 源码切换 | [快捷键](https://support.typora.io/Shortcut-Keys/) 的 Windows 源码切换为 Ctrl+/；[Typora 1.13](https://support.typora.io/What's-New-1.13/) 说明切换保留滚动位置 | 已实现（2026-11-16）：`Ctrl+/`（兼容 `Ctrl+Shift+M`）双向切换保留正文字符偏移与相对滚动位置（误差 ≤ 24 CSS px），光标在视口外不拉回并对齐外露首块，复杂退化块回到该块自身起点；无新增撤销步与未保存标记，保留各自撤销链，真实输入法下组词阻断与桌面手感见末节 | 连续切换时原文、dirty、光标、选区、滚动分别记录；中间两种模式各编辑，再测试切回与撤销。内容同步的技术验证不代替官方客户端对照 |
 | 有序 / 无序与嵌套列表 | [官网 Lists](https://typora.io/) 明确 Tab / Shift+Tab 改层级；[Markdown Reference](https://support.typora.io/Markdown-Reference/) 描述输入列表标记形成列表 | Crepe 列表输入规则与 `sinkListItem/liftListItem` 命令已接入；源码侧 Tab 当前是普通缩进 | 两级与三级列表分别 Tab / Shift+Tab，空项 Enter 退出，Backspace 合并；观察编号与光标是否自然 |
 | 任务列表 | [Task List](https://support.typora.io/Task-List/) 说明 `- [ ]` / `- [x]` 渲染任务项，并可点击复选框改变状态 | GFM 任务项模型与菜单命令已接入 | 点击切换后保存、重开，再撤销；检查普通列表与任务列表互转及嵌套 |
 | 表格编辑 | [Table Editing](https://support.typora.io/Table-Editing/) 提供源码输入、菜单插入、Ctrl+Enter 新行、Tab 到末格加行及行列操作 | 当前接入 Crepe/GFM 表格与 3×3 插入命令；未实现全部 Typora 菜单与表格行为等价承诺 | Tab/Shift+Tab、末格 Tab、Ctrl+Enter、中文选区、行列增删分别对照；表格不应因编辑丢失内容 |
@@ -21,7 +21,7 @@
 | 图片相对路径 | [Images / Relative Path](https://support.typora.io/Images/) 以当前 `.md` 的目录为默认解析基准，包含 `../` 路径 | 当前通过 Rust `read_local_image(documentPath, src)` 解析并显示；保留 Markdown 中的路径文字 | 同目录、子目录、父目录、中文空格文件名各一张；保存重开，再另存到其他目录，记录路径含义是否变化 |
 | 图片编辑与插入 | [Markdown Reference / Images](https://support.typora.io/Markdown-Reference/) 说明点击图片编辑 Markdown；[Images](https://support.typora.io/Images/) 描述本地选择、拖放、剪贴板等方式 | 当前 Crepe 图片表面可编辑地址；已修正图片 alt/title 的 Markdown 映射，避免框架 resize 元数据覆盖替代文本。新插入的本地图片经 Rust 复制到“文档名.assets”，粘贴、菜单与拖放共用流程；网络 URL 与已有 data URL 保留，桌面结果见末节 | 点击现有图片修改路径与 alt；分别验证文件选择和粘贴。拖放、截图粘贴、文件自动拷贝如未测，明确标记 |
 | 撤销 / 重做 | 官方 [Typora 1.6](https://support.typora.io/What's-New-1.6/) 明确自动应用代码语言可撤销；[稳定版记录](https://typora.io/releases/stable.html) 持续记录输入撤销粒度修复。公开快捷键页未给出撤销分组细则 | 富文本采用 ProseMirror history，源码采用 CodeMirror history；该模式文档未变时保留历史，另一模式编辑后重建目标模式历史，未实现共享撤销链 | 技术验证已通过格式变更及程序化中文的撤销重做；真实中文输入分组与官方客户端对照仍待观察 |
-| 大纲 | [Outline](https://support.typora.io/Outline/) 按标题层级展示、点击定位，并在阅读或编辑时标记当前章节 | 当前从 Markdown AST 生成大纲，点击滚动与点选高亮；尚未跟随正文滚动自动更新活跃章节，也未实现各级分支折叠 | 大纲开关、中文标题定位、层级缩进；滚动正文观察活跃项；长文中点击目标应可靠 |
+| 大纲 | [Outline](https://support.typora.io/Outline/) 按标题层级展示、点击定位，并在阅读或编辑时标记当前章节 | 已实现（2026-11-16）：两种模式均支持视口跟随高亮（外露顶部 > 上方最近 > 首题前无高亮、`aria-current="true"`）、点击底部平滑锁定、大纲自滚动不抢焦点、全层级分支折叠/展开与同名独立记忆，以及顶层标题与原文保护块索引对齐；真机桌面长文档观察见末节 | 大纲开关、中文标题定位、层级缩进；滚动正文观察活跃项；长文中点击目标应可靠 |
 | 外观与排版 | [官网](https://typora.io/) 展示简洁写作表面；[About Themes](https://support.typora.io/About-Themes/) 说明主题由 CSS 控制；本机官方主题 CSS 参数见下表 | 当前实现浅色 / 深色、居中单栏、字号调整；首版按用户初始范围固定正文最大宽度 860px。与官方 GitHub 大屏扩宽、Night 914px 的宽度规则存在已知差异 | 同一窗口尺寸、同一 Markdown、官方 GitHub/Night 主题分别截图；对照正文实际宽度、边距、行距、标题、引用、代码、表格与底栏密度 |
 
 ## 本机官方客户端观察记录
@@ -413,3 +413,12 @@ Windows 11，新版 Croquill 打开 Codex 输出目录 `dragdrop-acceptance/拖�
 | 源码模式下的侧栏 | Typora 进入源码模式后侧栏整个隐藏；切回后大纲暂时没有高亮项，滚动后恢复。Croquill 源码模式保留侧栏，不照搬这一点 |
 
 一次不一致的记录：第一次试验时，点击正文后直接切换，源码光标落在另一段末尾、画面在文档靠前处。当时没有先截图确认点击落在了哪一行，原因未查明；第二次先确认光标位置再切换，结果如上表。
+
+### Croquill 对应实现与自动化自测（2026-11-16）
+
+依据上表 Typora 实测与施工单 04 规则完成 Croquill 实现，并在 Chromium（Playwright 真实应用 + Vitest 单元测试）自动化通过：
+
+1. **大纲跟随规则**：采用与 Typora 一致的“视口内露出最靠上标题优先”规则；无标题与视口重叠时高亮视口上方最近一条（Croquill 补充规则）；高于首条标题且无交集时无高亮。两种模式共用顶层标题对齐模型，点击平滑跳转与底部点击保持锁定到再次滚动或编辑。
+2. **大纲折叠**：采用项目所有者确认的“始终可折叠”设计，带子级项左置独立三角按钮（`aria-expanded` / 中文 `aria-label` / 键盘切换），跳级子标题同属最近更浅祖先，展开时保持子分支既有折叠状态，按文档记忆并区分同名标题；切换文档或 `Ctrl+N` 清空；隐藏活跃标题高亮退回最近可见祖先。
+3. **切换源码模式定位（`Ctrl+/`）**：支持段落、标题、列表、任务列表与引用多行段落中（含行内 Markdown 标记符号之间与中文字符）的双向字符偏移对齐、软硬换行与 `<br />`，支持 YAML frontmatter / UTF-8 BOM / CRLF 无字节改动；退化块（表格、代码块、公式块、HTML 块、原文保护块、图片块、目录、脚注定义）稳妥落回该块自身起点（并用选区保护插件防止 Chromium DOM Selection 回弹）；光标在视口内按相对位置 ≤ 24 CSS px 对齐，光标在视口外时不强行回拉并对齐原视口顶部外露块。
+4. **未实测项**：尚未在官方 Typora 旁边打开自建 `croquill.exe` 做真人并排对照与真实拼音输入法长篇体感验证，需项目所有者使用 `examples/outline-position.md` 进行桌面手动验收。

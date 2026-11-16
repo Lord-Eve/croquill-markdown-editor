@@ -12,10 +12,16 @@
 param(
     [Parameter(Mandatory = $true)][string]$InstallerPath,
     [Parameter(Mandatory = $true)][string]$OutDir,
-    [string]$ExpectedVersion = ""
+    [string]$ExpectedVersion = "",
+    [switch]$AllowLocalRun
 )
 
 $ErrorActionPreference = 'Continue'
+
+if ($env:CI -ne 'true' -and (-not $AllowLocalRun)) {
+    [Console]::Error.WriteLine('Refusing to run installer-acceptance.ps1 locally without CI=true or -AllowLocalRun (the harness modifies HKCU file associations and installs/uninstalls Croquill).')
+    exit 1
+}
 
 $Dash = [string][char]0x2014
 $Dot  = [string][char]0x25CF
@@ -86,8 +92,10 @@ $RegPathProgId      = 'Software\Classes\Croquill.Markdown'
 $RegPathUninstall   = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Croquill'
 $RegPathFileExtsMd  = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md'
 $RegPathFileExtsMdn = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.markdown'
-$RegPathUserChoice  = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice'
-$RegPathMdnChoice   = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.markdown\UserChoice'
+$RegPathUserChoice       = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoice'
+$RegPathUserChoiceLatest = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.md\UserChoiceLatest'
+$RegPathMdnChoice        = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.markdown\UserChoice'
+$RegPathMdnChoiceLatest  = 'Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.markdown\UserChoiceLatest'
 $RegPathManuProduct = 'Software\Lord-Eve\Croquill'
 
 $PriorProgId = 'CroquillTest.Prior'
@@ -518,7 +526,9 @@ try {
     $PreMdSnapshot = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMd
     $PreMarkdownSnapshot = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMarkdown
     $preUserChoice = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUserChoice
+    $preUserChoiceLatest = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathUserChoiceLatest
     $preMdnChoice = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMdnChoice
+    $preMdnChoiceLatest = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::CurrentUser) -SubKeyPath $RegPathMdnChoiceLatest
     $preHklmMd = Get-RegKeySnapshot -Root ([Microsoft.Win32.Registry]::LocalMachine) -SubKeyPath $RegPathMd
     $PreRegistrySaved = $true
 
@@ -526,14 +536,20 @@ try {
         hkcuMd = $PreMdSnapshot
         hkcuMarkdown = $PreMarkdownSnapshot
         hkcuMdUserChoice = $preUserChoice
+        hkcuMdUserChoiceLatest = $preUserChoiceLatest
         hkcuMarkdownUserChoice = $preMdnChoice
+        hkcuMarkdownUserChoiceLatest = $preMdnChoiceLatest
         hklmMd = $preHklmMd
     }
     $userChoiceExists = [bool]$preUserChoice.exists
+    $userChoiceLatestExists = [bool]$preUserChoiceLatest.exists
+    $mdHasUserChoice = $userChoiceExists -or $userChoiceLatestExists
+    $mdnHasUserChoice = [bool]$preMdnChoice.exists -or [bool]$preMdnChoiceLatest.exists
     Add-Result 'pre-registry-record' 'PASS' (
         "Pre-install state: HKCU\.md exists=$($PreMdSnapshot.exists) default=$($PreMdSnapshot.defaultValue); " +
         "HKCU\.markdown exists=$($PreMarkdownSnapshot.exists) default=$($PreMarkdownSnapshot.defaultValue); " +
-        "FileExts\.md\UserChoice exists=$userChoiceExists"
+        "FileExts\.md\UserChoice=$userChoiceExists UserChoiceLatest=$userChoiceLatestExists; " +
+        "FileExts\.markdown UserChoice/Latest=$mdnHasUserChoice"
     )
     Save-Screenshot '01-pre-install'
 
@@ -712,7 +728,7 @@ try {
     }
 
     # ---------------------------------------- 12. Open via Windows shell action
-    $shouldJudgeShellOpen = ($changedToCroquill -and (-not $userChoiceExists))
+    $shouldJudgeShellOpen = ($changedToCroquill -and (-not $mdHasUserChoice))
     Close-CroquillProcesses
     $beforeAllPids = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
     $beforeCroquillPids = @(Get-InstalledCroquillProcesses | ForEach-Object { $_.Id })
@@ -740,7 +756,7 @@ try {
         Save-Screenshot '06-open-shell'
         Close-CroquillProcesses
     } else {
-        $reason = if ($userChoiceExists) { "FileExts\.md\UserChoice already existed" } else { "HKCU\.md default was '$afterMdDefault' instead of 'Croquill.Markdown'" }
+        $reason = if ($mdHasUserChoice) { "FileExts\.md UserChoice=$userChoiceExists UserChoiceLatest=$userChoiceLatestExists already existed" } else { "HKCU\.md default was '$afterMdDefault' instead of 'Croquill.Markdown'" }
         $launchedDesc = ""
         if (-not [string]::IsNullOrEmpty($shellLaunchError)) {
             $launchedDesc = "Start-Process error: $shellLaunchError"
@@ -1003,6 +1019,8 @@ try {
                 Add-Result 'scenarioD-empty-string-preserved' 'FAIL' "dMdOk=$dMdOk ($dMdSum); dMdnOk=$dMdnOk ($dMdnSum)"
             }
         }
+    } else {
+        Add-Result 'scenarioD-empty-string-preserved' 'SKIP' "Skipped Scenario D because HKCU\.markdown already had pre-install default='$($PreMarkdownSnapshot.defaultValue)'."
     }
 
     $script:RegDump['scenarios'] = $script:ScenarioRegDumps
@@ -1077,8 +1095,9 @@ finally {
     [void]$lines.Add('```')
     ($lines -join "`r`n") | Set-Content -LiteralPath (Join-Path $OutDir 'report.md') -Encoding UTF8
 
+    $skipped = @($resultsArr | Where-Object { $_.status -eq 'SKIP' }).Count
     $failed = @($resultsArr | Where-Object { $_.status -eq 'FAIL' }).Count
-    Write-Host "Installer acceptance finished: $($resultsArr.Count) checks, $failed failed."
+    Write-Host "Installer acceptance finished: $($resultsArr.Count) checks, $skipped skipped, $failed failed."
     if ($failed -gt 0) { exit 1 }
     exit 0
 }
