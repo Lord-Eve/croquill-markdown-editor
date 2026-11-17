@@ -106,7 +106,7 @@ describe('find and replace through both production editing surfaces', () => {
     });
   }
 
-  it.each(['rich', 'source'])('replaces inside raw blocks and inline atoms using source without rebuilding spelling (%s)', async mode => {
+  it.each(['rich', 'source'])('replaces inside raw blocks and rendered inline HTML without rebuilding spelling (%s)', async mode => {
     const source = '# 标题\r\n\r\n前<span style="color:red">目标**原文**</span>后\r\n\r\n| 甲 | 乙 |\r\n| --- | :---: |\r\n| <kbd>目标\\|保留</kbd> | 不动<BR />行 |\r\n\r\n<div class="x">\r\n目标\r\n</div>\r\n';
     await load(source, mode); await page.keyboard.press('Control+h'); await query().fill('目标'); expect(await count()).toBe('1 / 3');
     if (mode === 'rich') {
@@ -115,7 +115,17 @@ describe('find and replace through both production editing surfaces', () => {
     }
     await replacement().fill('替换'); await command('all'); expect(await markdown()).toBe(source.split('目标').join('替换'));
     await page.keyboard.press('Control+z'); expect(await markdown()).toBe(source);
-    if (mode === 'rich') expect(await page.evaluate(() => (window as any).searchHarness.richRoot.querySelectorAll('[data-croquill-inline-raw]').length)).toBe(2);
+    if (mode === 'rich') {
+      const styled = await page.evaluate(() => {
+        const root = (window as any).searchHarness.richRoot as HTMLElement;
+        return {
+          span: [...root.querySelectorAll('span.md-html')].map(node => node.textContent).join(''),
+          key: [...root.querySelectorAll('kbd.md-html')].map(node => node.textContent).join(''),
+          fragments: root.querySelectorAll('[data-croquill-inline-raw]').length,
+        };
+      });
+      expect(styled).toEqual({ span: '目标**原文**', key: '目标\\|保留', fragments: 0 });
+    }
   });
 
   it.each(['rich', 'source'])('suppresses find updates and shortcuts throughout input composition (%s)', async mode => {

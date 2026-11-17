@@ -114,8 +114,8 @@ button:hover { background:var(--hover); }
 .milkdown .ProseMirror h3 { font-size:1.5em; line-height:1.43; }
 .milkdown .ProseMirror h4 { font-size:1.25em; }
 .milkdown .ProseMirror h5, .milkdown .ProseMirror h6 { font-size:1em; }
-.milkdown .ProseMirror a { color:var(--accent); text-decoration:none; }
-.milkdown .ProseMirror a:hover { text-decoration:underline; }
+.milkdown .ProseMirror :is(a, .md-html-link) { color:var(--accent); text-decoration:none; }
+.milkdown .ProseMirror :is(a, .md-html-link):hover { text-decoration:underline; }
 .milkdown .ProseMirror strong { font-weight:650; }
 .milkdown .ProseMirror blockquote { color:var(--quote); border-left:4px solid var(--border); padding:0 15px; margin:.8em 0; font-size:inherit; }
 .milkdown .ProseMirror ul, .milkdown .ProseMirror ol { padding-left:2em; margin:.8em 0; }

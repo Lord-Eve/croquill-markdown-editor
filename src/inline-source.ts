@@ -1,6 +1,9 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
+import { decodeEntity } from './character-references';
+import { inlineHtmlRanges } from './inline-html-ranges';
+import type { InlineHtmlElement } from './html-sanitize';
 
 /**
  * Inline Markdown stays in the rich document as its source text. `**加粗**` is seven
@@ -9,7 +12,7 @@ import remarkGfm from 'remark-gfm';
  * never changes the document, and the original spelling is saved character for character.
  * Design and measurements: docs/inline-source-spike.md.
  */
-export type InlineKind = 'strong' | 'em' | 'strike' | 'code' | 'highlight' | 'escape' | 'entity' | 'link' | 'autolink';
+export type InlineKind = 'strong' | 'em' | 'strike' | 'code' | 'highlight' | 'escape' | 'entity' | 'link' | 'autolink' | 'html';
 export interface InlineSpan {
   kind: InlineKind;
   /** The whole construct, markers included. */
@@ -25,6 +28,7 @@ export interface InlineSpan {
   title?: string;
   /** The character an entity stands for. */
   value?: string;
+  html?: InlineHtmlElement;
 }
 
 interface SourceNode {
@@ -46,20 +50,8 @@ const kinds: Record<string, InlineKind> = { strong: 'strong', emphasis: 'em', de
 const ESCAPE = /^\\[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/;
 const ENTITY = /^&(?:#[xX][\da-fA-F]{1,6}|#\d{1,7}|[A-Za-z][A-Za-z\d]{1,31});/;
 
-const entityParser = unified().use(remarkParse);
-const entities = new Map<string, string>();
-function decodeEntity(raw: string): string {
-  if (!entities.has(raw)) {
-    const paragraph = entityParser.parse(`a${raw}b`).children[0] as SourceNode | undefined;
-    const first = paragraph?.type === 'paragraph' ? paragraph.children?.[0] : undefined;
-    const text = first?.type === 'text' && paragraph!.children!.length === 1 ? first.value : undefined;
-    const inner = text && text.startsWith('a') && text.endsWith('b') ? text.slice(1, -1) : undefined;
-    entities.set(raw, inner !== undefined ? inner : raw);
-  }
-  return entities.get(raw)!;
-}
-
 const LINK_ENTITY_OR_BACKSLASH = new RegExp(`\\\\|${ENTITY.source.slice(1)}`, 'g');
+export const hasExternalLinkScheme = (url: string): boolean => /^(?:https?:\/\/|mailto:)/i.test(url);
 /** Escape backslashes and Markdown-decodable entities inside link destinations/titles so they roundtrip verbatim. */
 export function escapeLinkValue(value: string): string {
   return value.replace(LINK_ENTITY_OR_BACKSLASH, match =>
@@ -278,7 +270,28 @@ export function inlineSyntaxSpans(run: string, options?: { emptyLinks?: boolean 
       index++;
     }
   }
-  visit(parser.parse(GUARD + run) as unknown as SourceNode);
+  const source = GUARD + run, tree = parser.parse(source) as SourceNode;
+  visit(tree);
+  if (run.includes('<')) {
+    for (const child of tree.children || []) {
+      for (const range of inlineHtmlRanges(child, source, true) || []) {
+        const from = range.from - GUARD.length, to = range.to - GUARD.length;
+        if (range.element) {
+          spans.push({
+            kind: 'html', html: range.element, from, to,
+            innerFrom: range.innerFrom - GUARD.length, innerTo: range.innerTo - GUARD.length,
+            ...(range.element.tag === 'a' ? { href: range.element.href } : {}),
+          });
+        } else {
+          // Typed literal HTML stays plain until reopening. Its contents
+          // must not acquire Markdown decorations or active links meanwhile.
+          for (let index = spans.length - 1; index >= 0; index--) {
+            if (from <= spans[index].from && spans[index].to <= to) spans.splice(index, 1);
+          }
+        }
+      }
+    }
+  }
   spans.sort((a, b) => a.from - b.from || b.to - a.to);
   if (!options?.emptyLinks) {
     if (cache.size > 4000) cache.clear();

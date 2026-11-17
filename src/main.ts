@@ -14,6 +14,8 @@ import { sameDocumentPath } from './document-path';
 import { imageDestinations, rebaseImageSources } from './image-paths';
 import { installGlobalShortcuts } from './shortcuts';
 import { droppedDocumentPath } from './dropped-document';
+import { markdownWithoutRenderedHtmlTags } from './fidelity';
+import { hasExternalLinkScheme } from './inline-source';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -120,7 +122,7 @@ const surface = new MarkdownSurface({
   onWarning: toast,
   onLinkHint: toast,
   onOpenLink: (href) => {
-    if (!/^(?:https?:\/\/|mailto:)/i.test(href)) { toast('暂不支持打开此类链接'); return; }
+    if (!hasExternalLinkScheme(href)) { toast('暂不支持打开此类链接'); return; }
     if (!desktop) return;
     void invoke('open_external_link', { url: href }).catch(error => toast(String(error)));
   },
@@ -238,7 +240,7 @@ function updateTitle() {
 }
 function scheduleStats() { clearTimeout(statsTimer); statsTimer=window.setTimeout(updateStats,180); }
 function updateStats() {
-  const text=session.text;
+  const text=markdownWithoutRenderedHtmlTags(session.text);
   const chinese=(text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu)||[]).length;
   const words=(text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu,' ').match(/[\p{L}\p{N}]+/gu)||[]).length;
   $('word-count').textContent=`${(chinese+words).toLocaleString('zh-CN')} 字`;

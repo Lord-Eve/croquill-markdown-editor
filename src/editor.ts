@@ -23,7 +23,7 @@ import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import type { OutlineHeadingBox } from './outline-tree';
-import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
+import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, buildDocumentAlignment, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { preserveTableSource } from './table-source';
@@ -32,7 +32,8 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts } from './alerts';
 import { highlightMark } from './highlight';
 import { configureInlineSource } from './inline-source-markdown';
-import { handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
+import { blockSpans, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
+import { hasExternalLinkScheme, INLINE_OBJECT } from './inline-source';
 import { preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import { richMarkdownTransforms } from './rich-markdown';
@@ -95,6 +96,30 @@ function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
   if (!setBlockType(paragraph)(view.state, view.dispatch, view)) return false;
   event.preventDefault();
   return true;
+}
+
+/** Splice a verified inline HTML edit into the original bytes, including container whitespace. */
+function preserveInlineHtmlEdit(raw: string, before: RichNode, after: RichNode, serialized: string): string {
+  if (!/<[a-z]/i.test(raw)) return serialized;
+  const from = before.content.findDiffStart(after.content), end = before.content.findDiffEnd(after.content);
+  if (from == null || !end) return serialized;
+  // Common prefix and suffix can overlap when inserting or deleting repeated text.
+  const overlap = Math.max(0, from - Math.min(end.a, end.b));
+  const $from = before.resolve(from), $to = before.resolve(end.a + overlap);
+  if (!$from.sameParent($to) || !blockSpans($from.parent).some(span =>
+    span.html && span.from <= $from.parentOffset && $to.parentOffset <= span.to,
+  )) return serialized;
+  const inserted = after.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
+  if (/[\r\n]/.test(inserted) || inserted.includes(INLINE_OBJECT)) return serialized;
+  const block = buildDocumentAlignment(raw, before).blocks.find(block => block.isTextblock && block.richPos + 1 === $from.start());
+  const segment = block?.segments?.find(segment =>
+    segment.kind === 'exact' && segment.pmFrom <= $from.parentOffset && $to.parentOffset <= segment.pmTo,
+  );
+  if (!segment) return serialized;
+  const rawFrom = segment.rawFrom + $from.parentOffset - segment.pmFrom;
+  const rawTo = segment.rawFrom + $to.parentOffset - segment.pmFrom;
+  const candidate = raw.slice(0, rawFrom) + inserted + raw.slice(rawTo);
+  return hasEquivalentMarkdownStructure(candidate, serialized) ? candidate : serialized;
 }
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
@@ -376,7 +401,8 @@ export class MarkdownSurface {
           this.richContextVersion = version;
         }
         const exact = this.richExactSources.size ? this.richExactSources.get(JSON.stringify(document.toJSON())) : undefined;
-        this.raw = exact !== undefined ? exact : this.richOriginDocument?.eq(document) ? this.richOriginText : this.serializeRich();
+        this.raw = exact !== undefined ? exact : this.richOriginDocument?.eq(document) ? this.richOriginText
+          : preserveInlineHtmlEdit(this.raw, this.richSnapshot, document, this.serializeRich());
         this.richSnapshot = document;
         this.richInput = this.raw;
         this.cancelRichTimer();
@@ -680,7 +706,7 @@ export class MarkdownSurface {
       crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({
         resolveImage: this.options.resolveImage,
         defaultLineEnding: () => this.richDefaultNewline,
-      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use($prose(() => modeNodeSelectionGuardPlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin(this.options.resolveImage))).use($prose(() => modeNodeSelectionGuardPlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
@@ -766,7 +792,9 @@ export class MarkdownSurface {
                 const hit = linkAtCoords(view, event.clientX, event.clientY, event.target);
                 if (!hit) return false;
                 event.preventDefault();
-                this.options.onOpenLink?.(hit.href ?? '');
+                const href = hit.href ?? '';
+                if (hit.html?.tag === 'a' && !hasExternalLinkScheme(href)) this.options.onLinkHint?.('暂不支持打开此类链接');
+                else this.options.onOpenLink?.(href);
                 return true;
               }
               if (!event.ctrlKey && !event.metaKey && !event.altKey && !this.linkHintShown && view.state.selection.empty) {

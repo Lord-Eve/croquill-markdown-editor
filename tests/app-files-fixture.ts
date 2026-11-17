@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 export const currentFile = 'D:/验收/当前.md';
-export const currentText = '# 标题\n\n原文<span>片段</span>尾。\n\n<div>\n原文块\n</div>\n';
+export const currentText = '# 标题\n\n原文<span data-x="原样">片段</span>尾。\n\n<div>\n原文块\n</div>\n';
 
 /** Run the production app, mocking only the native filesystem/dialog boundary. */
 export async function openFileApp(page: Page, baseURL: string, config: Record<string, unknown> = {}) {
@@ -35,7 +35,11 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
           h.writes.push(args);if(h.holdWrite)await new Promise(resolve=>h.releaseWrite=resolve);
           h.files[args.path]=args.text;return {revision:'saved-revision'};
         }
-        if(cmd==='read_local_image')return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lqQAAAAASUVORK5CYII=';
+        if(cmd==='read_local_image'){
+          if(h.holdImage===args.src)await new Promise(resolve=>h.releaseImage=resolve);
+          if(h.missingImages?.includes(args.src))throw '无法读取本地图片';
+          return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lqQAAAAASUVORK5CYII=';
+        }
         if(cmd==='rebase_image_paths'){if(h.imageError)throw h.imageError;return args.sources.map(src=>'../验收/'+src.split(/[?#]/)[0].replace(/ /g,'%20'));}
         if(cmd==='import_image')return '当前.assets/图片.png';
         if(cmd==='list_document_folder')return {root:args.root,path:args.path||args.root,entries:[{name:'当前.md',path:${JSON.stringify(currentFile)},isDirectory:false}]};

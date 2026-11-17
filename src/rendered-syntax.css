@@ -1,11 +1,22 @@
 /* Inline Markdown is source text; these classes come from src/inline-source-view.ts. */
 .milkdown .ProseMirror .md-marker { color:var(--muted); font-weight:400; font-style:normal; text-decoration:none; background:none; }
 .milkdown .ProseMirror .md-marker.md-hidden { display:none; }
+.milkdown .ProseMirror .md-html-marker { font-family:'Cascadia Code',Consolas,monospace; }
+.milkdown .ProseMirror kbd.md-html {
+  font-family:'Cascadia Code',Consolas,monospace;
+  font-size:.88em;
+  padding:.05em .32em;
+  border:1px solid var(--border);
+  border-bottom-width:2px;
+  border-radius:4px;
+  background:var(--code);
+}
+.milkdown .ProseMirror .md-html-image { vertical-align:middle; cursor:text; }
 .milkdown .ProseMirror .md-link-url { color:var(--accent); text-decoration:underline; }
 .milkdown .ProseMirror .md-link-title { font-style:italic; }
 /* A search that matches hidden markers shows them all (src/rich-search.ts). */
 .md-reveal-markers .milkdown .ProseMirror .md-marker.md-hidden { display:inline; }
-.md-reveal-markers .milkdown .ProseMirror .md-entity { display:none; }
+.md-reveal-markers .milkdown .ProseMirror :is(.md-entity, .md-html-image) { display:none; }
 .milkdown .ProseMirror del.md-strike { text-decoration:line-through; }
 .milkdown .ProseMirror mark { color:inherit; background:#fff3a3; padding:0; }
 :root[data-theme='dark'] .milkdown .ProseMirror mark { background:#756013; color:#fff2bb; }

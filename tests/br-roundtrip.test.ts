@@ -265,13 +265,19 @@ describe('bare HTML line breaks through the production editor', () => {
     expect(result.tables).toBe(1);
   }, 30000);
 
-  it.each(['甲<br class="x">乙', '甲<br><span>乙</span>'])('keeps other inline HTML as a fragment beside breaks: %s', async cell => {
+  it.each([
+    { cell: '甲<br class="x">乙', fragments: 1, breaks: 0, rendered: null },
+    { cell: '甲<br><span>乙</span>', fragments: 0, breaks: 1, rendered: '乙' },
+  ])('distinguishes literal and rendered HTML from bare breaks: $cell', async ({ cell, fragments, breaks, rendered }) => {
     const original = '| 内容 |\n| --- |\n| ' + cell + ' |\n';
     const result = await page.evaluate(async original => {
       const h = (window as any).brHarness;
       await h.surface.init(original);
-      return { mode: h.surface.mode, blocks: h.richRoot.querySelectorAll('[data-croquill-raw]').length, tables: h.richRoot.querySelectorAll('table.children').length, fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length, saved: await h.save() };
+      return { mode: h.surface.mode, blocks: h.richRoot.querySelectorAll('[data-croquill-raw]').length,
+        tables: h.richRoot.querySelectorAll('table.children').length, fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length,
+        breaks: h.richRoot.querySelectorAll('td br:not(.ProseMirror-trailingBreak)').length,
+        rendered: h.richRoot.querySelector('td .md-html')?.textContent ?? null, saved: await h.save() };
     }, original);
-    expect(result).toEqual({ mode: 'rich', blocks: 0, tables: 1, fragments: 1, saved: original });
+    expect(result).toEqual({ mode: 'rich', blocks: 0, tables: 1, fragments, breaks, rendered, saved: original });
   }, 30000);
 });

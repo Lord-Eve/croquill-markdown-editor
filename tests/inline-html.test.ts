@@ -5,10 +5,12 @@ import { createTestServer } from './server';
 import { hasEquivalentMarkdownStructure, preservedMarkdownBlocks } from '../src/fidelity';
 import { launchTestBrowser } from './browser';
 
-const snippets = [
+const renderedSnippets = [
   '<span style="color:red">**粗**</span>', '<kbd>Ctrl</kbd>', '<sup>2</sup>',
-  '<img src="local.png" alt="图片">', '<!-- 备注 -->', '<br class="x">', '<u>下划线</u>', '<wbr>',
+  '<u>下划线</u>', '<img src="local.png" alt="图片">',
 ];
+const literalSnippets = ['<!-- 备注 -->', '<br class="x">', '<wbr>'];
+const snippets = [...renderedSnippets, ...literalSnippets];
 const contexts = [
   { name: 'paragraph', wrap: (text: string) => '前' + text + '后\n', selector: '.ProseMirror > p' },
   { name: 'heading', wrap: (text: string) => '# 前' + text + '后\n', selector: '.ProseMirror > h1' },
@@ -62,13 +64,16 @@ describe('inline HTML source fragments through the production editor', () => {
       const h = window.inlineHarness = { richRoot, sourceRoot, saved: '', warnings: [] };
       h.session = new DocumentSession({ write: async (_path, text) => { h.saved = text; return { revision: 'test' }; } });
       h.session.path = 'D:/notes/inline.md';
-      h.surface = new MarkdownSurface({ richRoot, sourceRoot, onChange: text => h.session.edit(text), onWarning: text => h.warnings.push(text), resolveImage: async src => src });
+      h.surface = new MarkdownSurface({ richRoot, sourceRoot, onChange: text => h.session.edit(text), onWarning: text => h.warnings.push(text),
+        resolveImage: async () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lqQAAAAASUVORK5CYII=' });
       h.save = async () => { h.session.edit(h.surface.getMarkdown()); await h.session.save(); return h.saved; };
-      h.selectText = (text, offset = 0) => {
+      h.selectText = (text, offset = 0, length = 0) => {
         const view = h.surface.richView(); let position;
-        view.state.doc.descendants((node, pos) => { if (node.isText && node.text === text && position === undefined) position = pos + offset; });
+        view.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text.includes(text) && position === undefined) position = pos + node.text.indexOf(text) + offset;
+        });
         if (position === undefined) throw Error('Text not found: ' + text);
-        view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, position))); view.focus();
+        view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, position, position + length))); view.focus();
       };
       h.selectRaw = (boundary) => {
         const view = h.surface.richView(); let position, size;
@@ -88,7 +93,7 @@ describe('inline HTML source fragments through the production editor', () => {
     await page?.close();
   });
 
-  it.each(contexts)('shows one literal, noneditable fragment per tag in a $name', async ({ wrap, selector }) => {
+  it.each(contexts)('renders safe elements and keeps the other tags literal in a $name', async ({ wrap, selector }) => {
     const original = wrap(snippets.join('，'));
     const result = await page.evaluate(async ({ original, selector }) => {
       const h = (window as any).inlineHarness;
@@ -97,29 +102,33 @@ describe('inline HTML source fragments through the production editor', () => {
       return {
         mode: h.surface.mode, reason: h.surface.getSafetyReason(), blocks: h.richRoot.querySelectorAll('[data-croquill-raw]').length,
         literals: fragments.map(node => node.textContent), editable: fragments.map(node => node.contentEditable),
-        liveHTML: fragments.some(node => node.querySelector('img,span,kbd,sup,u,br,wbr,strong') !== null), saved: await h.save(),
+        liveHTML: fragments.some(node => node.querySelector('img,span,kbd,sup,u,br,wbr,strong') !== null),
+        styled: Array.from(h.richRoot.querySelectorAll(selector + ' :is(strong,kbd,sup,u)')).map(node => node.textContent),
+        saved: await h.save(),
       };
     }, { original, selector });
-    expect(result).toMatchObject({ mode: 'rich', reason: null, blocks: 0, literals: snippets, editable: snippets.map(() => 'false'), liveHTML: false });
+    expect(result).toMatchObject({ mode: 'rich', reason: null, blocks: 0, literals: literalSnippets, editable: literalSnippets.map(() => 'false'), liveHTML: false, styled: ['粗', 'Ctrl', '2', '下划线'] });
+    await page.locator(selector + ' img.md-html-image').waitFor();
     expect(result.saved).toBe(original);
   }, 30000);
 
-  it('renders highlighting beside an inline HTML fragment without protecting the paragraph', async () => {
-    const original = '前<kbd>Ctrl</kbd>与==高亮==后\n';
+  it('renders highlighting beside HTML source text and an opaque inline fragment', async () => {
+    const original = '前<kbd>Ctrl</kbd>与==高亮==、<button>原文</button>、**粗体**、[链接](https://example.com)后\n';
     const result = await page.evaluate(async original => {
       const h = (window as any).inlineHarness; await h.surface.init(original);
       return { raw: h.richRoot.querySelectorAll('[data-croquill-raw]').length,
-        fragment: h.richRoot.querySelector('[data-croquill-inline-raw]')?.textContent,
-        highlight: h.richRoot.querySelector('mark')?.textContent, saved: await h.save() };
+        fragment: h.richRoot.querySelector('[data-croquill-inline-raw]')?.textContent, key: h.richRoot.querySelector('kbd')?.textContent,
+        highlight: h.richRoot.querySelector('mark')?.textContent, bold: h.richRoot.querySelector('strong')?.textContent,
+        link: h.richRoot.querySelector('a')?.textContent, saved: await h.save() };
     }, original);
-    expect(result).toEqual({ raw: 0, fragment: '<kbd>Ctrl</kbd>', highlight: '高亮', saved: original });
+    expect(result).toEqual({ raw: 0, fragment: '<button>原文</button>', key: 'Ctrl', highlight: '高亮', bold: '粗体', link: '链接', saved: original });
   });
 
   it('styles source fragments as gray monospace with a distinct appearance from inline code', async () => {
     await page.addStyleTag({ url: baseURL + '/src/style.css' });
     const result = await page.evaluate(async () => {
       const h = (window as any).inlineHarness;
-      await h.surface.init('前<kbd>Ctrl</kbd>与`code`后\n');
+      await h.surface.init('前<kbd data-x="原样">Ctrl</kbd>与`code`后\n');
       const raw = h.richRoot.querySelector('[data-croquill-inline-raw]'), code = h.richRoot.querySelector('code');
       if (!raw || !code) throw Error('Fragment or inline code missing');
       const quote = document.createElement('span'); quote.style.color = 'var(--quote)'; document.body.append(quote);
@@ -147,13 +156,15 @@ describe('inline HTML source fragments through the production editor', () => {
       for (let index = 0; index < 3; index++) { await h.surface.setMode('source'); await h.surface.setMode('rich'); }
       const switched = await h.save();
       await h.surface.load(saved);
-      return { saved, switched, reopened: await h.save(), mode: h.surface.mode, fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length };
+      return { saved, switched, reopened: await h.save(), mode: h.surface.mode, fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length,
+        keys: h.richRoot.querySelectorAll('kbd.md-html').length };
     }, original);
     expect(Buffer.from(result.saved).equals(Buffer.from(original))).toBe(true);
     expect(Buffer.from(result.switched).equals(Buffer.from(original))).toBe(true);
     expect(Buffer.from(result.reopened).equals(Buffer.from(original))).toBe(true);
     expect(result.mode).toBe('rich');
-    expect(result.fragments).toBe(contexts.length * snippets.length);
+    expect(result.fragments).toBe(contexts.length * literalSnippets.length);
+    expect(result.keys).toBe(contexts.length);
   }, 30000);
 
   it('preserves nested tags and Markdown inside their exact original source range while editing nearby text', async () => {
@@ -211,7 +222,7 @@ describe('inline HTML source fragments through the production editor', () => {
     expect(result.mode).toBe('rich');
   }, 30000);
 
-  it.each(['<!-- 甲\n乙 -->', '<!-- 甲\r\n乙 -->', '<kbd>A|B</kbd>', '<kbd>A\\\\|B</kbd>'])('rejects an unrepresentable fragment pasted or moved into a cell: %s', async raw => {
+  it.each(['<!-- 甲\n乙 -->', '<!-- 甲\r\n乙 -->', '<kbd data-x="原样">A|B</kbd>', '<kbd data-x="原样">A\\\\|B</kbd>'])('rejects an unrepresentable fragment pasted or moved into a cell: %s', async raw => {
     const original = '前' + raw + '后\n\n| 内容 | 备注 |\n| --- | --- |\n| 目标 | 不动 |\n';
     const result = await page.evaluate(async original => {
       const h = (window as any).inlineHarness;
@@ -234,21 +245,24 @@ describe('inline HTML source fragments through the production editor', () => {
     expect(result.warnings).toHaveLength(2);
   }, 30000);
 
-  it('allows a copied fragment with an escaped pipe inside a table cell', async () => {
+  it('copies a rendered element with an escaped pipe into a table cell as source text', async () => {
     const raw = '<kbd>A\\|B</kbd>';
     const original = '前' + raw + '后\n\n| 内容 | 备注 |\n| --- | --- |\n| 目标 | 不动 |\n';
-    const result = await page.evaluate(async original => {
+    const result = await page.evaluate(async ({ original, raw }) => {
       const h = (window as any).inlineHarness;
-      await h.surface.init(original); h.selectRaw('node');
+      await h.surface.init(original); h.selectText(raw, 0, raw.length);
       const view = h.surface.richView(), data = new DataTransfer();
       view.dom.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
       h.selectText('目标', 2);
       view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
       const saved = await h.save(); await h.surface.load(saved);
-      return { saved, mode: h.surface.mode, fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length, warnings: h.warnings };
-    }, original);
+      const keys = [...h.richRoot.querySelectorAll('.ProseMirror > p, td')].map(block =>
+        [...block.querySelectorAll('kbd.md-html')].map(node => node.textContent).join('')).filter(Boolean);
+      return { saved, mode: h.surface.mode, keys,
+        fragments: h.richRoot.querySelectorAll('[data-croquill-inline-raw]').length, warnings: h.warnings };
+    }, { original, raw });
     expect(result.saved).toBe(original.replace('目标', '目标' + raw));
-    expect(result).toMatchObject({ mode: 'rich', fragments: 2, warnings: [] });
+    expect(result).toMatchObject({ mode: 'rich', keys: ['A\\|B', 'A\\|B'], fragments: 0, warnings: [] });
   }, 30000);
 
   it.each([
@@ -343,20 +357,23 @@ describe('inline HTML source fragments through the production editor', () => {
       view.dispatch(view.state.tr.insertText('新', view.state.selection.from));
       const saved = await h.save();
       await h.surface.load(saved);
-      return { firstSave, saved, reopened: await h.save(), mode: h.surface.mode, literals: Array.from(h.richRoot.querySelectorAll('[data-croquill-inline-raw]')).map((node: any) => node.textContent) };
+      return { firstSave, saved, reopened: await h.save(), mode: h.surface.mode,
+        literals: Array.from(h.richRoot.querySelectorAll('[data-croquill-inline-raw]')).map((node: any) => node.textContent),
+        keys: Array.from(h.richRoot.querySelectorAll('kbd.md-html')).map((node: any) => node.textContent) };
     }, original);
     expect(result.firstSave).toBe(original.replace('待改', '已改'));
     expect(result.saved).toBe(original.replace('待改', '已改').replace('后', '新后'));
     expect(result.reopened).toBe(result.saved);
     expect(result.mode).toBe('rich');
-    expect(result.literals).toEqual([raw, '<kbd>Tab</kbd>']);
+    expect(result.literals).toEqual([raw]);
+    expect(result.keys).toEqual(['Tab']);
   }, 30000);
 
   it.each([
     { boundary: 'before', composing: 'event flag' }, { boundary: 'after', composing: 'event flag' },
     { boundary: 'before', composing: 'active composition' }, { boundary: 'after', composing: 'active composition' },
   ])('does not delete a fragment or move the caret during IME input $boundary it ($composing)', async ({ boundary, composing }) => {
-    const raw = '<kbd>Ctrl</kbd>', original = '前' + raw + '后\n';
+    const raw = '<kbd data-x="原样">Ctrl</kbd>', original = '前' + raw + '后\n';
     const result = await page.evaluate(async ({ original, boundary, composing }) => {
       const h = (window as any).inlineHarness;
       await h.surface.init(original); h.selectRaw(boundary);
