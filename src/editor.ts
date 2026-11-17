@@ -21,18 +21,21 @@ import { markdown } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language';
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
-import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
-import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
-import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
+import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
+import type { OutlineHeadingBox } from './outline-tree';
+import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
+import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
+import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
-import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml, parseHtmlComments } from './inline-raw';
-import { alertBlock, configureAlerts, parseAlerts } from './alerts';
+import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent } from './inline-raw';
+import { alertBlock, configureAlerts } from './alerts';
 import { highlightMark } from './highlight';
-import { configureInlineSource, flattenInlineSource } from './inline-source-markdown';
+import { configureInlineSource } from './inline-source-markdown';
 import { handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
 import { preserveRenderedSource } from './rendered-source';
-import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, parseTocFootnotes, tocBlock, tocFootnotePlugin } from './toc-footnotes';
+import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, tocBlock, tocFootnotePlugin } from './toc-footnotes';
+import { richMarkdownTransforms } from './rich-markdown';
 import { SearchPanel, type SearchReplaceResult } from './search-panel';
 import { RichSearchPainter } from './rich-search';
 import { applySourceChanges, normalizedOffset, normalizedSource, replacementProblem, sourceOffset, type SearchMatch, type SearchOptions, type SourceChange } from './search-core';
@@ -101,7 +104,9 @@ const UNRELIABLE_ROUND_TRIP = '此文档的部分结构无法可靠往返转换�
 export interface MarkdownSurfaceOptions {
   richRoot: HTMLElement;
   sourceRoot: HTMLElement;
+  scrollContainer?: HTMLElement;
   onChange: (markdown: string) => void;
+  onEdit?: () => void;
   onDirty?: () => void;
   onWarning?: (message: string) => void;
   resolveImage: (src: string) => Promise<string>;
@@ -145,6 +150,8 @@ export class MarkdownSurface {
   private richDefaultNewline = '\n';
   private richContexts = new Map<string, { base: string; origin: RichNode | undefined; originText: string; notice: string | null }>();
   private linkHintShown = false;
+  private outlineCache?: { raw: string; items: MarkdownOutlineItem[] };
+  private cancelModeScrollRestore?: () => void;
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
     this.searchPainter = new RichSearchPainter(options.richRoot);
@@ -237,7 +244,10 @@ export class MarkdownSurface {
     } else if (this.crepe) {
       const view = this.richView();
       const pos = view.posAtCoords({ left: x, top: y });
-      if (pos) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos.pos))));
+      if (pos) view.dispatch(view.state.tr
+        .setSelection(TextSelection.near(view.state.doc.resolve(pos.pos)))
+        .setMeta('pointer', true)
+        .setMeta('addToHistory', false));
     }
   }
 
@@ -262,6 +272,8 @@ export class MarkdownSurface {
   async init(markdownText: string): Promise<void> { await this.load(markdownText); }
 
   async load(markdownText: string): Promise<void> {
+    this.cancelModeScrollRestore?.();
+    this.cancelModeScrollRestore = undefined;
     this.cancelRichTimer();
     this.suppress = true;
     this.raw = markdownText;
@@ -296,14 +308,29 @@ export class MarkdownSurface {
 
   async setMode(mode: EditingMode): Promise<void> {
     if (this.hasFocusedComposition()) return;
+    this.cancelModeScrollRestore?.();
+    this.cancelModeScrollRestore = undefined;
+    const fromMode = this.currentMode;
     this.getMarkdown();
+    const shouldCapture = fromMode !== mode;
+    const captured = shouldCapture
+      ? captureModePosition({
+          fromMode,
+          raw: this.raw,
+          richView: this.crepe ? this.richView() : null,
+          sourceView: this.source ?? null,
+          scrollContainer: this.options.scrollContainer,
+        })
+      : null;
+
+    let rebuiltRich = false;
     if (mode === 'rich') {
       this.safetyReason = detectUnsafeMarkdown(this.raw);
       if (this.safetyReason) {
         this.currentMode = 'source';
         this.ensureSource();
       } else {
-        await this.ensureRich();
+        rebuiltRich = await this.ensureRich(captured?.rawOffset);
         this.currentMode = this.safetyReason ? 'source' : 'rich';
         if (this.safetyReason) this.ensureSource();
       }
@@ -311,9 +338,30 @@ export class MarkdownSurface {
       this.ensureSource();
       this.currentMode = 'source';
     }
+
     this.applyVisibility();
     this.focus();
+
+    if (captured && fromMode !== this.currentMode) {
+      if (fromMode === 'rich' && this.currentMode === 'source' && this.source) {
+        applySourceSelectionFromRaw(this.source, this.raw, captured.rawOffset);
+      } else if (fromMode === 'source' && this.currentMode === 'rich' && this.crepe && !rebuiltRich) {
+        applyRichSelectionFromRaw(this.richView(), this.raw, captured.rawOffset);
+      }
+    }
+
     this.find.documentChanged();
+
+    if (captured?.scrollAnchor && fromMode !== this.currentMode && this.options.scrollContainer) {
+      this.cancelModeScrollRestore = scheduleModeScrollRestore({
+        targetMode: this.currentMode,
+        raw: this.raw,
+        anchor: captured.scrollAnchor,
+        richView: this.crepe ? this.richView() : null,
+        sourceView: this.source ?? null,
+        scrollContainer: this.options.scrollContainer,
+      });
+    }
   }
 
   /** Flush synchronously, so Ctrl+S immediately after a keystroke saves that keystroke. */
@@ -379,7 +427,50 @@ export class MarkdownSurface {
     return isFocusedHtmlSource(this.options.richRoot) ? isHtmlSourceComposing(this.options.richRoot) : !!this.crepe && this.richView().composing;
   }
 
-  getOutline(): { level: number; text: string; line: number }[] { return markdownOutline(this.getMarkdown()); }
+  getOutline(): MarkdownOutlineItem[] {
+    // Outline labels follow the last published source, including after idle serialization.
+    const text = this.raw;
+    if (this.outlineCache?.raw !== text) {
+      this.outlineCache = { raw: text, items: markdownOutline(text) };
+    }
+    return this.outlineCache.items;
+  }
+
+  private getRichOutlineTargets(): (HTMLElement | null)[] {
+    if (!this.crepe) return [];
+    const view = this.richView();
+    const targets: (HTMLElement | null)[] = [];
+    view.state.doc.forEach((node, pos) => {
+      if (node.type.name === 'heading') {
+        const dom = view.nodeDOM(pos);
+        targets.push(dom instanceof HTMLElement ? dom : null);
+      } else if (node.type.name === 'croquill_raw_block' && node.attrs.kind !== 'html') {
+        const count = countTopLevelAstHeadings(String(node.attrs.value ?? ''));
+        const dom = view.nodeDOM(pos);
+        const element = dom instanceof HTMLElement ? dom : null;
+        for (let i = 0; i < count; i++) targets.push(element);
+      }
+    });
+    return targets;
+  }
+
+  /** Measures vertical viewport bounds for every outline heading in the active editor. */
+  getOutlineHeadingBoxes(): (OutlineHeadingBox | null)[] {
+    if (this.currentMode === 'source' && this.source) {
+      const cm = this.source;
+      const lines = cm.state.doc.lines;
+      return this.getOutline().map(heading => {
+        const line = cm.state.doc.line(Math.max(1, Math.min(lines, heading.line)));
+        const block = cm.lineBlockAt(line.from);
+        return { top: cm.documentTop + block.top, bottom: cm.documentTop + block.bottom };
+      });
+    }
+    return this.getRichOutlineTargets().map(element => {
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    });
+  }
 
   scrollToHeading(index: number): void {
     if (this.currentMode === 'source' && this.source) {
@@ -389,8 +480,7 @@ export class MarkdownSurface {
       this.source.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: 'start' }) });
       this.source.focus();
     } else {
-      const heading = Array.from(this.options.richRoot.querySelectorAll('h1,h2,h3,h4,h5,h6'))
-        .filter(element => !element.closest('[data-croquill-html]'))[index];
+      const heading = this.getRichOutlineTargets()[index];
       heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
   }
@@ -455,6 +545,8 @@ export class MarkdownSurface {
 
   async destroy(): Promise<void> {
     this.destroyed = true;
+    this.cancelModeScrollRestore?.();
+    this.cancelModeScrollRestore = undefined;
     this.cancelRichTimer();
     for (const root of [this.options.richRoot, this.options.sourceRoot]) {
       root.removeEventListener('paste', this.handleImagePaste, { capture: true });
@@ -526,14 +618,15 @@ export class MarkdownSurface {
       this.richExactSources.set(JSON.stringify(document.toJSON()), next);
       this.richContexts.set(version, { base: next, origin: document, originText: next, notice: this.richNotice });
     } finally { this.suppress = suppressed; }
+    this.options.onEdit?.();
     this.publishChange(next); return { ok: true };
   }
 
-  private async ensureRich(): Promise<void> {
+  private async ensureRich(rawOffset?: number): Promise<boolean> {
     if (this.crepe && this.richInput === this.raw) {
       // Leaving and re-entering rich mode must not forget a failed round trip.
       if (this.unreliableRich === this.raw) this.safetyReason = UNRELIABLE_ROUND_TRIP;
-      return;
+      return false;
     }
     this.unreliableRich = undefined;
     const oldSuppress = this.suppress;
@@ -587,7 +680,7 @@ export class MarkdownSurface {
       crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({
         resolveImage: this.options.resolveImage,
         defaultLineEnding: () => this.richDefaultNewline,
-      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
+      })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin())).use($prose(() => modeNodeSelectionGuardPlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
@@ -595,13 +688,7 @@ export class MarkdownSurface {
         configureAlerts(ctx);
         configureTocFootnotes(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
-          { plugin: preserveRawMarkdown, options: {} },
-          { plugin: parseHtmlComments, options: {} },
-          { plugin: preserveInlineHtml, options: {} },
-          { plugin: parseTocFootnotes, options: {} },
-          { plugin: parseHtmlBreaks, options: {} },
-          { plugin: flattenInlineSource, options: {} },
-          { plugin: parseAlerts, options: {} }, ...plugins,
+          ...richMarkdownTransforms.map(plugin => ({ plugin, options: {} })), ...plugins,
         ]);
       });
       // Crepe's block-only drop indicator also handles text selections, snapping
@@ -710,15 +797,18 @@ export class MarkdownSurface {
           },
         },
         view: () => ({ update: (view, previous) => {
-          if (!view.state.doc.eq(previous.doc)) this.notifyRichChange();
+          if (this.suppress || this.destroyed || this.currentMode !== 'rich' || view.state.doc.eq(previous.doc)) return;
+          this.options.onEdit?.();
+          this.notifyRichChange();
         } }),
       })));
+      if (rawOffset !== undefined) crepe.editor.use(initializeRichModePosition(this.raw, rawOffset));
       await crepe.create();
       // Let the kernel initialize its trailing caret paragraph before recording
       // the origin, including after editable lists and tables. Otherwise undo
       // retains that later-added paragraph and cannot restore the original bytes.
       const readyView = this.richView();
-      readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
+      if (rawOffset === undefined) readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
       this.richInput = this.raw;
       this.richSnapshot = this.richView().state.doc;
       this.richOriginDocument = this.richSnapshot;
@@ -726,6 +816,7 @@ export class MarkdownSurface {
       if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRich())) {
         this.safetyReason = UNRELIABLE_ROUND_TRIP; this.unreliableRich = this.raw;
       }
+      return true;
     } finally { this.suppress = oldSuppress; }
   }
 
@@ -803,6 +894,7 @@ export class MarkdownSurface {
         }
         this.sourceInput = this.raw;
         this.safetyReason = detectUnsafeMarkdown(this.raw);
+        this.options.onEdit?.();
         this.sourceUpdating = true;
         try { this.publishChange(this.raw); } finally { this.sourceUpdating = false; }
       }),

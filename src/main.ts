@@ -7,7 +7,7 @@ import { ImageImporter, type ImageSource } from './images';
 import { DocumentSession, type DocumentFile } from './session';
 import { protectFileDrops } from './file-drop';
 import { FileSidebar, type FolderListing } from './sidebar';
-import { markdownOutline } from './fidelity';
+import { OutlineController } from './outline-tree';
 import { installMenuPointerRouting, type MenuCommand } from './menu';
 import { RecentDocuments } from './recent-documents';
 import { sameDocumentPath } from './document-path';
@@ -113,8 +113,9 @@ const imageImporter = new ImageImporter({
   persist: args => invoke<string>('import_image', args),
 });
 const surface = new MarkdownSurface({
-  richRoot:$('rich-root'), sourceRoot:$('source-root'),
+  richRoot:$('rich-root'), sourceRoot:$('source-root'), scrollContainer:$('editor-scroll'),
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
+  onEdit: () => outlineController.notifyDocumentEdited(),
   onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },
   onWarning: toast,
   onLinkHint: toast,
@@ -152,10 +153,19 @@ const fileSidebar = new FileSidebar({
   },
   onError: toast,
 });
+const outlineController = new OutlineController({
+  container: $('outline'),
+  countEl: $('heading-count'),
+  scrollContainer: $('editor-scroll'),
+  measureBoxes: () => surface.getOutlineHeadingBoxes(),
+  onJump: index => surface.scrollToHeading(index),
+  isOutlineVisible: () => !document.body.classList.contains('sidebar-hidden') && !$('outline-pane').hidden,
+});
 function setSidebarVisible(visible:boolean) {
   document.body.classList.toggle('sidebar-hidden', !visible);
   localStorage.setItem('croquill-sidebar', String(visible));
   document.querySelector('[data-action="sidebar"].icon-button')?.setAttribute('aria-expanded', String(visible));
+  if (visible && !$('outline-pane').hidden) outlineController.scheduleSync(true);
 }
 function setSidebarTab(tab:'files'|'outline', reveal = true) {
   for (const name of ['files','outline']) {
@@ -166,6 +176,7 @@ function setSidebarTab(tab:'files'|'outline', reveal = true) {
   }
   localStorage.setItem('croquill-sidebar-tab', tab);
   if (reveal) setSidebarVisible(true);
+  if (tab === 'outline' && !document.body.classList.contains('sidebar-hidden')) outlineController.scheduleSync(true);
 }
 for (const tab of ['files','outline'] as const) {
   $(`${tab}-tab`).onclick = () => setSidebarTab(tab);
@@ -185,6 +196,7 @@ function resizeSidebar(width:number, remember = false) {
   resizeHandle.setAttribute('aria-valuenow', String(sidebarWidth));
   resizeHandle.setAttribute('aria-valuemax', String(max));
   if (remember) localStorage.setItem('croquill-sidebar-width', String(sidebarWidth));
+  outlineController.scheduleSync();
 }
 resizeSidebar(sidebarWidth);
 resizeHandle.addEventListener('pointerdown', event => {
@@ -230,12 +242,7 @@ function updateStats() {
   const chinese=(text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu)||[]).length;
   const words=(text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu,' ').match(/[\p{L}\p{N}]+/gu)||[]).length;
   $('word-count').textContent=`${(chinese+words).toLocaleString('zh-CN')} 字`;
-  const headings=markdownOutline(text);
-  $('heading-count').textContent=String(headings.length||'');
-  const frag=document.createDocumentFragment();
-  headings.forEach((heading,index)=>{const b=document.createElement('button');b.textContent=heading.text;b.title=heading.text;b.style.setProperty('--level',String(heading.level));b.onclick=()=>{surface.scrollToHeading(index);document.querySelectorAll('#outline .active').forEach(x=>x.classList.remove('active'));b.classList.add('active');};frag.append(b);});
-  if(!headings.length){const p=document.createElement('p');p.className='outline-empty';p.textContent='暂无标题';frag.append(p);}
-  $('outline').replaceChildren(frag);
+  outlineController.rebuild(surface.getOutline());
   updateMode();
 }
 function updateMode() {
@@ -266,7 +273,7 @@ async function run(operation:()=>Promise<void>) {
 }
 async function openDocument(path?: string): Promise<void> {
   if (path && sameDocumentPath(path, session.path)) return;
-  if (await session.open(path)) { imageCache.clear(); await surface.load(session.text); surface.focus(); }
+  if (await session.open(path)) { imageCache.clear(); outlineController.resetDocument(); await surface.load(session.text); surface.focus(); }
 }
 async function requireRecentFile(path: string): Promise<void> {
   if (await invoke<boolean>('document_exists', {path})) return;
@@ -301,7 +308,7 @@ async function action(name:string, path?:string) {
   if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
   if(name==='sidebar'){setSidebarVisible(document.body.classList.contains('sidebar-hidden'));return;}
   if(name==='outline'||name==='files'){setSidebarTab(name);return;}
-  if(name==='smaller'||name==='larger'){fontSize=Math.min(24,Math.max(12,fontSize+(name==='larger'?1:-1)));document.documentElement.style.setProperty('--editor-font-size',`${fontSize}px`);localStorage.setItem('croquill-font',String(fontSize));toast(`正文字号 ${fontSize}px`);return;}
+  if(name==='smaller'||name==='larger'){fontSize=Math.min(24,Math.max(12,fontSize+(name==='larger'?1:-1)));document.documentElement.style.setProperty('--editor-font-size',`${fontSize}px`);localStorage.setItem('croquill-font',String(fontSize));outlineController.scheduleSync();toast(`正文字号 ${fontSize}px`);return;}
   await run(async()=>{
     if(name==='folder'){setSidebarTab('files');await fileSidebar.chooseFolder();}
     if(name==='image'){
@@ -312,10 +319,10 @@ async function action(name:string, path?:string) {
         if(src){surface.insertImage(src);surface.focus();}
       }
     }
-    if(name==='new'){if(await session.fresh()){imageCache.clear();await surface.load('');surface.focus();}}
+    if(name==='new'){if(await session.fresh()){imageCache.clear();outlineController.resetDocument();await surface.load('');surface.focus();}}
     if(name==='open'||name==='recent'){if(!desktop){toast('请在桌面程序中打开本地文件');return;}if(name==='recent'&&path)await requireRecentFile(path);if(name==='open'||path)await openDocument(path);}
     if(name==='save'||name==='saveAs'){if(!desktop){toast('请在桌面程序中保存本地文件');return;}if(await saveCurrentDocument(name==='saveAs'))toast('已保存到本地');}
-    if(name==='mode'){await surface.setMode(surface.mode==='rich'?'source':'rich');surface.focus();}
+    if(name==='mode'){outlineController.clearPin();await surface.setMode(surface.mode==='rich'?'source':'rich');outlineController.scheduleSync(true);}
     if(name==='help')await modal('在 Croquill 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\n左侧文件标签可打开文件夹，单击文件切换；分隔边可拖动调宽，底部按钮收起侧栏。\n\nCtrl+Shift+O 打开文件夹\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nCtrl+1～6 标题　Ctrl+0 正文　Ctrl+= / Ctrl+- 升降标题级别\n标题行首按退格变回正文\nTab / Shift+Tab 调整列表层级\n\n文件保存在本地，采用手动保存。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
   });
 }

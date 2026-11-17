@@ -72,9 +72,17 @@ button:hover { background:var(--hover); }
 #heading-count { margin-left:6px; font-size:10px; font-weight:400; color:var(--muted); }
 .sidebar-pane { min-height:0; flex:1; display:flex; flex-direction:column; }
 #outline { overflow:auto; flex:1; padding:8px 8px 24px; }
-#outline button { display:block; width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; text-align:left; padding:4px 8px; padding-left:calc(8px + (var(--level) - 1) * 12px); line-height:18px; border-radius:4px; color:var(--quote); margin:0; }
-#outline button:hover { color:var(--fg); }
-#outline button.active { background:var(--hover); color:var(--fg); }
+.outline-row { display:flex; align-items:center; padding-left:calc(4px + (var(--level) - 1) * 12px); }
+.outline-row[hidden] { display:none; }
+.outline-toggle, .outline-spacer { flex:0 0 18px; width:18px; height:22px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+.outline-toggle { padding:0; margin:0; border-radius:3px; color:var(--muted); }
+.outline-toggle:hover { color:var(--fg); background:var(--hover); }
+.outline-toggle svg { transition:transform 0.12s ease; transform:rotate(0deg); }
+.outline-toggle[aria-expanded="true"] svg { transform:rotate(90deg); }
+.outline-item { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; text-align:left; padding:4px 8px 4px 4px; line-height:18px; border-radius:4px; color:var(--quote); margin:0; }
+.outline-item:hover { color:var(--fg); }
+.outline-item.active { background:var(--hover); color:var(--fg); font-weight:600; }
+.outline-toggle:focus-visible, .outline-item:focus-visible { outline:1px solid var(--accent); outline-offset:-1px; }
 .outline-empty { padding:20px 8px; margin:0; font-size:12px; color:var(--muted); line-height:1.6; }
 .file-toolbar { display:flex; gap:4px; align-items:center; flex-shrink:0; padding:6px 8px; }
 .file-toolbar button { border-radius:4px; font-size:11px; height:26px; padding:3px 7px; color:var(--quote); }
