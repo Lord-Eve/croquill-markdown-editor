@@ -106,6 +106,7 @@ export interface MarkdownSurfaceOptions {
   sourceRoot: HTMLElement;
   scrollContainer?: HTMLElement;
   onChange: (markdown: string) => void;
+  onEdit?: () => void;
   onDirty?: () => void;
   onWarning?: (message: string) => void;
   resolveImage: (src: string) => Promise<string>;
@@ -616,6 +617,7 @@ export class MarkdownSurface {
       this.richExactSources.set(JSON.stringify(document.toJSON()), next);
       this.richContexts.set(version, { base: next, origin: document, originText: next, notice: this.richNotice });
     } finally { this.suppress = suppressed; }
+    this.options.onEdit?.();
     this.publishChange(next); return { ok: true };
   }
 
@@ -794,7 +796,9 @@ export class MarkdownSurface {
           },
         },
         view: () => ({ update: (view, previous) => {
-          if (!view.state.doc.eq(previous.doc)) this.notifyRichChange();
+          if (this.suppress || this.destroyed || this.currentMode !== 'rich' || view.state.doc.eq(previous.doc)) return;
+          this.options.onEdit?.();
+          this.notifyRichChange();
         } }),
       })));
       await crepe.create();
@@ -887,6 +891,7 @@ export class MarkdownSurface {
         }
         this.sourceInput = this.raw;
         this.safetyReason = detectUnsafeMarkdown(this.raw);
+        this.options.onEdit?.();
         this.sourceUpdating = true;
         try { this.publishChange(this.raw); } finally { this.sourceUpdating = false; }
       }),

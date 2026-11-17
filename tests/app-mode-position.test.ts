@@ -377,6 +377,25 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     }
   });
 
+  it.each([
+    { doc: '前段 BEFOREX 结束\r\r第一行 CRX 结束\r第二行\r', snippets: ['BEFOREX', 'CRX', '第二行'] },
+    {
+      doc: '> 首行\r> 软换行 SOFTX  \r> 空格硬换行 SPACEX\\\r> 反斜杠硬换行 SLASHX<br />\r> 标签后 NEXTX\r',
+      snippets: ['SOFTX', 'SPACEX', 'SLASHX', 'NEXTX'],
+    },
+  ])('preserves exact offsets across standalone CR line breaks (%#)', async ({ doc, snippets }) => {
+    await open(doc);
+    for (const snippet of snippets) {
+      await setRichCaretBySubstring(snippet, 1);
+      const richHead = await richHeadPos();
+      await pressModeToggle();
+      expect(await sourceHeadOffset()).toBe(doc.indexOf(snippet) + 1);
+      await pressModeToggle();
+      expect(await richHeadPos()).toBe(richHead);
+    }
+    expect(await page.evaluate(() => (window as any).fileApp.surface.getMarkdown())).toBe(doc);
+  });
+
   it('preserves exact offsets with YAML frontmatter, UTF-8 BOM, and CRLF without modifying document bytes', async () => {
     const doc = '\uFEFF---\r\ntitle: 前置元数据\r\n---\r\n\r\n# 正文标题\r\n\r\n正文第一段中文 **高亮** 内容。\r\n\r\n> 多行引用一\r\n> 多行引用二\r\n';
     await open(doc);

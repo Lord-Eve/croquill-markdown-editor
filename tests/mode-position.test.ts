@@ -220,13 +220,28 @@ describe('mode-position deterministic alignment unit tests', () => {
     expect(mapRichSelectionToRawOffset(alignment, raw.length, tailSelection)).toBe(tail);
   });
 
-  it('rejects unverified raw and text pairs and keeps verified neighbors usable', () => {
+  it('falls back to its own start when a matched paragraph fails text verification', () => {
+    const raw = '前段\n\n源码里的原句\n\n尾段';
+    const first = testSchema.node('paragraph', null, [testSchema.text('前段')]);
+    const mismatch = testSchema.node('paragraph', null, [testSchema.text('编辑器里的句子')]);
+    const last = testSchema.node('paragraph', null, [testSchema.text('尾段')]);
+    const richDoc = testSchema.node('doc', null, [first, mismatch, last]);
+    const alignment = buildDocumentAlignment(raw, richDoc);
+    const richStart = first.nodeSize + 1;
+    const rawStart = raw.indexOf('源码');
+
+    const inside = TextSelection.create(richDoc, richStart + 2);
+    expect(mapRichSelectionToRawOffset(alignment, raw.length, inside)).toBe(rawStart);
+    expect(mapRawOffsetToRichSelection(alignment, richDoc, rawStart + 2).head).toBe(richStart);
+  });
+
+  it('rejects unverified raw and structurally mismatched blocks and keeps verified neighbors usable', () => {
     const before = '前段正文';
     const raw = `${before}\n\n<div>\n\n原文\n\n</div>\n\n> 中段正文\n\n后段正文`;
     const first = testSchema.node('paragraph', null, [testSchema.text(before)]);
     const opaque = testSchema.node('croquill_raw_block', { value: '<div>\n\n别的原文\n\n</div>' });
     const mismatch = testSchema.node('blockquote', null, [
-      testSchema.node('paragraph', null, [testSchema.text('未通过校验')]),
+      testSchema.node('heading', null, [testSchema.text('未通过校验')]),
     ]);
     const last = testSchema.node('paragraph', null, [testSchema.text('后段正文')]);
     const richDoc = testSchema.node('doc', null, [first, opaque, mismatch, last]);

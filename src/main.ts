@@ -114,8 +114,9 @@ const imageImporter = new ImageImporter({
 });
 const surface = new MarkdownSurface({
   richRoot:$('rich-root'), sourceRoot:$('source-root'), scrollContainer:$('editor-scroll'),
-  onChange: text => { session.edit(text); updateTitle(); outlineController.notifyDocumentEdited(); scheduleStats(); },
-  onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); outlineController.notifyDocumentEdited(); },
+  onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
+  onEdit: () => outlineController.notifyDocumentEdited(),
+  onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },
   onWarning: toast,
   onLinkHint: toast,
   onOpenLink: (href) => {

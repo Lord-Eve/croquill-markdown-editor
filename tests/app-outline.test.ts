@@ -171,6 +171,69 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     await page.waitForFunction(() => document.querySelector('#outline .outline-item.active')?.textContent === '顶部章');
   });
 
+  it('retains the last heading pin across deferred publication and outline rebuild', async () => {
+    const doc = Array.from({ length: 30 }, (_, i) => `## 标题 ${i}\n\n正文 ${i}`).join('\n\n');
+    await open(doc);
+    const initial = await page.evaluate(() => {
+      const app = (window as any).fileApp;
+      const view = app.surface.richView();
+      const paragraphStart = view.state.doc.firstChild.nodeSize + 1;
+      view.dispatch(view.state.tr.insertText('新增', paragraphStart));
+      const item = document.querySelector<HTMLButtonElement>('#outline .outline-row:last-child .outline-item')!;
+      item.dataset.beforePublication = 'true';
+      item.click();
+      return { published: app.session.text.includes('新增'), clicked: item.classList.contains('active') };
+    });
+    expect(initial).toEqual({ published: false, clicked: true });
+
+    await page.waitForFunction(() => {
+      const editor = document.getElementById('editor-scroll')!;
+      return (window as any).fileApp.session.text.includes('新增') &&
+        !document.querySelector('#outline [data-before-publication]') &&
+        editor.scrollHeight - editor.clientHeight - editor.scrollTop < 2;
+    });
+    const bottom = await page.evaluate(() => {
+      const viewport = document.getElementById('editor-scroll')!.getBoundingClientRect();
+      const firstVisible = Array.from(document.querySelectorAll('#rich-root h2')).find(heading => {
+        const rect = heading.getBoundingClientRect();
+        return rect.bottom > viewport.top + 0.5 && rect.top < viewport.bottom - 0.5;
+      });
+      return {
+        firstVisible: firstVisible?.textContent,
+        active: document.querySelector('#outline .outline-item.active')?.textContent,
+      };
+    });
+    expect(bottom.firstVisible).toMatch(/^标题 (?:[0-9]|1[0-9]|2[0-8])$/);
+    expect(bottom.active).toBe('标题 29');
+
+    // A subsequent edit still releases the pin immediately, before it is serialized.
+    await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      view.dispatch(view.state.tr.insertText('再改', view.state.doc.firstChild.nodeSize + 1));
+    });
+    await page.waitForFunction(active => document.querySelector('#outline .outline-item.active')?.textContent === active, bottom.firstVisible);
+  });
+
+  it('releases a smooth jump pin when the editor scrollbar is grabbed', async () => {
+    const doc = Array.from({ length: 30 }, (_, i) => `## 标题 ${i}\n\n正文 ${i}`).join('\n\n');
+    await open(doc);
+    const clicked = await page.evaluate(() => {
+      const editor = document.getElementById('editor-scroll')!;
+      const last = document.querySelector<HTMLButtonElement>('#outline .outline-row:last-child .outline-item')!;
+      last.click();
+      const active = document.querySelector('#outline .outline-item.active')?.textContent;
+
+      // Start dragging the scrollbar while the jump is still in progress.
+      editor.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse', buttons: 1 }));
+      const heading = document.querySelectorAll('#rich-root h2')[6];
+      editor.scrollTop += heading.getBoundingClientRect().top - editor.getBoundingClientRect().top - 4;
+      editor.dispatchEvent(new Event('scroll'));
+      return active;
+    });
+    expect(clicked).toBe('标题 29');
+    await page.waitForFunction(() => document.querySelector('#outline .outline-item.active')?.textContent === '标题 6', undefined, { timeout: 2000 });
+  });
+
   it('auto-scrolls active outline item into view without stealing editor focus and preserves scrollTop on rebuild', async () => {
     const headings = Array.from({ length: 40 }, (_, i) =>
       i === 38

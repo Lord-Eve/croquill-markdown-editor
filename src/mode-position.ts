@@ -166,8 +166,8 @@ function verifyTextblockSegments(
           tIdx += 1;
           continue;
         }
-        if (token.text[tIdx] === '\n' || token.text[tIdx] === ' ') {
-          const contMatch = body.slice(rawPos, rawEnd).match(/^(\r?\n)((?:[ \t]*>[ \t]?)*[ \t]*)/);
+        if (token.text[tIdx] === '\n' || token.text[tIdx] === '\r' || token.text[tIdx] === ' ') {
+          const contMatch = body.slice(rawPos, rawEnd).match(/^(\r\n?|\n)((?:[ \t]*>[ \t]?)*[ \t]*)/);
           if (contMatch) {
             if (rawPos > segRawStart) {
               segments.push({
@@ -212,7 +212,7 @@ function verifyTextblockSegments(
 
     if (token.kind === 'break') {
       const slice = body.slice(rawPos, rawEnd);
-      const lineBreak = slice.match(/^((?: {2,}|\\)\r?\n)((?:[ \t]*>[ \t]?)*[ \t]*)/);
+      const lineBreak = slice.match(/^((?: {2,}|\\)(?:\r\n?|\n))((?:[ \t]*>[ \t]?)*[ \t]*)/);
       if (lineBreak) {
         const nlLen = lineBreak[1].length;
         const fullLen = lineBreak[0].length;
@@ -230,9 +230,9 @@ function verifyTextblockSegments(
       const nextToken = pmTokens[pmTokens.indexOf(token) + 1];
       // A physical newline after an inline <br> can be a separate soft-break node.
       const nextStartsNl = (nextToken?.kind === 'break' && nextToken.soft) ||
-        (nextToken?.kind === 'text' && nextToken.text.startsWith('\n'));
+        (nextToken?.kind === 'text' && /^[\r\n]/.test(nextToken.text));
       const htmlBr = slice.match(
-        nextStartsNl ? /^<br\b[^>]*\/?>/i : /^<br\b[^>]*\/?>(?:[ \t]*\r?\n(?:[ \t]*>[ \t]?)*[ \t]*)?/i,
+        nextStartsNl ? /^<br\b[^>]*\/?>/i : /^<br\b[^>]*\/?>(?:[ \t]*(?:\r\n?|\n)(?:[ \t]*>[ \t]?)*[ \t]*)?/i,
       );
       if (htmlBr) {
         const tagOnly = slice.match(/^<br\b[^>]*\/?>/i)![0].length;
@@ -248,7 +248,7 @@ function verifyTextblockSegments(
         rawPos += len;
         continue;
       }
-      const softBreak = slice.match(/^(\r?\n)((?:[ \t]*>[ \t]?)*[ \t]*)/);
+      const softBreak = slice.match(/^(\r\n?|\n)((?:[ \t]*>[ \t]?)*[ \t]*)/);
       if (softBreak) {
         const nlLen = softBreak[1].length;
         const fullLen = softBreak[0].length;
@@ -463,21 +463,28 @@ export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAl
             continue;
           }
         }
-        const verified = kind === 'textblock' && verifyTextblockSegments(body, prefixLen, astChild, astParent, i === 0, pmChild);
-        if (verified && (verified.segments !== null || sameCount)) {
-          childBlocks.push(blocks.length);
-          blocks.push({
-            rawStart: prefixLen + start,
-            rawEnd: prefixLen + end,
-            richPos: pmPos,
-            richEnd: pmPos + pmChild.nodeSize,
-            isTextblock: true,
-            canNodeSelect: false,
-            contentSize: pmChild.content.size,
-            rawEmptyOffset: verified.rawEmptyOffset,
-            segments: verified.segments,
-          });
-          continue;
+        if (kind === 'textblock') {
+          const verified = verifyTextblockSegments(body, prefixLen, astChild, astParent, i === 0, pmChild);
+          if (verified?.segments) {
+            childBlocks.push(blocks.length);
+            blocks.push({
+              rawStart: prefixLen + start,
+              rawEnd: prefixLen + end,
+              richPos: pmPos,
+              richEnd: pmPos + pmChild.nodeSize,
+              isTextblock: true,
+              canNodeSelect: false,
+              contentSize: pmChild.content.size,
+              rawEmptyOffset: verified.rawEmptyOffset,
+              segments: verified.segments,
+            });
+            continue;
+          }
+          // The sibling slot and block type still identify the source range.
+          if (sameCount) {
+            childBlocks.push(pushDegenerate(start, end, pmChild, pmPos));
+            continue;
+          }
         }
       }
 

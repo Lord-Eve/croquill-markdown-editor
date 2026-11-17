@@ -165,6 +165,13 @@ export class OutlineController {
     this.scheduleSync();
   };
 
+  private readonly onScrollbarPointerDown = (event: PointerEvent) => {
+    const scroller = this.options.scrollContainer;
+    if (event.target !== scroller) return;
+    if (this.programmaticScrolling) scroller.scrollTo({ top: scroller.scrollTop, behavior: 'instant' });
+    this.onUserScrollStart();
+  };
+
   private readonly onScroll = () => {
     if (this.programmaticScrolling) {
       this.jumpSawScroll = true;
@@ -188,6 +195,7 @@ export class OutlineController {
     const scroller = options.scrollContainer;
     scroller.addEventListener('wheel', this.onUserScrollStart, { passive: true });
     scroller.addEventListener('touchstart', this.onUserScrollStart, { passive: true });
+    scroller.addEventListener('pointerdown', this.onScrollbarPointerDown, { passive: true });
     scroller.addEventListener('scroll', this.onScroll, { passive: true });
     scroller.addEventListener('scrollend', this.onScrollEnd, { passive: true });
   }
@@ -324,6 +332,7 @@ export class OutlineController {
     const scroller = this.options.scrollContainer;
     scroller.removeEventListener('wheel', this.onUserScrollStart);
     scroller.removeEventListener('touchstart', this.onUserScrollStart);
+    scroller.removeEventListener('pointerdown', this.onScrollbarPointerDown);
     scroller.removeEventListener('scroll', this.onScroll);
     scroller.removeEventListener('scrollend', this.onScrollEnd);
   }
