@@ -4,6 +4,8 @@
 
 ## [未发布]
 
+## [0.7.0] - 2026-11-17
+
 ### 新增
 
 - 新增 Windows NSIS 安装程序（`Croquill_<版本>_x64-setup.exe`）与 `package.ps1` 打包脚本：安装到当前用户目录，无需管理员权限，界面为简体中文，附带开始菜单快捷方式与卸载程序
@@ -200,7 +202,7 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.6.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.7.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
@@ -209,3 +211,4 @@
 [0.4.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.3.0...v0.4.0
 [0.5.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.4.0...v0.5.0
 [0.6.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.5.0...v0.6.0
+[0.7.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.6.0...v0.7.0
