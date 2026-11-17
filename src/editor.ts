@@ -23,7 +23,7 @@ import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import type { OutlineHeadingBox } from './outline-tree';
-import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
+import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { preserveTableSource } from './table-source';
@@ -323,13 +323,14 @@ export class MarkdownSurface {
         })
       : null;
 
+    let rebuiltRich = false;
     if (mode === 'rich') {
       this.safetyReason = detectUnsafeMarkdown(this.raw);
       if (this.safetyReason) {
         this.currentMode = 'source';
         this.ensureSource();
       } else {
-        await this.ensureRich();
+        rebuiltRich = await this.ensureRich(captured?.rawOffset);
         this.currentMode = this.safetyReason ? 'source' : 'rich';
         if (this.safetyReason) this.ensureSource();
       }
@@ -344,7 +345,7 @@ export class MarkdownSurface {
     if (captured && fromMode !== this.currentMode) {
       if (fromMode === 'rich' && this.currentMode === 'source' && this.source) {
         applySourceSelectionFromRaw(this.source, this.raw, captured.rawOffset);
-      } else if (fromMode === 'source' && this.currentMode === 'rich' && this.crepe) {
+      } else if (fromMode === 'source' && this.currentMode === 'rich' && this.crepe && !rebuiltRich) {
         applyRichSelectionFromRaw(this.richView(), this.raw, captured.rawOffset);
       }
     }
@@ -621,11 +622,11 @@ export class MarkdownSurface {
     this.publishChange(next); return { ok: true };
   }
 
-  private async ensureRich(): Promise<void> {
+  private async ensureRich(rawOffset?: number): Promise<boolean> {
     if (this.crepe && this.richInput === this.raw) {
       // Leaving and re-entering rich mode must not forget a failed round trip.
       if (this.unreliableRich === this.raw) this.safetyReason = UNRELIABLE_ROUND_TRIP;
-      return;
+      return false;
     }
     this.unreliableRich = undefined;
     const oldSuppress = this.suppress;
@@ -801,12 +802,13 @@ export class MarkdownSurface {
           this.notifyRichChange();
         } }),
       })));
+      if (rawOffset !== undefined) crepe.editor.use(initializeRichModePosition(this.raw, rawOffset));
       await crepe.create();
       // Let the kernel initialize its trailing caret paragraph before recording
       // the origin, including after editable lists and tables. Otherwise undo
       // retains that later-added paragraph and cannot restore the original bytes.
       const readyView = this.richView();
-      readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
+      if (rawOffset === undefined) readyView.dispatch(readyView.state.tr.setMeta('addToHistory', false));
       this.richInput = this.raw;
       this.richSnapshot = this.richView().state.doc;
       this.richOriginDocument = this.richSnapshot;
@@ -814,6 +816,7 @@ export class MarkdownSurface {
       if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRich())) {
         this.safetyReason = UNRELIABLE_ROUND_TRIP; this.unreliableRich = this.raw;
       }
+      return true;
     } finally { this.suppress = oldSuppress; }
   }
 

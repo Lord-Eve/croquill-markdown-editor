@@ -94,6 +94,20 @@ describe('mode switch caret and scroll preservation through the real app', () =>
   const richHeadPos = () =>
     page.evaluate(() => (window as any).fileApp.surface.richView().state.selection.head as number);
 
+  const caretWindowPosition = () => page.evaluate(() => {
+    const { surface } = (window as any).fileApp;
+    const editor = document.getElementById('editor-scroll')!.getBoundingClientRect();
+    const view = surface.mode === 'source' ? surface.source : surface.richView();
+    const caret = view.coordsAtPos(surface.mode === 'source' ? view.state.selection.main.head : view.state.selection.head);
+    if (!caret) throw new Error('Caret coordinates are unavailable');
+    return {
+      top: caret.top as number,
+      scrollerTop: editor.top,
+      visible: caret.bottom > editor.top && caret.top < editor.bottom,
+      notice: !document.getElementById('notice')!.hidden,
+    };
+  });
+
   it('opens the manual outline-position sample in rich mode', async () => {
     const source = readFileSync(join(examplesPath, 'outline-position.md'), 'utf8');
     await openFileApp(page, baseURL, { files: { [currentFile]: source } });
@@ -661,6 +675,97 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     });
     expect(exposedBackRich.caretVisible).toBe(false);
     expect(Math.abs(exposedBackRich.relTop - exposedInSource.relTop)).toBeLessThanOrEqual(24);
+  });
+
+  it.each(['段落 CARETX', '任务 LISTX'])('preserves the caret and scroll after rebuilding an edited source document at %s', async snippet => {
+    const filler = Array.from({ length: 24 }, (_, i) => `占位段落 ${i + 1}，在文档两侧留出足够的滚动距离。`).join('\n\n');
+    const doc = [
+      filler,
+      '段落 CARETX 结尾',
+      '1. 有序第一项\n2. 有序第二项',
+      '普通无序列表如下。',
+      '- 无序第一项\n- 无序第二项',
+      '任务列表如下。',
+      '- [ ] 任务 LISTX 结尾\n- [x] 已完成任务',
+      filler,
+    ].join('\n\n');
+    await open(doc);
+    const offset = snippet.length - 2;
+    const originalRawCaret = doc.indexOf(snippet) + offset;
+    await setRichCaretBySubstring(snippet, offset);
+    const originalRichCaret = await richHeadPos();
+    await page.evaluate(() => { (window as any).previousRichView = (window as any).fileApp.surface.richView(); });
+
+    await pressModeToggle();
+    expect(await sourceHeadOffset()).toBe(originalRawCaret);
+    await page.keyboard.insertText('字');
+    expect(await sourceHeadOffset()).toBe(originalRawCaret + 1);
+    await page.evaluate(() => {
+      const cm = (window as any).fileApp.surface.source;
+      const scroller = document.getElementById('editor-scroll')!;
+      const viewport = scroller.getBoundingClientRect();
+      const line = cm.lineBlockAt(cm.state.selection.main.head);
+      scroller.scrollTop += cm.documentTop + line.top - viewport.top - viewport.height * 0.45;
+    });
+    await settleFrames();
+    const before = await caretWindowPosition();
+    expect(before.visible).toBe(true);
+
+    await pressModeToggle();
+    const rebuilt = await page.evaluate(() => (window as any).fileApp.surface.richView() !== (window as any).previousRichView);
+    expect(rebuilt).toBe(true);
+    expect(await richHeadPos()).toBe(originalRichCaret + 1);
+    const after = await caretWindowPosition();
+    expect(after.visible).toBe(true);
+    expect(Math.abs(after.top - before.top)).toBeLessThanOrEqual(24);
+    expect(await page.evaluate(() => (window as any).fileApp.surface.getMarkdown())).toBe(
+      doc.slice(0, originalRawCaret) + '字' + doc.slice(originalRawCaret),
+    );
+  });
+
+  it('restores source EOF to the trailing caret paragraph when rebuilding a list-ending document', async () => {
+    await open('前段\n\n- 末尾列表\n');
+    await pressModeToggle();
+    await page.evaluate(() => {
+      const cm = (window as any).fileApp.surface.source;
+      cm.dispatch({ selection: { anchor: cm.state.doc.length - 1 } });
+    });
+    await page.keyboard.insertText('字');
+    await page.keyboard.press('Control+End');
+    await pressModeToggle();
+    const caret = await page.evaluate(() => {
+      const { state } = (window as any).fileApp.surface.richView();
+      return { atEnd: state.selection.head === state.doc.content.size - 1, parent: state.selection.$head.parent.type.name,
+        empty: state.selection.$head.parent.content.size === 0 };
+    });
+    expect(caret).toEqual({ atEnd: true, parent: 'paragraph', empty: true });
+  });
+
+  it('keeps the caret at the same window height as the frontmatter notice hides and returns', async () => {
+    const filler = Array.from({ length: 24 }, (_, i) => `用于测试提示条的第 ${i + 1} 段正文。`).join('\n\n');
+    await open(`---\ntitle: 窗口位置测试\n---\n\n${filler}\n\n光标锚点 ANCHORX。\n\n${filler}\n`);
+    await setRichCaretBySubstring('ANCHORX', 3);
+    await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      const scroller = document.getElementById('editor-scroll')!;
+      const viewport = scroller.getBoundingClientRect();
+      scroller.scrollTop += view.coordsAtPos(view.state.selection.head).top - viewport.top - viewport.height * 0.45;
+    });
+    await settleFrames();
+    const richBefore = await caretWindowPosition();
+    expect(richBefore).toMatchObject({ visible: true, notice: true });
+
+    await pressModeToggle();
+    const source = await caretWindowPosition();
+    expect(source).toMatchObject({ visible: true, notice: false });
+    expect(source.scrollerTop).toBeLessThan(richBefore.scrollerTop);
+    expect(Math.abs(source.top - richBefore.top)).toBeLessThanOrEqual(24);
+
+    await pressModeToggle();
+    const richAfter = await caretWindowPosition();
+    expect(richAfter).toMatchObject({ visible: true, notice: true });
+    expect(richAfter.scrollerTop).toBeGreaterThan(source.scrollerTop);
+    expect(Math.abs(richAfter.top - source.top)).toBeLessThanOrEqual(24);
   });
 
   it('produces zero dirty flags, zero history steps, exact byte identity, and respects IME composition', async () => {

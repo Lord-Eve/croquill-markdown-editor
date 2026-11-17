@@ -1,8 +1,10 @@
 import { EditorSelection, Transaction } from '@codemirror/state';
 import type { EditorView as CMView } from '@codemirror/view';
+import { EditorStateReady, editorStateCtx, editorViewTimerCtx } from '@milkdown/kit/core';
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
-import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@milkdown/kit/prose/state';
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState as PMState } from '@milkdown/kit/prose/state';
 import type { EditorView as PMView } from '@milkdown/kit/prose/view';
+import { addTimer } from '@milkdown/kit/utils';
 import { splitFrontmatter } from './fidelity';
 import { parsePositionedRichMarkdown } from './rich-markdown';
 import { normalizedOffset, sourceOffset } from './search-core';
@@ -61,7 +63,7 @@ export interface DocumentAlignment {
 }
 
 export type ModeScrollAnchor =
-  | { kind: 'caret'; offsetFromVpTop: number }
+  | { kind: 'caret'; top: number }
   | { kind: 'block'; rawStart: number; rawEnd: number; offsetFromVpTop: number };
 
 export interface CapturedModePosition {
@@ -777,7 +779,7 @@ function measureSourceBlockBox(view: CMView, raw: string, range: { rawStart: num
   }
 }
 
-/** Captures current caret raw offset and relative viewport scroll anchor prior to switching modes. */
+/** Captures the caret's source offset and its window position, or the first exposed block. */
 export function captureModePosition(options: {
   fromMode: 'rich' | 'source';
   raw: string;
@@ -795,7 +797,7 @@ export function captureModePosition(options: {
     const vp = scrollContainer.getBoundingClientRect();
     const caret = measureRichSelectionRect(richView, richView.state.selection);
     if (caret && caret.bottom > vp.top + 0.5 && caret.top < vp.bottom - 0.5) {
-      return { rawOffset, scrollAnchor: { kind: 'caret', offsetFromVpTop: caret.top - vp.top } };
+      return { rawOffset, scrollAnchor: { kind: 'caret', top: caret.top } };
     }
 
     for (const block of alignment.blocks) {
@@ -818,7 +820,7 @@ export function captureModePosition(options: {
   const vp = scrollContainer.getBoundingClientRect();
   const caret = measureSourcePosRect(sourceView, cmHead);
   if (caret && caret.bottom > vp.top + 0.5 && caret.top < vp.bottom - 0.5) {
-    return { rawOffset, scrollAnchor: { kind: 'caret', offsetFromVpTop: caret.top - vp.top } };
+    return { rawOffset, scrollAnchor: { kind: 'caret', top: caret.top } };
   }
 
   for (const range of collectAstBlockRanges(raw)) {
@@ -843,15 +845,29 @@ export function applySourceSelectionFromRaw(sourceView: CMView, raw: string, raw
   });
 }
 
-/** Applies Rich selection from a raw offset without mutating undo history or scrolling. */
-export function applyRichSelectionFromRaw(richView: PMView, raw: string, rawOffset: number): void {
-  const alignment = buildDocumentAlignment(raw, richView.state.doc);
-  const selection = mapRawOffsetToRichSelection(alignment, richView.state.doc, rawOffset);
-  const tr = richView.state.tr
+function richModeSelectionTransaction(state: PMState, raw: string, rawOffset: number) {
+  const alignment = buildDocumentAlignment(raw, state.doc);
+  const selection = mapRawOffsetToRichSelection(alignment, state.doc, rawOffset);
+  return state.tr
     .setSelection(selection)
     .setMeta('addToHistory', false)
     .setMeta(MODE_POSITION_META, true);
-  richView.dispatch(tr);
+}
+
+/** Seeds the restored selection before mounting node views that capture the initial selection. */
+export function initializeRichModePosition(raw: string, rawOffset: number) {
+  return addTimer(async ctx => {
+    await ctx.wait(EditorStateReady);
+    const state = ctx.get(editorStateCtx);
+    // Run the kernel's trailing paragraph transaction before mapping the caret at EOF.
+    const ready = state.apply(state.tr.setMeta('addToHistory', false));
+    ctx.set(editorStateCtx, ready.apply(richModeSelectionTransaction(ready, raw, rawOffset)));
+  }, editorViewTimerCtx, 'CroquillInitialModePosition');
+}
+
+/** Applies Rich selection on a reused view without mutating undo history or scrolling. */
+export function applyRichSelectionFromRaw(richView: PMView, raw: string, rawOffset: number): void {
+  richView.dispatch(richModeSelectionTransaction(richView.state, raw, rawOffset));
 }
 
 /**
@@ -922,7 +938,7 @@ export function modeNodeSelectionGuardPlugin(): Plugin {
   });
 }
 
-/** Restores relative viewport scroll position across animation frames after layout settles. */
+/** Restores the caret's window position or the first exposed block after layout. */
 export function scheduleModeScrollRestore(options: {
   targetMode: 'rich' | 'source';
   raw: string;
@@ -983,7 +999,7 @@ export function scheduleModeScrollRestore(options: {
     const actualTop = measureCurrentTop();
     if (actualTop !== null) {
       const vpTop = scrollContainer.getBoundingClientRect().top;
-      const desiredTop = vpTop + anchor.offsetFromVpTop;
+      const desiredTop = anchor.kind === 'caret' ? Math.max(vpTop, anchor.top) : vpTop + anchor.offsetFromVpTop;
       const delta = actualTop - desiredTop;
       if (Math.abs(delta) > 0.5) {
         const maxScroll = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
