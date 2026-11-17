@@ -3,10 +3,8 @@ import type { EditorView as CMView } from '@codemirror/view';
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView as PMView } from '@milkdown/kit/prose/view';
-import { tocMarkerOf } from './document-syntax';
-import { parseMarkdownAst, splitFrontmatter } from './fidelity';
-import { isHtmlComment } from './html-comments';
-import { preserveRawMarkdown } from './raw-markdown';
+import { splitFrontmatter } from './fidelity';
+import { parsePositionedRichMarkdown } from './rich-markdown';
 import { normalizedOffset, sourceOffset } from './search-core';
 
 const MODE_POSITION_META = 'croquill-mode-position';
@@ -26,6 +24,7 @@ interface AstNodeLike {
   url?: string;
   alt?: string | null;
   title?: string | null;
+  alertType?: string;
   position?: AstPosition;
   children?: AstNodeLike[];
 }
@@ -50,7 +49,7 @@ export interface AlignedContainer {
   rawStart: number;
   rawEnd: number;
   richPos: number;
-  richEnd: number;
+  alertMarkerEnd?: number;
   childBlockIndices: number[];
 }
 
@@ -72,7 +71,7 @@ export interface CapturedModePosition {
 
 type PmToken =
   | { kind: 'text'; text: string; pmFrom: number; pmTo: number }
-  | { kind: 'break'; pmFrom: number; pmTo: number }
+  | { kind: 'break'; soft: boolean; pmFrom: number; pmTo: number }
   | { kind: 'inline_raw'; raw: string; pmFrom: number; pmTo: number }
   | { kind: 'footnote_ref'; label: string; pmFrom: number; pmTo: number }
   | { kind: 'unknown'; pmFrom: number; pmTo: number };
@@ -97,7 +96,7 @@ function collectPmTokens(node: PMNode): PmToken[] {
     }
     const name = child.type.name;
     if (name === 'hardbreak') {
-      tokens.push({ kind: 'break', pmFrom: offset, pmTo: offset + child.nodeSize });
+      tokens.push({ kind: 'break', soft: child.attrs.isInline === true, pmFrom: offset, pmTo: offset + child.nodeSize });
     } else if (name === 'croquill_inline_raw') {
       tokens.push({
         kind: 'inline_raw',
@@ -231,7 +230,9 @@ function verifyTextblockSegments(
         continue;
       }
       const nextToken = pmTokens[pmTokens.indexOf(token) + 1];
-      const nextStartsNl = nextToken?.kind === 'text' && nextToken.text.startsWith('\n');
+      // A physical newline after an inline <br> can be a separate soft-break node.
+      const nextStartsNl = (nextToken?.kind === 'break' && nextToken.soft) ||
+        (nextToken?.kind === 'text' && nextToken.text.startsWith('\n'));
       const htmlBr = slice.match(
         nextStartsNl ? /^<br\b[^>]*\/?>/i : /^<br\b[^>]*\/?>(?:[ \t]*\r?\n(?:[ \t]*>[ \t]?)*[ \t]*)?/i,
       );
@@ -305,7 +306,7 @@ function verifyTextblockSegments(
 }
 
 function editableAst(body: string): AstNodeLike {
-  return preserveRawMarkdown()(parseMarkdownAst(body), { value: body }) as AstNodeLike;
+  return parsePositionedRichMarkdown(body) as AstNodeLike;
 }
 
 function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode): 'container' | 'textblock' | 'degenerate' | 'mismatch' {
@@ -321,9 +322,8 @@ function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode):
       return 'degenerate';
     }
   }
-  if (pmType === 'croquill_html_comment' && astNode.type === 'html' && isHtmlComment(astNode.value ?? '') &&
-    pmNode.attrs.value === body.slice(start, end)) return 'degenerate';
-  if (pmType === 'croquill_toc' && tocMarkerOf(astNode, body) === pmNode.attrs.value) return 'degenerate';
+  if (pmType === 'croquill_html_comment' && astNode.type === 'croquillHtmlComment' && pmNode.attrs.value === astNode.value) return 'degenerate';
+  if (pmType === 'croquill_toc' && astNode.type === 'croquillToc' && pmNode.attrs.value === astNode.value) return 'degenerate';
   if (pmType === 'image-block' && astNode.type === 'paragraph' && astNode.children?.length === 1) {
     const image = astNode.children[0];
     if (image.type === 'image' && image.url === pmNode.attrs.src && (image.alt ?? '') === pmNode.attrs.alt &&
@@ -340,6 +340,7 @@ function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode):
   if (pmType === 'heading' && astNode.type === 'heading' && Number(pmNode.attrs.level) === astNode.depth) return 'textblock';
 
   if (pmType === 'blockquote' && astNode.type === 'blockquote') return 'container';
+  if (pmType === 'croquill_alert' && astNode.type === 'croquillAlert' && pmNode.attrs.alertType === astNode.alertType) return 'container';
   if (astNode.type === 'list' && pmType === (astNode.ordered ? 'ordered_list' : 'bullet_list')) return 'container';
   if (pmType === 'list_item' && astNode.type === 'listItem') return 'container';
 
@@ -427,14 +428,20 @@ export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAl
         if (kind === 'container' && sameCount) {
           const nestedIndices = alignChildren(astChild.children ?? [], astChild, pmChild, pmPos + 1);
           if (nestedIndices.length > 0) {
+            const markerLine = astChild.type === 'croquillAlert' ? /^[^\r\n]*/.exec(body.slice(start, end))?.[0] : undefined;
             containers.push({
               rawStart: prefixLen + start,
               rawEnd: prefixLen + end,
               richPos: pmPos,
-              richEnd: pmPos + pmChild.nodeSize,
+              alertMarkerEnd: markerLine == null ? undefined : prefixLen + start + markerLine.length,
               childBlockIndices: nestedIndices,
             });
             childBlocks.push(...nestedIndices);
+            continue;
+          }
+          // Even a marker-only alert has its own caret paragraph in the rich editor.
+          if (astChild.type === 'croquillAlert') {
+            childBlocks.push(pushDegenerate(start, end, pmChild, pmPos));
             continue;
           }
         }
@@ -607,6 +614,10 @@ export function mapRawOffsetToRichSelection(
 
   const blockIndex = findDeepestRawBlockIndex(alignment, rawOffset);
   if (blockIndex === -1) {
+    const alert = alignment.containers.find(container => container.alertMarkerEnd != null &&
+      rawOffset >= container.rawStart && rawOffset <= container.alertMarkerEnd);
+    if (alert) return Selection.near(richDoc.resolve(alert.richPos + 1), 1);
+
     if (alignment.unverifiedRanges.some(range => rawOffset >= range.rawStart && rawOffset <= range.rawEnd)) {
       const previous = previousAlignedBlock(alignment, 'rawEnd', rawOffset);
       return previous ? selectBlockEnd(richDoc, previous) : Selection.atStart(richDoc);
@@ -709,11 +720,10 @@ function collectAstBlockRanges(raw: string): { rawStart: number; rawEnd: number 
   const ranges: { rawStart: number; rawEnd: number }[] = [];
 
   const visit = (node: AstNodeLike) => {
-    if (node.type === 'blockquote' || node.type === 'list' || node.type === 'listItem') {
-      if (node.children?.length) {
-        for (const child of node.children) visit(child);
-        return;
-      }
+    if (['blockquote', 'croquillAlert', 'list', 'listItem'].includes(node.type) && node.children?.length) {
+      const before = ranges.length;
+      for (const child of node.children) visit(child);
+      if (ranges.length > before) return;
     }
     const start = node.position?.start?.offset;
     const end = node.position?.end?.offset;

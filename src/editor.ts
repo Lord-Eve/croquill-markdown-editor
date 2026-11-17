@@ -24,17 +24,18 @@ import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import type { OutlineHeadingBox } from './outline-tree';
 import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
-import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, preserveRawMarkdown, rawMarkdownBlock } from './raw-markdown';
-import { configureHtmlBreaks, handleHtmlBreakKey, parseHtmlBreaks } from './html-break';
+import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
+import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
-import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent, preserveInlineHtml, parseHtmlComments } from './inline-raw';
-import { alertBlock, configureAlerts, parseAlerts } from './alerts';
+import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent } from './inline-raw';
+import { alertBlock, configureAlerts } from './alerts';
 import { highlightMark } from './highlight';
-import { configureInlineSource, flattenInlineSource } from './inline-source-markdown';
+import { configureInlineSource } from './inline-source-markdown';
 import { handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
 import { preserveRenderedSource } from './rendered-source';
-import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, parseTocFootnotes, tocBlock, tocFootnotePlugin } from './toc-footnotes';
+import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, tocBlock, tocFootnotePlugin } from './toc-footnotes';
+import { richMarkdownTransforms } from './rich-markdown';
 import { SearchPanel, type SearchReplaceResult } from './search-panel';
 import { RichSearchPainter } from './rich-search';
 import { applySourceChanges, normalizedOffset, normalizedSource, replacementProblem, sourceOffset, type SearchMatch, type SearchOptions, type SourceChange } from './search-core';
@@ -681,13 +682,7 @@ export class MarkdownSurface {
         configureAlerts(ctx);
         configureTocFootnotes(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
-          { plugin: preserveRawMarkdown, options: {} },
-          { plugin: parseHtmlComments, options: {} },
-          { plugin: preserveInlineHtml, options: {} },
-          { plugin: parseTocFootnotes, options: {} },
-          { plugin: parseHtmlBreaks, options: {} },
-          { plugin: flattenInlineSource, options: {} },
-          { plugin: parseAlerts, options: {} }, ...plugins,
+          ...richMarkdownTransforms.map(plugin => ({ plugin, options: {} })), ...plugins,
         ]);
       });
       // Crepe's block-only drop indicator also handles text selections, snapping

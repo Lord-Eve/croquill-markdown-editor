@@ -1,9 +1,23 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Browser, Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
+import type { Node as PMNode } from '@milkdown/kit/prose/model';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createTestServer } from './server';
 import { launchTestBrowser } from './browser';
 import { currentFile, focusApp, openFileApp } from './app-files-fixture';
+
+const examplesPath = fileURLToPath(new URL('../examples/', import.meta.url));
+
+function publicMarkdownPaths(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== 'private') return publicMarkdownPaths(path);
+    return entry.isFile() && /\.md$/i.test(entry.name) ? [path] : [];
+  });
+}
 
 describe('mode switch caret and scroll preservation through the real app', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
@@ -78,6 +92,121 @@ describe('mode switch caret and scroll preservation through the real app', () =>
 
   const richHeadPos = () =>
     page.evaluate(() => (window as any).fileApp.surface.richView().state.selection.head as number);
+
+  it('opens the manual outline-position sample in rich mode', async () => {
+    const source = readFileSync(join(examplesPath, 'outline-position.md'), 'utf8');
+    await openFileApp(page, baseURL, { files: { [currentFile]: source } });
+    const state = await page.evaluate(() => {
+      const { surface } = (window as any).fileApp;
+      return { mode: surface.mode, reason: surface.getSafetyReason() };
+    });
+    expect(state).toEqual({ mode: 'rich', reason: null });
+  });
+
+  it.each([
+    ['> [!NOTE]\n> 提示正文 ALERTX 结束\n\n后文 AFTERX 结束\n', ['ALERTX', 'AFTERX']],
+    [
+      '前文 BEFOREX 结束\n\n> [!TIP]\n> 提示正文 ALERTX 结束\n> 第二行 WRAPX\n>\n> 另一段 PARAX\n>\n> - 清单里面 LISTX\n\n后文 AFTERX 结束\n',
+      ['BEFOREX', 'ALERTX', 'WRAPX', 'PARAX', 'LISTX', 'AFTERX'],
+    ],
+  ] as const)('keeps alert body carets exact and the marker inside its own alert (%#)', async (doc, snippets) => {
+    await open(doc);
+    for (const snippet of snippets) {
+      await setRichCaretBySubstring(snippet, 2);
+      const richHead = await richHeadPos();
+      await pressModeToggle();
+      expect(await sourceHeadOffset()).toBe(doc.indexOf(snippet) + 2);
+      await pressModeToggle();
+      expect(await richHeadPos()).toBe(richHead);
+    }
+
+    await setRichCaretBySubstring('提示正文');
+    const alertStart = await richHeadPos();
+    await pressModeToggle();
+    await page.evaluate(offset => {
+      const cm = (window as any).fileApp.surface.source;
+      cm.dispatch({ selection: { anchor: offset } });
+    }, doc.indexOf('[!') + 2);
+    await pressModeToggle();
+    expect(await richHeadPos()).toBe(alertStart);
+  });
+
+  it('scans text caret alignment in every public example that opens in rich mode', async () => {
+    const samples = publicMarkdownPaths(examplesPath).sort().map(path => ({
+      name: relative(examplesPath, path).replaceAll('\\', '/'),
+      raw: readFileSync(path, 'utf8'),
+    }));
+    await page.goto(`${baseURL}/tests/harness.html`);
+    await page.addScriptTag({ type: 'module', content: `
+      import { MarkdownSurface } from '/src/editor.ts';
+      import * as alignment from '/src/mode-position.ts';
+      window.positionScan = { MarkdownSurface, ...alignment };
+    ` });
+    await page.waitForFunction(() => 'positionScan' in window);
+    const reports = await page.evaluate(async samples => {
+      const { MarkdownSurface, buildDocumentAlignment, mapRichSelectionToRawOffset, mapRawOffsetToRichSelection } = (window as any).positionScan;
+      const richRoot = document.createElement('div');
+      const sourceRoot = document.createElement('div');
+      document.body.append(richRoot, sourceRoot);
+      const surface = new MarkdownSurface({ richRoot, sourceRoot, resolveImage: async () => '', onChange: () => {} });
+      try {
+        const reports = [];
+        for (const { name, raw } of samples) {
+          await surface.load(raw);
+          if (surface.mode !== 'rich') {
+            reports.push({ name, skipped: true as const });
+            continue;
+          }
+          const view = (surface as any).richView();
+          const doc: PMNode = view.state.doc;
+          const alignment = buildDocumentAlignment(raw, doc);
+          const failures: string[] = [];
+          let prevOffset = 0;
+          let positions = 0;
+          let alertTextPositions = 0;
+          doc.descendants((block, pos) => {
+            if (!block.isTextblock) return true;
+            const parent = doc.resolve(pos);
+            const ancestors = Array.from({ length: parent.depth }, (_, i) => parent.node(i + 1).type.name);
+            const ordinary = ['paragraph', 'heading'].includes(block.type.name) &&
+              !ancestors.some(type => ['table_cell', 'table_header', 'footnote_definition'].includes(type));
+            for (let offset = 0; offset <= block.content.size; offset++) {
+              const head = pos + 1 + offset;
+              const selection = view.state.selection.constructor.near(doc.resolve(head));
+              const rawOffset = mapRichSelectionToRawOffset(alignment, raw.length, selection);
+              positions++;
+              if (rawOffset < prevOffset && failures.length < 8) {
+                failures.push(`${block.type.name} ${head}: offset ${rawOffset} goes back from ${prevOffset}`);
+              }
+              prevOffset = rawOffset;
+              // Block-level fallback structures, and positions before breaks or atoms, have no ordinary character to compare.
+              const next = block.childAfter(offset);
+              if (ordinary && next.node?.isText) {
+                if (ancestors.includes('croquill_alert')) alertTextPositions++;
+                const expected = next.node.text![offset - next.offset];
+                const restored = mapRawOffsetToRichSelection(alignment, doc, rawOffset).head;
+                if ((raw[rawOffset] !== expected || restored !== head) && failures.length < 8) {
+                  failures.push(`${block.type.name} ${head}: source ${rawOffset} has ${JSON.stringify(raw[rawOffset])}, expected ${JSON.stringify(expected)}; restored ${restored}`);
+                }
+              }
+            }
+            return false;
+          });
+          reports.push({ name, skipped: false as const, positions, alertTextPositions, failures });
+        }
+        return reports;
+      } finally {
+        await surface.destroy();
+      }
+    }, samples);
+
+    const skipped = reports.filter(report => report.skipped).map(report => report.name);
+    const scanned = reports.filter(report => !report.skipped);
+    console.log(`Public examples in source protection: ${skipped.join(', ') || 'none'}`);
+    console.log(`Scanned ${scanned.reduce((total, report) => total + report.positions, 0)} text caret positions across ${scanned.length} public examples`);
+    expect(scanned.find(report => report.name === 'highlight-alert.md')?.alertTextPositions).toBeGreaterThan(0);
+    expect(scanned.filter(report => report.failures.length).map(({ name, failures }) => ({ name, failures }))).toEqual([]);
+  }, 60000);
 
   it('preserves exact character offsets inside inline syntax markers, CJK text, headings, lists, task items, and blockquotes', async () => {
     const doc = [
