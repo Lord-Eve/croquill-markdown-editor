@@ -74,7 +74,7 @@ type PmToken =
   | { kind: 'break'; soft: boolean; pmFrom: number; pmTo: number }
   | { kind: 'inline_raw'; raw: string; pmFrom: number; pmTo: number }
   | { kind: 'footnote_ref'; label: string; pmFrom: number; pmTo: number }
-  | { kind: 'unknown'; pmFrom: number; pmTo: number };
+  | { kind: 'inline_node'; node: PMNode; pmFrom: number; pmTo: number };
 
 function isEmptyParagraphPm(node: PMNode): boolean {
   return node.type.name === 'paragraph' && node.content.size === 0;
@@ -108,7 +108,7 @@ function collectPmTokens(node: PMNode): PmToken[] {
       const label = String(child.attrs.label ?? child.attrs.identifier ?? '');
       tokens.push({ kind: 'footnote_ref', label, pmFrom: offset, pmTo: offset + child.nodeSize });
     } else {
-      tokens.push({ kind: 'unknown', pmFrom: offset, pmTo: offset + child.nodeSize });
+      tokens.push({ kind: 'inline_node', node: child, pmFrom: offset, pmTo: offset + child.nodeSize });
     }
   });
   return tokens;
@@ -121,25 +121,22 @@ function verifyTextblockSegments(
   astParent: AstNodeLike | null,
   isFirstChild: boolean,
   pmNode: PMNode,
-): { exact: true; segments: InlineSegment[]; rawEmptyOffset: number } | { exact: false } {
-  const blockStart = astBlock.position?.start?.offset;
-  const blockEnd = astBlock.position?.end?.offset;
-  if (blockStart == null || blockEnd == null) return { exact: false };
+): { segments: InlineSegment[] | null; rawEmptyOffset: number } | null {
+  const blockEnd = astBlock.position?.end.offset;
+  if (blockEnd == null) return null;
 
   const astChildren = astBlock.children ?? [];
   if (astChildren.length === 0) {
     if (pmNode.content.size === 0) {
-      return { exact: true, segments: [], rawEmptyOffset: prefixLen + blockEnd };
+      return { segments: [], rawEmptyOffset: prefixLen + blockEnd };
     }
-    return { exact: false };
+    return null;
   }
 
   const pmTokens = collectPmTokens(pmNode);
-  if (pmTokens.some(token => token.kind === 'unknown')) return { exact: false };
-
   const firstStart = astChildren[0]?.position?.start?.offset;
   const lastEnd = astChildren[astChildren.length - 1]?.position?.end?.offset;
-  if (firstStart == null || lastEnd == null) return { exact: false };
+  if (firstStart == null || lastEnd == null) return null;
 
   let rawPos = firstStart;
   const rawEnd = lastEnd;
@@ -154,6 +151,7 @@ function verifyTextblockSegments(
   }
 
   const segments: InlineSegment[] = [];
+  let hasUnmappedInline = false;
 
   for (const token of pmTokens) {
     if (token.kind === 'text') {
@@ -197,7 +195,7 @@ function verifyTextblockSegments(
             continue;
           }
         }
-        return { exact: false };
+        return null;
       }
 
       if (rawPos > segRawStart) {
@@ -265,11 +263,11 @@ function verifyTextblockSegments(
         rawPos += fullLen;
         continue;
       }
-      return { exact: false };
+      return null;
     }
 
     if (token.kind === 'inline_raw') {
-      if (!token.raw || !body.slice(rawPos, rawEnd).startsWith(token.raw)) return { exact: false };
+      if (!token.raw || !body.slice(rawPos, rawEnd).startsWith(token.raw)) return null;
       segments.push({
         kind: 'gap',
         rawFrom: prefixLen + rawPos,
@@ -284,7 +282,7 @@ function verifyTextblockSegments(
 
     if (token.kind === 'footnote_ref') {
       const refMatch = body.slice(rawPos, rawEnd).match(/^\[\^([^\]]+)\]/);
-      if (!refMatch || (token.label && refMatch[1] !== token.label)) return { exact: false };
+      if (!refMatch || (token.label && refMatch[1] !== token.label)) return null;
       const len = refMatch[0].length;
       segments.push({
         kind: 'gap',
@@ -298,11 +296,31 @@ function verifyTextblockSegments(
       continue;
     }
 
-    return { exact: false };
+    // A positioned inline node and exact surrounding text can verify the
+    // enclosing block even when this node's internal mapping is unknown.
+    const inline = astChildren.find(child => child.position?.start.offset === rawPos &&
+      child.type !== 'text' && child.type !== 'break');
+    const end = inline?.position?.end.offset;
+    if (!inline || end == null || end <= rawPos || end > rawEnd) return null;
+
+    const { type, attrs } = token.node;
+    const verifiedMath = type.name === 'math_inline' && inline.type === 'inlineMath' && inline.value === attrs.value;
+    const verifiedImage = type.name === 'image' && inline.type === 'image' && inline.url === attrs.src &&
+      (inline.alt ?? '') === attrs.alt && (inline.title ?? '') === attrs.title;
+    if (!verifiedMath && !verifiedImage) hasUnmappedInline = true;
+    segments.push({
+      kind: 'gap',
+      rawFrom: prefixLen + rawPos,
+      rawSplitRaw: prefixLen + end,
+      rawTo: prefixLen + end,
+      pmFrom: token.pmFrom,
+      pmTo: token.pmTo,
+    });
+    rawPos = end;
   }
 
-  if (rawPos !== rawEnd) return { exact: false };
-  return { exact: true, segments, rawEmptyOffset: prefixLen + rawPos };
+  if (rawPos !== rawEnd) return null;
+  return { segments: hasUnmappedInline ? null : segments, rawEmptyOffset: prefixLen + rawPos };
 }
 
 function editableAst(body: string): AstNodeLike {
@@ -446,7 +464,7 @@ export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAl
           }
         }
         const verified = kind === 'textblock' && verifyTextblockSegments(body, prefixLen, astChild, astParent, i === 0, pmChild);
-        if (verified && verified.exact) {
+        if (verified && (verified.segments !== null || sameCount)) {
           childBlocks.push(blocks.length);
           blocks.push({
             rawStart: prefixLen + start,

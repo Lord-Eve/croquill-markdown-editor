@@ -18,6 +18,11 @@
 
 - 完善 `acceptance/installer-acceptance.ps1`、`README.md` 与 `acceptance/README.md`：同时记录 `UserChoice` 与 Windows 11 `UserChoiceLatest` 状态，移除 `README.md`“设为默认打开方式”一节的注册表键名；非 CI 环境运行验收脚本需显式传入 `-AllowLocalRun`；`.markdown` 原已有默认值导致跳过场景 D 时在 `results.json` 与 `report.md` 记为 `SKIP`（不计作失败）
 
+### 修复
+
+- 切换编辑模式时，行内公式和图片前后的文字可精确定位。已配对的文本块如果无法确认行内偏移，就回到该块开头。
+- 从源码切回所见即所得后直接拖图，图片会插到拖放位置。
+
 ## [0.6.0] - 2026-11-15
 
 ### 新增

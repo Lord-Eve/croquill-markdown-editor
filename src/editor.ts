@@ -243,7 +243,10 @@ export class MarkdownSurface {
     } else if (this.crepe) {
       const view = this.richView();
       const pos = view.posAtCoords({ left: x, top: y });
-      if (pos) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos.pos))));
+      if (pos) view.dispatch(view.state.tr
+        .setSelection(TextSelection.near(view.state.doc.resolve(pos.pos)))
+        .setMeta('pointer', true)
+        .setMeta('addToHistory', false));
     }
   }
 

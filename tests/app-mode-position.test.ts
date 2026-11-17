@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createTestServer } from './server';
 import { launchTestBrowser } from './browser';
 import { currentFile, focusApp, openFileApp } from './app-files-fixture';
+import type { AlignedBlock } from '../src/mode-position';
 
 const examplesPath = fileURLToPath(new URL('../examples/', import.meta.url));
 
@@ -131,6 +132,61 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     expect(await richHeadPos()).toBe(alertStart);
   });
 
+  it.each([
+    { doc: '前段 BEFOREX 结束\n\n包含 $x^2$ 的后段 MATHX 结束\n\n尾段 TAILX\n', first: '包含', after: 'MATHX' },
+    { doc: '前段 BEFOREX 结束\n\n文字 ![图](a.png) 之后 IMGX 结束\n\n尾段 TAILX\n', first: '文字', after: 'IMGX' },
+  ])('round-trips exact text caret offsets around the inline node before $after', async ({ doc, first, after }) => {
+    await open(doc);
+    for (const snippet of ['BEFOREX', first, after, 'TAILX']) {
+      await setRichCaretBySubstring(snippet, 1);
+      const richHead = await richHeadPos();
+      await pressModeToggle();
+      expect(await sourceHeadOffset()).toBe(doc.indexOf(snippet) + 1);
+      await pressModeToggle();
+      expect(await richHeadPos()).toBe(richHead);
+    }
+  });
+
+  it('inserts an external image at the drop point after restoring a raw block selection', async () => {
+    const doc = '前段\n\n<div>原文块</div>\n\n中隔 BARRIERX\n\n投放前 DROPX 投放后\n\n尾段 TAILX\n';
+    await open(doc);
+    await pressModeToggle();
+    await page.evaluate(offset => {
+      const cm = (window as any).fileApp.surface.source;
+      cm.dispatch({ selection: { anchor: offset } });
+    }, doc.indexOf('原文块') + 1);
+    await pressModeToggle();
+
+    const drop = await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      const selectedNode = view.state.selection.node?.type.name;
+      let target = -1;
+      const document: PMNode = view.state.doc;
+      document.descendants((node, pos) => {
+        if (node.isText && node.text?.includes('DROPX')) target = pos + node.text.indexOf('DROPX') + 2;
+      });
+      if (target < 0) throw new Error('Missing drop target');
+      const point = view.coordsAtPos(target);
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'drop.png', { type: 'image/png' }));
+      const event = new DragEvent('drop', {
+        bubbles: true, cancelable: true, dataTransfer: transfer, clientX: point.left, clientY: (point.top + point.bottom) / 2,
+      });
+      view.dom.dispatchEvent(event);
+      return { selectedNode, handled: event.defaultPrevented };
+    });
+    expect(drop).toEqual({ selectedNode: 'croquill_raw_block', handled: true });
+    await page.waitForFunction(() => (window as any).fileApp.session.text.includes('当前.assets/图片.png'));
+    const markdown = await page.evaluate(() => (window as any).fileApp.session.text as string);
+    expect(markdown).toContain('<div>原文块</div>');
+    const before = markdown.indexOf('投放前');
+    const image = markdown.indexOf('当前.assets/图片.png');
+    const after = markdown.indexOf('投放后');
+    expect(before).toBeGreaterThan(markdown.indexOf('BARRIERX'));
+    expect(image).toBeGreaterThan(before);
+    expect(after).toBeGreaterThan(image);
+  });
+
   it('scans text caret alignment in every public example that opens in rich mode', async () => {
     const samples = publicMarkdownPaths(examplesPath).sort().map(path => ({
       name: relative(examplesPath, path).replaceAll('\\', '/'),
@@ -170,6 +226,7 @@ describe('mode switch caret and scroll preservation through the real app', () =>
             const ancestors = Array.from({ length: parent.depth }, (_, i) => parent.node(i + 1).type.name);
             const ordinary = ['paragraph', 'heading'].includes(block.type.name) &&
               !ancestors.some(type => ['table_cell', 'table_header', 'footnote_definition'].includes(type));
+            const aligned = alignment.blocks.find((entry: AlignedBlock) => entry.richPos === pos && entry.isTextblock);
             for (let offset = 0; offset <= block.content.size; offset++) {
               const head = pos + 1 + offset;
               const selection = view.state.selection.constructor.near(doc.resolve(head));
@@ -181,7 +238,14 @@ describe('mode switch caret and scroll preservation through the real app', () =>
               prevOffset = rawOffset;
               // Block-level fallback structures, and positions before breaks or atoms, have no ordinary character to compare.
               const next = block.childAfter(offset);
-              if (ordinary && next.node?.isText) {
+              if (ordinary && aligned?.segments === null) {
+                const restored = mapRawOffsetToRichSelection(alignment, doc, rawOffset).head;
+                const inRawBlock = rawOffset >= aligned.rawStart && rawOffset <= aligned.rawEnd;
+                const inRichBlock = restored > pos && restored < pos + block.nodeSize;
+                if ((!inRawBlock || !inRichBlock) && failures.length < 8) {
+                  failures.push(`${block.type.name} ${head}: fallback left the block at source ${rawOffset}, restored ${restored}`);
+                }
+              } else if (ordinary && next.node?.isText) {
                 if (ancestors.includes('croquill_alert')) alertTextPositions++;
                 const expected = next.node.text![offset - next.offset];
                 const restored = mapRawOffsetToRichSelection(alignment, doc, rawOffset).head;

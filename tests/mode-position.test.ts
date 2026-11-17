@@ -36,6 +36,7 @@ const testSchema = new Schema({
     hr: { group: 'block', atom: true, selectable: true, toDOM: () => ['hr'] },
     text: { group: 'inline' },
     hardbreak: { inline: true, group: 'inline', selectable: false, toDOM: () => ['br'] },
+    custom_inline: { inline: true, group: 'inline', atom: true, toDOM: () => ['span'] },
     croquill_inline_raw: {
       inline: true,
       group: 'inline',
@@ -190,6 +191,33 @@ describe('mode-position deterministic alignment unit tests', () => {
     const afterBlock = alignment.blocks[alignment.blocks.length - 1];
     const rangeSel = TextSelection.create(richDoc, afterBlock.richPos + 1 + 4, afterBlock.richPos + 1 + 1);
     expect(mapRichSelectionToRawOffset(alignment, raw.length, rangeSel)).toBe(afterStart + 1);
+  });
+
+  it.each(['paragraph', 'heading'])('falls back inside a matched %s with an unmapped inline node', type => {
+    const before = '前段';
+    const marker = type === 'heading' ? '# ' : '';
+    const raw = `${before}\n\n${marker}片段前<span>原文</span>片段后\n\n尾段`;
+    const first = testSchema.node('paragraph', null, [testSchema.text(before)]);
+    const opaque = testSchema.node(type, null, [
+      testSchema.text('片段前'), testSchema.node('custom_inline'), testSchema.text('片段后'),
+    ]);
+    const last = testSchema.node('paragraph', null, [testSchema.text('尾段')]);
+    const richDoc = testSchema.node('doc', null, [first, opaque, last]);
+    const alignment = buildDocumentAlignment(raw, richDoc);
+    const richStart = first.nodeSize + 1;
+    const rawStart = raw.indexOf(marker + '片段前');
+
+    for (let offset = 0; offset <= opaque.content.size; offset++) {
+      const selection = TextSelection.create(richDoc, richStart + offset);
+      expect(mapRichSelectionToRawOffset(alignment, raw.length, selection)).toBe(rawStart);
+    }
+    for (const offset of [rawStart, raw.indexOf('原文'), raw.indexOf('片段后') + 1]) {
+      expect(mapRawOffsetToRichSelection(alignment, richDoc, offset).head).toBe(richStart);
+    }
+    const tail = raw.indexOf('尾段') + 1;
+    const tailSelection = mapRawOffsetToRichSelection(alignment, richDoc, tail);
+    expect(tailSelection.head).toBe(first.nodeSize + opaque.nodeSize + 2);
+    expect(mapRichSelectionToRawOffset(alignment, raw.length, tailSelection)).toBe(tail);
   });
 
   it('rejects unverified raw and text pairs and keeps verified neighbors usable', () => {
