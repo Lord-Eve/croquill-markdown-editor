@@ -1,6 +1,6 @@
 import { EditorSelection, Transaction } from '@codemirror/state';
 import type { EditorView as CMView } from '@codemirror/view';
-import { EditorStateReady, editorStateCtx, editorViewTimerCtx } from '@milkdown/kit/core';
+import { EditorStateReady, EditorViewReady, editorStateCtx, editorViewCtx, editorViewTimerCtx } from '@milkdown/kit/core';
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState as PMState } from '@milkdown/kit/prose/state';
 import type { EditorView as PMView } from '@milkdown/kit/prose/view';
@@ -10,6 +10,8 @@ import { parsePositionedRichMarkdown } from './rich-markdown';
 import { normalizedOffset, sourceOffset } from './search-core';
 
 const MODE_POSITION_META = 'croquill-mode-position';
+const MAX_SCROLL_RESTORE_FRAMES = 30;
+const STABLE_SCROLL_RESTORE_FRAMES = 2;
 
 type AstPosition = {
   start: { offset?: number };
@@ -856,12 +858,25 @@ function richModeSelectionTransaction(state: PMState, raw: string, rawOffset: nu
 
 /** Seeds the restored selection before mounting node views that capture the initial selection. */
 export function initializeRichModePosition(raw: string, rawOffset: number) {
-  return addTimer(async ctx => {
+  return addTimer(async (ctx, _plugin, allowMount) => {
     await ctx.wait(EditorStateReady);
     const state = ctx.get(editorStateCtx);
     // Run the kernel's trailing paragraph transaction before mapping the caret at EOF.
     const ready = state.apply(state.tr.setMeta('addToHistory', false));
-    ctx.set(editorStateCtx, ready.apply(richModeSelectionTransaction(ready, raw, rawOffset)));
+    const positioned = ready.apply(richModeSelectionTransaction(ready, raw, rawOffset));
+    ctx.set(editorStateCtx, positioned);
+
+    if (positioned.selection instanceof NodeSelection) {
+      // Crepe's list views reconstruct captured ranges as TextSelections in
+      // their mount frame. Restore atom selection after they have done so.
+      allowMount();
+      await ctx.wait(EditorViewReady);
+      const view = ctx.get(editorViewCtx);
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      if (!view.isDestroyed && !view.state.selection.eq(positioned.selection)) {
+        applyRichSelectionFromRaw(view, raw, rawOffset);
+      }
+    }
   }, editorViewTimerCtx, 'CroquillInitialModePosition');
 }
 
@@ -888,40 +903,32 @@ export function modeNodeSelectionGuardPlugin(): Plugin {
         if (
           value.guarded &&
           (tr.docChanged ||
+            tr.selectionSet ||
             tr.getMeta('pointer') ||
-            tr.getMeta('croquill-user-key') ||
-            !(tr.selection instanceof NodeSelection))
+            tr.getMeta('croquill-user-key'))
         ) {
           return { guarded: false };
         }
         return value;
       },
     },
-    filterTransaction(tr, state) {
-      const guarded = key.getState(state)?.guarded ?? false;
-      if (
-        guarded &&
-        state.selection instanceof NodeSelection &&
-        !tr.docChanged &&
-        tr.selectionSet &&
-        !tr.getMeta('pointer') &&
-        !tr.getMeta('croquill-user-key') &&
-        tr.getMeta('addToHistory') !== false &&
-        !tr.getMeta(MODE_POSITION_META)
-      ) {
-        return false;
-      }
-      return true;
-    },
     props: {
+      createSelectionBetween(view, $anchor, $head) {
+        const { state } = view;
+        // Keep the node selected when the browser reads back a caret. Native
+        // edits and drops resolve selection against their changed document.
+        return key.getState(state)?.guarded && state.selection instanceof NodeSelection &&
+          $anchor.doc === state.doc && $head.doc === state.doc ? state.selection : null;
+      },
       handleDOMEvents: {
-        mousedown(view) {
+        pointerdown(view) {
           if (key.getState(view.state)?.guarded) {
             view.dispatch(view.state.tr.setMeta('pointer', true).setMeta('addToHistory', false));
           }
           return false;
         },
         keydown(view, event) {
+          if (event.isComposing || view.composing || event.keyCode === 229) return false;
           const isModifier =
             event.key === 'Control' || event.key === 'Shift' || event.key === 'Alt' || event.key === 'Meta';
           const isModeShortcut =
@@ -951,19 +958,33 @@ export function scheduleModeScrollRestore(options: {
   let cancelled = false;
   let rafId = 0;
   let frame = 0;
+  let stableFrames = 0;
+  let previousAnchorOffset: number | null = null;
+  let resized = true;
+  const resizeObserver = new ResizeObserver(() => { resized = true; });
+  const content = targetMode === 'rich' ? richView?.dom : sourceView?.dom;
+  resizeObserver.observe(scrollContainer);
+  if (content) resizeObserver.observe(content);
+  const userInput = new AbortController();
 
   const cancel = () => {
     if (cancelled) return;
     cancelled = true;
     if (rafId) cancelAnimationFrame(rafId);
-    scrollContainer.removeEventListener('wheel', cancel);
-    scrollContainer.removeEventListener('touchstart', cancel);
-    scrollContainer.removeEventListener('pointerdown', cancel);
+    resizeObserver.disconnect();
+    userInput.abort();
   };
 
-  scrollContainer.addEventListener('wheel', cancel, { passive: true });
-  scrollContainer.addEventListener('touchstart', cancel, { passive: true });
-  scrollContainer.addEventListener('pointerdown', cancel, { passive: true });
+  const document = scrollContainer.ownerDocument;
+  const inputOptions = { capture: true, passive: true, signal: userInput.signal };
+  for (const event of ['wheel', 'touchstart', 'pointerdown', 'compositionstart']) {
+    document.addEventListener(event, cancel, inputOptions);
+  }
+  document.addEventListener('keydown', event => {
+    const composing = targetMode === 'rich' ? richView?.composing : sourceView?.composing;
+    if (event.isComposing || event.keyCode === 229 || composing) return;
+    cancel();
+  }, inputOptions);
 
   let richTargetBlock: AlignedBlock | null = null;
   if (targetMode === 'rich' && anchor.kind === 'block' && richView) {
@@ -997,18 +1018,32 @@ export function scheduleModeScrollRestore(options: {
     if (targetMode === 'source') sourceView?.requestMeasure();
 
     const actualTop = measureCurrentTop();
+    let settled = false;
     if (actualTop !== null) {
-      const vpTop = scrollContainer.getBoundingClientRect().top;
-      const desiredTop = anchor.kind === 'caret' ? Math.max(vpTop, anchor.top) : vpTop + anchor.offsetFromVpTop;
-      const delta = actualTop - desiredTop;
-      if (Math.abs(delta) > 0.5) {
-        const maxScroll = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
-        scrollContainer.scrollTop = Math.max(0, Math.min(maxScroll, scrollContainer.scrollTop + delta));
+      const viewport = scrollContainer.getBoundingClientRect();
+      const desiredTop = anchor.kind === 'caret' ? Math.max(viewport.top, anchor.top) : viewport.top + anchor.offsetFromVpTop;
+      const currentScroll = scrollContainer.scrollTop;
+      const maxScroll = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+      const targetScroll = Math.max(0, Math.min(maxScroll, currentScroll + actualTop - desiredTop));
+      const anchorOffset = actualTop + currentScroll - viewport.top;
+      if (Math.abs(targetScroll - currentScroll) > 0.5) {
+        scrollContainer.scrollTop = targetScroll;
+      } else if (!resized && previousAnchorOffset !== null && Math.abs(anchorOffset - previousAnchorOffset) <= 0.5) {
+        // Crepe mounts visible code blocks via IntersectionObserver. An
+        // unchanged height can still be the placeholder's height for a frame.
+        const placeholders = targetMode === 'rich' ? content?.querySelectorAll('.milkdown-code-block-placeholder') : undefined;
+        settled = !Array.from(placeholders ?? []).some(placeholder => {
+          const bounds = placeholder.getBoundingClientRect();
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+        });
       }
+      previousAnchorOffset = anchorOffset;
     }
+    resized = false;
+    stableFrames = settled ? stableFrames + 1 : 0;
 
     frame += 1;
-    if (frame < 3) {
+    if (frame < MAX_SCROLL_RESTORE_FRAMES && stableFrames < STABLE_SCROLL_RESTORE_FRAMES) {
       rafId = requestAnimationFrame(step);
     } else {
       cancel();

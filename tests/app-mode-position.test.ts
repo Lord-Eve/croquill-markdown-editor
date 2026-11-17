@@ -201,6 +201,27 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     expect(after).toBeGreaterThan(image);
   });
 
+  it.each(['reused view', 'rebuilt view with a list'])('inserts a link after the restored final raw block with a %s', async mode => {
+    const rebuild = mode === 'rebuilt view with a list';
+    const doc = `前段\n\n${rebuild ? '- 列表项\n\n' : ''}<div>保留原文</div>\n`;
+    await open(doc);
+    await pressModeToggle();
+    await page.evaluate(offset => {
+      const cm = (window as any).fileApp.surface.source;
+      cm.dispatch({ selection: { anchor: offset } });
+    }, doc.indexOf('保留原文') + 1);
+    if (rebuild) await page.keyboard.insertText('字');
+    await pressModeToggle();
+    const selected = await page.evaluate(() => (window as any).fileApp.surface.richView().state.selection.node?.type.name);
+    expect(selected).toBe('croquill_raw_block');
+
+    await page.locator('summary[data-menu-key="o"]').click();
+    await page.locator('[data-format="link"]').click();
+    const content = await page.evaluate(() => (window as any).fileApp.surface.getMarkdown() as string);
+    expect(content).toContain(rebuild ? '<div>保字留原文</div>' : '<div>保留原文</div>');
+    expect(content).toMatch(/<\/div>\s+\[\]\(\)\n?$/);
+  });
+
   it('scans text caret alignment in every public example that opens in rich mode', async () => {
     const samples = publicMarkdownPaths(examplesPath).sort().map(path => ({
       name: relative(examplesPath, path).replaceAll('\\', '/'),
@@ -721,6 +742,35 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     expect(await page.evaluate(() => (window as any).fileApp.surface.getMarkdown())).toBe(
       doc.slice(0, originalRawCaret) + '字' + doc.slice(originalRawCaret),
     );
+  });
+
+  it('restores window position after the code block above the caret mounts in the rebuilt sample', async () => {
+    await open(readFileSync(join(examplesPath, 'outline-position.md'), 'utf8'));
+    await setRichCaretBySubstring('同名小节（第 2 处）', 4);
+    const codeEditor = page.locator('#rich-root .milkdown-code-block .cm-editor').first();
+    const placeCaretLine = () => page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      const scroller = document.getElementById('editor-scroll')!;
+      scroller.scrollTop += view.coordsAtPos(view.state.selection.head).top - 386;
+    });
+    await placeCaretLine();
+    await codeEditor.waitFor({ state: 'visible' });
+    await placeCaretLine();
+    await settleFrames();
+
+    const head = await richHeadPos();
+    await pressModeToggle();
+    await page.keyboard.insertText('字');
+    const before = await caretWindowPosition();
+    expect(before.visible).toBe(true);
+
+    await pressModeToggle();
+    await codeEditor.waitFor({ state: 'visible' });
+    await settleFrames();
+    const after = await caretWindowPosition();
+    expect(after.visible).toBe(true);
+    expect(await richHeadPos()).toBe(head + 1);
+    expect(Math.abs(after.top - before.top)).toBeLessThanOrEqual(24);
   });
 
   it('restores source EOF to the trailing caret paragraph when rebuilding a list-ending document', async () => {

@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Schema } from '@milkdown/kit/prose/model';
-import { NodeSelection, TextSelection } from '@milkdown/kit/prose/state';
+import { EditorState, NodeSelection, TextSelection, type Transaction } from '@milkdown/kit/prose/state';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import {
   buildDocumentAlignment,
   mapRawOffsetToRichSelection,
   mapRichSelectionToRawOffset,
+  modeNodeSelectionGuardPlugin,
 } from '../src/mode-position';
 
 const testSchema = new Schema({
@@ -52,6 +54,48 @@ const testSchema = new Schema({
       toDOM: () => ['sup'],
     },
   },
+});
+
+describe('restored node selection guard', () => {
+  function guardedSelection() {
+    const guard = modeNodeSelectionGuardPlugin();
+    const doc = testSchema.node('doc', null, [
+      testSchema.node('croquill_raw_block', { value: '<div>原文</div>' }),
+      testSchema.node('paragraph', null, [testSchema.text('正文')]),
+    ]);
+    const initial = EditorState.create({ doc, plugins: [guard] });
+    const state = initial.apply(initial.tr.setSelection(NodeSelection.create(doc, 0)).setMeta('croquill-mode-position', true));
+    return { guard, state };
+  }
+
+  it.each([
+    { label: 'event.isComposing', eventComposing: true, viewComposing: false, keyCode: 65 },
+    { label: 'view.composing', eventComposing: false, viewComposing: true, keyCode: 65 },
+    { label: 'IME key code 229', eventComposing: false, viewComposing: false, keyCode: 229 },
+  ])('ignores composing keydown reported by $label without releasing protection', ({ eventComposing, viewComposing, keyCode }) => {
+    const { guard, state } = guardedSelection();
+    let current = state;
+    const dispatch = vi.fn((tr: Transaction) => { current = current.apply(tr); });
+    const view = { get state() { return current; }, composing: viewComposing, dispatch } as unknown as EditorView;
+    expect(guard.getState(state)).toEqual({ guarded: true });
+    const handled = guard.props.handleDOMEvents!.keydown!(view, { key: 'a', isComposing: eventComposing, keyCode } as KeyboardEvent);
+    expect(handled).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(guard.getState(current)).toEqual({ guarded: true });
+  });
+
+  it('keeps the node on DOM selection readback and accepts an explicit selection transaction', () => {
+    const { guard, state } = guardedSelection();
+    const view = { state } as EditorView;
+    const $caret = state.doc.resolve(2);
+    expect(guard.props.createSelectionBetween!(view, $caret, $caret)).toBe(state.selection);
+    const $editedCaret = state.tr.insertText('改', $caret.pos).doc.resolve($caret.pos + 1);
+    expect(guard.props.createSelectionBetween!(view, $editedCaret, $editedCaret)).toBeNull();
+    const caret = TextSelection.create(state.doc, $caret.pos);
+    const next = state.apply(state.tr.setSelection(caret));
+    expect(next.selection).toBe(caret);
+    expect(guard.getState(next)).toEqual({ guarded: false });
+  });
 });
 
 describe('mode-position deterministic alignment unit tests', () => {
