@@ -30,7 +30,7 @@ app.innerHTML = `
     <details><summary data-menu-key="e">编辑(E)</summary><div class="menu"><button data-format="undo">撤销<span>Ctrl+Z</span></button><button data-format="redo">重做<span>Ctrl+Y</span></button><hr><button data-action="find">查找…<span>Ctrl+F</span></button><button data-action="replace">替换…<span>Ctrl+H</span></button></div></details>
     <details><summary data-menu-key="p">段落(P)</summary><div class="menu"><button data-format="heading1">一级标题<span>Ctrl+1</span></button><button data-format="heading2">二级标题<span>Ctrl+2</span></button><button data-format="heading3">三级标题<span>Ctrl+3</span></button><button data-format="heading4">四级标题<span>Ctrl+4</span></button><button data-format="heading5">五级标题<span>Ctrl+5</span></button><button data-format="heading6">六级标题<span>Ctrl+6</span></button><hr><button data-format="paragraph">段落<span>Ctrl+0</span></button><button data-format="heading-up">提升标题级别<span>Ctrl+=</span></button><button data-format="heading-down">降低标题级别<span>Ctrl+-</span></button><hr><button data-format="bullet">无序列表</button><button data-format="ordered">有序列表</button><button data-format="task">任务列表</button><button data-format="quote">引用</button><button data-format="codeblock">代码块</button><button data-format="table">插入表格</button><button data-action="image">图片</button></div></details>
     <details><summary data-menu-key="o">格式(O)</summary><div class="menu"><button data-format="bold">加粗<span>Ctrl+B</span></button><button data-format="italic">斜体<span>Ctrl+I</span></button><button data-format="strike">删除线<span>Ctrl+Shift+X</span></button><button data-format="highlight">高亮</button><button data-format="link">链接<span>Ctrl+K</span></button><button data-format="code">行内代码</button></div></details>
-    <details><summary data-menu-key="v">视图(V)</summary><div class="menu"><button data-action="mode">切换源码模式<span>Ctrl+/</span></button><button data-action="sidebar">显示／隐藏侧栏<span>Ctrl+Shift+L</span></button><button data-action="files">文件侧栏</button><button data-action="outline">大纲侧栏</button><hr><button data-action="smaller">缩小字号</button><button data-action="larger">放大字号</button></div></details>
+<details><summary data-menu-key="v">视图(V)</summary><div class="menu"><button data-action="mode">切换源码模式<span>Ctrl+/</span></button><button data-action="focus-mode" role="menuitemcheckbox">专注模式<span>F8</span></button><button data-action="typewriter" role="menuitemcheckbox">打字机模式<span>F9</span></button><button data-action="sidebar">显示／隐藏侧栏<span>Ctrl+Shift+L</span></button><button data-action="files">文件侧栏</button><button data-action="outline">大纲侧栏</button><hr><button data-action="smaller">缩小字号</button><button data-action="larger">放大字号</button></div></details>
     <details><summary data-menu-key="t">主题(T)</summary><div class="menu"><button data-action="light">GitHub · 浅色</button><button data-action="dark">Night · 深色</button></div></details>
     <details><summary data-menu-key="h">帮助(H)</summary><div class="menu"><button data-action="help">使用说明</button></div></details>
   </nav>
@@ -305,6 +305,12 @@ async function insertImages(sources: ImageSource[]) {
 }
 async function action(name:string, path?:string) {
   document.querySelectorAll('.menubar details[open]').forEach(e=>e.removeAttribute('open'));
+  if (name === 'focus-mode' || name === 'typewriter') {
+    const enabled = localStorage.getItem('croquill-' + name) !== 'true';
+    localStorage.setItem('croquill-' + name, String(enabled));
+    applyWritingMode(name, enabled);
+    return;
+  }
   if ((name==='save'||name==='saveAs') && busy) { queuedSave=queuedSave==='saveAs'||name==='saveAs'?'saveAs':'save'; $('save-status').textContent='等待保存…'; return; }
   if(name==='find'||name==='replace'){if(!busy&&!$('modal-root').childElementCount)surface.toggleSearch(name==='replace');return;}
   if(name==='theme'||name==='light'||name==='dark'){const theme=name==='theme'?(document.documentElement.dataset.theme==='dark'?'light':'dark'):name;document.documentElement.dataset.theme=theme;localStorage.setItem('croquill-theme',theme);return;}
@@ -349,6 +355,11 @@ installGlobalShortcuts({composing:()=>surface.hasFocusedComposition(),modal:()=>
 const preventLinkNavigation = (event: MouseEvent) => { if ((event.target as HTMLElement | null)?.closest('a')) event.preventDefault(); };
 $('rich-root').addEventListener('click', preventLinkNavigation);
 $('rich-root').addEventListener('auxclick', preventLinkNavigation);
+function applyWritingMode(name: 'focus-mode' | 'typewriter', enabled: boolean) {
+  surface.setWritingMode(name, enabled);
+  document.querySelector(`button[data-action="${name}"]`)!.setAttribute('aria-checked', String(enabled));
+}
+for (const name of ['focus-mode', 'typewriter'] as const) applyWritingMode(name, localStorage.getItem('croquill-' + name) === 'true');
 setSidebarTab(localStorage.getItem('croquill-sidebar-tab') === 'outline' ? 'outline' : 'files', false);
 setSidebarVisible(localStorage.getItem('croquill-sidebar') !== 'false');
 await run(async()=>{

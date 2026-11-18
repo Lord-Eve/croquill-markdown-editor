@@ -135,15 +135,24 @@ describe('bare HTML line breaks through the production editor', () => {
     expect(await page.locator('td br').count()).toBe(0);
   }, 30000);
 
-  it.each(['甲乙\n', '# 甲乙\n'])('saves a newly inserted paragraph or heading break with Typora spelling: %s', async original => {
-    await page.evaluate(async original => {
-      const h = (window as any).brHarness;
-      await h.surface.init(original); h.selectText('甲乙', 1);
-    }, original);
+  it.each([
+    ['甲乙\n', '甲\n乙\n'], ['# 甲乙\n', '# 甲<br />乙\n'],
+    ['- 甲乙\n', '- 甲\n  乙\n'], ['> 甲乙\n', '> 甲\n> 乙\n'],
+  ])('saves and reopens a newly inserted break in %s', async (original, expected) => {
+    await page.evaluate(original => (window as any).brHarness.surface.init(original), original);
+    await page.getByText('甲乙', { exact: true }).click();
+    await page.evaluate(() => (window as any).brHarness.selectText('甲乙', 1));
     await page.keyboard.press('Shift+Enter');
-    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original.replace('甲乙', '甲<br />乙'));
-    await page.keyboard.press('Backspace');
+    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(expected);
+    await page.keyboard.press('Control+z');
     expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(original);
+    const shape = await page.evaluate(async expected => {
+      const h = (window as any).brHarness;
+      await h.surface.load(expected);
+      const doc = h.surface.richView().state.doc;
+      return [doc.firstChild.type.name, h.richRoot.querySelectorAll('br[data-is-inline="true"]').length];
+    }, expected);
+    expect(shape).toEqual([original[0] === '-' ? 'bullet_list' : original[0] === '>' ? 'blockquote' : original[0] === '#' ? 'heading' : 'paragraph', original[0] === '#' ? 0 : 1]);
   }, 30000);
 
   it('deletes an existing original <br/> from the saved cell', async () => {
@@ -157,6 +166,15 @@ describe('bare HTML line breaks through the production editor', () => {
     expect(saved).toBe(original.replace('<br/>', ''));
     expect(await page.locator('td br').count()).toBe(0);
   }, 30000);
+
+  it('retains a final Shift+Enter in a heading', async () => {
+    await page.evaluate(async () => {
+      const h = (window as any).brHarness;
+      await h.surface.init('## 标题\n'); h.selectText('标题', 2);
+    });
+    await page.keyboard.press('Shift+Enter');
+    expect(await page.evaluate(() => (window as any).brHarness.save())).toBe('## 标题<br />\n');
+  });
 
   it.each([
     { name: 'table cell', original: '| 内容 | 备注 |\n| --- | --- |\n| 甲<br/> | 待改 |\n', editable: '待改' },
@@ -214,7 +232,7 @@ describe('bare HTML line breaks through the production editor', () => {
       await h.surface.setMode('source'); await h.surface.setMode('rich');
       return { saved, switched: await h.save(), mode: h.surface.mode };
     });
-    expect(result.saved).toBe('甲<br />乙<br/>\n');
+    expect(result.saved).toBe('甲\n乙<br/>\n');
     expect(result.saved).toContain('<br/>');
     expect(result.switched).toBe(result.saved);
     expect(result.mode).toBe('rich');

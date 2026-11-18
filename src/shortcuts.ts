@@ -1,5 +1,9 @@
-export type GlobalCommand = 'save' | 'saveAs' | 'open' | 'new' | 'find' | 'replace' | 'mode' | 'folder' | 'sidebar';
+export type GlobalCommand = 'save' | 'saveAs' | 'open' | 'new' | 'find' | 'replace' | 'mode' | 'folder' | 'sidebar' | 'focus-mode' | 'typewriter';
 export function globalCommand(event: KeyboardEvent): GlobalCommand | null {
+  if (!(event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)) {
+    if (event.key === 'F8') return 'focus-mode';
+    if (event.key === 'F9') return 'typewriter';
+  }
   if (!(event.ctrlKey || event.metaKey) || event.altKey) return null;
   // IME/non-Latin layouts can change `key` even when no composition is active.
   const key = /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();

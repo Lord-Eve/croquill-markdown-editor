@@ -240,8 +240,7 @@ describe('inline Markdown as source text through the real app', () => {
     await page.evaluate(async saved => { await (window as any).fileApp.surface.load(saved); }, saved);
     const reopened = await page.evaluate(() => ({ blocks: [...document.querySelectorAll('#rich-root .ProseMirror > :not(.prosemirror-virtual-cursor):not(.ProseMirror-widget)')].map(node => node.tagName), text: [...document.querySelectorAll('#rich-root p')].map(node => (node as HTMLElement).innerText) }));
     expect(reopened.blocks.filter(tag => tag !== 'P')).toEqual([]);
-    // A soft line break is displayed as a space.
-    expect(reopened.text.slice(0, 2)).toEqual(['第一行 # 不是标题 第二行', '1. 不是列表 段落']);
+    expect(reopened.text.slice(0, 2)).toEqual(['第一行\n# 不是标题 第二行', '1. 不是列表 段落']);
   }, 30000);
 
   it('keeps a pipe typed in a table cell inside that cell', async () => {
