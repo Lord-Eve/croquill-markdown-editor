@@ -23,7 +23,7 @@ export async function createTestServer() {
     root: fileURLToPath(new URL('../', import.meta.url)),
     cacheDir: 'node_modules/.vite-tests',
     logLevel: 'error',
-    optimizeDeps: { entries: ['tests/harness.html'] },
+    optimizeDeps: { entries: ['tests/harness.html', 'tests/fixtures/long-doc-editor.ts'] },
     // Vite reads port 0 as its default 5173 and stops if another program holds that
     // port in a way it cannot share (seen on 2026-11-13 with a local proxy). Ask the
     // system for a free port instead.

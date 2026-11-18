@@ -22,10 +22,12 @@ import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@cod
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
-import type { OutlineHeadingBox } from './outline-tree';
+import { orderedVisibleHeading, pickVisibleHeadingIndex } from './outline-tree';
 import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore, sourceSegmentsForEdit } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
+import { retainMarkdown } from './markdown-ast';
+import { indexMarkdown, localMarkdown } from './local-markdown';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
 import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent } from './inline-raw';
@@ -111,8 +113,7 @@ function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
 }
 
 /** Map pending text edits back to their original blocks, keeping list markers and whitespace. */
-function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, serialized: string): string {
-  const plainExtension = hasPlainExtension(raw);
+function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, serialized: string, plainExtension = hasPlainExtension(raw)): string {
   if (!plainExtension && !/<[a-z]/i.test(raw)) return serialized;
   const changes: SourceChange[] = [];
   function compare(block: RichNode, next: RichNode, pos: number): boolean {
@@ -180,6 +181,10 @@ export class MarkdownSurface {
   private sourceInput?: string;
   private richSnapshot?: RichNode;
   private richOriginDocument?: RichNode;
+  private blockIndex: ReturnType<typeof indexMarkdown> = null;
+  private originalRanges = new WeakMap<RichNode, string>();
+  private releaseOrigin?: () => void;
+  private forceFullSerialization = false; // Browser tests can compare the reference writer.
   private richOriginText = '';
   private sourceOriginDocument = '';
   private sourceOriginText = '';
@@ -331,8 +336,11 @@ export class MarkdownSurface {
     this.richInput = undefined;
     this.sourceInput = undefined;
     this.richSnapshot = undefined;
+    this.blockIndex = null;
+    this.releaseOrigin?.(); this.releaseOrigin = undefined;
     this.richExactSources.clear(); this.sourceExactSources.clear(); this.richContexts.clear(); this.richContextVersion = '';
     this.safetyReason = detectUnsafeMarkdown(markdownText);
+    this.clearHeadingCache();
     this.source?.destroy();
     this.source = undefined;
     if (this.crepe) await this.crepe.destroy();
@@ -420,14 +428,21 @@ export class MarkdownSurface {
       const document = this.richView().state.doc;
       if (!document.eq(this.richSnapshot)) {
         const version = String(document.attrs.croquillSourceVersion || '');
-        if (version !== this.richContextVersion) {
+        const changedContext = version !== this.richContextVersion;
+        if (changedContext) {
           const context = this.richContexts.get(version);
-          if (context) { this.richInput = context.base; this.richOriginDocument = context.origin; this.richOriginText = context.originText; this.richNotice = context.notice; }
+          if (context) { this.richInput = context.base; this.richOriginDocument = context.origin; this.setOriginText(context.originText); this.richNotice = context.notice; }
           this.richContextVersion = version;
         }
         const exact = this.richExactSources.size ? this.richExactSources.get(JSON.stringify(document.toJSON())) : undefined;
-        this.raw = exact !== undefined ? exact : this.richOriginDocument?.eq(document) ? this.richOriginText
-          : preserveInlineEdit(this.raw, this.richSnapshot, document, this.serializeRich());
+        const restored = exact ?? (this.richOriginDocument?.eq(document) ? this.richOriginText : undefined);
+        if (restored !== undefined) {
+          this.raw = restored;
+          this.blockIndex = this.indexPublished(restored, document);
+        } else {
+          if (changedContext) this.blockIndex = null;
+          this.raw = this.serializeRich();
+        }
         this.richSnapshot = document;
         this.richInput = this.raw;
         this.cancelRichTimer();
@@ -487,9 +502,26 @@ export class MarkdownSurface {
     return this.outlineCache.items;
   }
 
+  private headingCache?: { root: HTMLElement; observer: MutationObserver; targets?: (HTMLElement | null)[]; measured: { element: HTMLElement; index: number }[] };
+
+  private clearHeadingCache(): void {
+    this.headingCache?.observer.disconnect();
+    this.headingCache = undefined;
+  }
+
   private getRichOutlineTargets(): (HTMLElement | null)[] {
     if (!this.crepe) return [];
     const view = this.richView();
+    const root = view.dom;
+    if (this.headingCache?.root !== root) {
+      this.clearHeadingCache();
+      const observer = new MutationObserver(records => this.invalidateHeadingTargets(records));
+      observer.observe(root, { childList: true, characterData: true, subtree: true });
+      this.headingCache = { root, observer, measured: [] };
+    }
+    const cache = this.headingCache;
+    this.invalidateHeadingTargets(cache.observer.takeRecords());
+    if (cache.targets) return cache.targets;
     const targets: (HTMLElement | null)[] = [];
     view.state.doc.forEach((node, pos) => {
       if (node.type.name === 'heading') {
@@ -502,25 +534,42 @@ export class MarkdownSurface {
         for (let i = 0; i < count; i++) targets.push(element);
       }
     });
+    cache.targets = targets;
+    cache.measured = targets.flatMap((element, index) => element ? [{ element, index }] : []);
     return targets;
   }
 
-  /** Measures vertical viewport bounds for every outline heading in the active editor. */
-  getOutlineHeadingBoxes(): (OutlineHeadingBox | null)[] {
+  private invalidateHeadingTargets(records: MutationRecord[]): void {
+    const cache = this.headingCache;
+    if (!cache?.targets) return;
+    const selector = 'h1,h2,h3,h4,h5,h6,[data-croquill-raw]';
+    for (const record of records) {
+      const element = record.target instanceof Element ? record.target : record.target.parentElement;
+      if (element?.closest('pre[data-croquill-raw]') || (record.target === cache.root &&
+          [...record.addedNodes, ...record.removedNodes].some(node => node instanceof Element && node.matches(selector)))) {
+        cache.targets = undefined;
+        break;
+      }
+    }
+  }
+
+  visibleHeading(count: number, top: number, bottom: number): number {
     if (this.currentMode === 'source' && this.source) {
       const cm = this.source;
       const lines = cm.state.doc.lines;
-      return this.getOutline().map(heading => {
+      const boxes = this.getOutline().map(heading => {
         const line = cm.state.doc.line(Math.max(1, Math.min(lines, heading.line)));
         const block = cm.lineBlockAt(line.from);
         return { top: cm.documentTop + block.top, bottom: cm.documentTop + block.bottom };
       });
+      return boxes.length === count ? pickVisibleHeadingIndex(boxes, top, bottom) : -1;
     }
-    return this.getRichOutlineTargets().map(element => {
-      if (!element) return null;
-      const rect = element.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom };
-    });
+    const targets = this.getRichOutlineTargets();
+    if (targets.length !== count) return -1;
+    const measured = this.headingCache?.measured;
+    if (!measured?.length) return -1;
+    const index = orderedVisibleHeading(measured.length, i => measured[i].element.getBoundingClientRect(), top, bottom);
+    return measured[index]?.index ?? -1;
   }
 
   scrollToHeading(index: number): void {
@@ -595,6 +644,8 @@ export class MarkdownSurface {
   }
 
   async destroy(): Promise<void> {
+    this.clearHeadingCache();
+    this.releaseOrigin?.(); this.releaseOrigin = undefined;
     this.destroyed = true;
     this.cancelModeScrollRestore?.();
     this.cancelModeScrollRestore = undefined;
@@ -612,8 +663,38 @@ export class MarkdownSurface {
 
   private richView(): RichView { return this.crepe!.editor.action((ctx) => ctx.get(editorViewCtx)); }
 
+  private setOriginText(text: string): void {
+    this.releaseOrigin?.();
+    this.releaseOrigin = retainMarkdown(splitFrontmatter(text).body);
+    this.richOriginText = text;
+    this.originalRanges = new WeakMap();
+  }
+
+  private indexPublished(text: string, doc: RichNode) {
+    const index = indexMarkdown(text, doc);
+    if (!index) return null;
+    const original = text === this.richOriginText;
+    doc.forEach((node, _offset, i) => {
+      const range = index.ranges[i];
+      if (original) this.originalRanges.set(node, range.origin!);
+      else range.origin = this.originalRanges.get(node) ?? null;
+    });
+    return index;
+  }
+
   private serializeRich(): string {
-    return this.serializeRichDocument(this.richView().state.doc, this.richInput ?? this.raw, this.richOriginText);
+    const doc = this.richView().state.doc;
+    if (this.richSnapshot && this.blockIndex && !this.forceFullSerialization) {
+      const local = localMarkdown(this.blockIndex, this.raw, this.richSnapshot, doc,
+        (before, after, old, origin, extensions) => preserveInlineEdit(old, before, after,
+          this.serializeRichDocument(after, old, origin), extensions),
+        text => this.crepe!.editor.action(ctx => ctx.get(parserCtx)(text)));
+      if (local !== null) return local;
+    }
+    const serialized = this.serializeRichDocument(doc, this.richInput ?? this.raw, this.richOriginText);
+    const result = this.richSnapshot ? preserveInlineEdit(this.raw, this.richSnapshot, doc, serialized) : serialized;
+    this.blockIndex = this.indexPublished(result, doc);
+    return result;
   }
 
   private serializeRichDocument(document: RichNode, input: string, origin: string): string {
@@ -663,7 +744,7 @@ export class MarkdownSurface {
       if (view.state.doc.attrs.croquillSourceVersion !== version) return { ok: false, message: '替换会破坏编辑结构，未执行。请检查替换内容。' };
       view.dispatch(closeHistory(view.state.tr));
       const document = view.state.doc;
-      this.raw = next; this.richInput = next; this.richSnapshot = document; this.richOriginDocument = document; this.richOriginText = next; this.richContextVersion = version;
+      this.raw = next; this.richInput = next; this.richSnapshot = document; this.richOriginDocument = document; this.setOriginText(next); this.blockIndex = this.indexPublished(next, document); this.richContextVersion = version;
       this.richDefaultNewline = /\r\n|\r|\n/.exec(next)?.[0] || '\n';
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', preservedMarkdownBlocks(parts.body).length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       this.richExactSources.set(JSON.stringify(document.toJSON()), next);
@@ -688,6 +769,7 @@ export class MarkdownSurface {
       this.richExactSources.clear(); this.richContexts.clear(); this.richContextVersion = '';
       const parts = splitFrontmatter(this.raw);
       this.richDefaultNewline = /\r\n|\r|\n/.exec(this.raw)?.[0] || '\n';
+      this.setOriginText(this.raw);
       const blocks = preservedMarkdownBlocks(parts.body);
       this.richNotice = [parts.frontmatter ? '本文含元数据，可在源码模式中编辑' : '', blocks.length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
       const crepe = new Crepe({
@@ -865,10 +947,10 @@ export class MarkdownSurface {
       this.richInput = this.raw;
       this.richSnapshot = this.richView().state.doc;
       this.richOriginDocument = this.richSnapshot;
-      this.richOriginText = this.raw;
-      if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRich())) {
+      if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRichDocument(this.richSnapshot, this.raw, this.raw))) {
         this.safetyReason = UNRELIABLE_ROUND_TRIP; this.unreliableRich = this.raw;
-      }
+        this.blockIndex = null;
+      } else this.blockIndex = this.indexPublished(this.raw, this.richSnapshot);
       return true;
     } finally { this.suppress = oldSuppress; }
   }

@@ -14,7 +14,7 @@ export const richMarkdownTransforms = [
 /** Keep the source positions before the editor's preset transforms can discard them. */
 export function parsePositionedRichMarkdown(body: string) {
   const file = { value: body };
-  let tree = parseMarkdownAst(body);
+  let tree = structuredClone(parseMarkdownAst(body));
   for (const transform of richMarkdownTransforms) tree = transform()(tree, file);
   return tree;
 }

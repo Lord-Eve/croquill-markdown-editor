@@ -1,9 +1,5 @@
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
+import { parseMarkdownAst } from './markdown-ast';
 
-const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SourceNode {
   type: string;
   value?: string;
@@ -85,9 +81,10 @@ function patchTable(original: string, before: SourceNode, serialized: string, af
 
 /** Preserve tables with literal HTML, BR or highlights while applying cell edits. */
 export function preserveTableSource(original: string, serialized: string): string {
+  if (original === serialized) return serialized;
   if (!/[<]|==|\[\^/.test(original) && !/[<]|==|\[\^/.test(serialized)) return serialized;
-  const before = parser.parse(original) as unknown as SourceNode;
-  const after = parser.parse(serialized) as unknown as SourceNode;
+  const before = parseMarkdownAst(original) as unknown as SourceNode;
+  const after = parseMarkdownAst(serialized) as unknown as SourceNode;
   const oldTables = tablesOf(before), newTables = tablesOf(after);
   if (oldTables.length !== newTables.length) return serialized;
   const changes: { from: number; to: number; text: string }[] = [];
@@ -103,7 +100,8 @@ export function preserveTableSource(original: string, serialized: string): strin
   }
   let result = serialized;
   for (const change of changes.reverse()) result = result.slice(0, change.from) + change.text + result.slice(change.to);
+  if (result === serialized) return serialized;
   // Check the complete document: a standalone reparse loses a nested table's
   // quote/list context and cannot detect whether a splice changed that context.
-  return JSON.stringify(semantic(parser.parse(result))) === JSON.stringify(semantic(after)) ? result : serialized;
+  return JSON.stringify(semantic(parseMarkdownAst(result))) === JSON.stringify(semantic(after)) ? result : serialized;
 }

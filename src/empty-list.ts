@@ -1,11 +1,8 @@
+import { parseMarkdownAst } from './markdown-ast';
 import type { Ctx } from '@milkdown/kit/ctx';
 import { extendListItemSchemaForTask } from '@milkdown/kit/preset/gfm';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
 import { hasEquivalentMarkdownStructure } from './fidelity';
 
-const parser = unified().use(remarkParse).use(remarkGfm);
 interface ListNode {
   type: string;
   ordered?: boolean;
@@ -55,7 +52,8 @@ function hasEmptyItem(node: ListNode): boolean {
 
 /** Restore unchanged empty item markers by AST offsets, including their spaces. */
 export function preserveEmptyListSource(original: string, serialized: string): string {
-  const before = listsOf(parser.parse(original) as ListNode), after = listsOf(parser.parse(serialized) as ListNode);
+  if (original === serialized) return serialized;
+  const before = listsOf(parseMarkdownAst(original, 'gfm') as ListNode), after = listsOf(parseMarkdownAst(serialized, 'gfm') as ListNode);
   if (before.length !== after.length) return serialized;
   const changes: { from: number; to: number; text: string }[] = [];
   for (let index = 0; index < before.length; index++) {

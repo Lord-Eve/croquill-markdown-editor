@@ -113,6 +113,24 @@ export function pickVisibleHeadingIndex(
   return -1;
 }
 
+// Rich headings are in vertical document order. Several headings inside one raw block
+// can share the same box, so lower_bound must keep the first overlapping occurrence.
+export function orderedVisibleHeading(count: number, box: (index: number) => OutlineHeadingBox, top: number, bottom: number): number {
+  const eps = bottom - top > 2 * OVERLAP_EPS ? OVERLAP_EPS : 0;
+  function lowerBound(predicate: (bounds: OutlineHeadingBox) => boolean): number {
+    let lo = 0, hi = count;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (predicate(box(mid))) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  }
+  const first = lowerBound(bounds => bounds.bottom > top + eps);
+  if (first < count && box(first).top < bottom - eps) return first;
+  return lowerBound(bounds => bounds.top > top + OVERLAP_EPS) - 1;
+}
+
 function createChevronSvg(): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 12 12');
@@ -134,7 +152,7 @@ export interface OutlineControllerOptions {
   container: HTMLElement;
   countEl: HTMLElement;
   scrollContainer: HTMLElement;
-  measureBoxes: () => (OutlineHeadingBox | null)[];
+  visibleHeading: (count: number, top: number, bottom: number) => number;
   onJump: (index: number) => void;
   isOutlineVisible: () => boolean;
 }
@@ -314,11 +332,7 @@ export class OutlineController {
       this.targetActiveIndex = this.pinnedIndex;
     } else if (!this.programmaticScrolling) {
       const vpRect = this.options.scrollContainer.getBoundingClientRect();
-      const boxes = this.options.measureBoxes();
-      // The published outline can be one edit behind the live ProseMirror headings.
-      this.targetActiveIndex = boxes.length === this.headings.length
-        ? pickVisibleHeadingIndex(boxes, vpRect.top, vpRect.bottom)
-        : -1;
+      this.targetActiveIndex = this.options.visibleHeading(this.headings.length, vpRect.top, vpRect.bottom);
     }
 
     const visible = visibleOutlineTarget(this.meta, this.collapsedKeys, this.targetActiveIndex);
@@ -373,13 +387,13 @@ export class OutlineController {
   private applyVisibleHighlight(nextVisible: number, allowScrollIntoView: boolean, revealCurrent = false): void {
     const prevVisible = this.visibleActiveIndex;
     this.visibleActiveIndex = nextVisible;
-    for (let i = 0; i < this.items.length; i++) {
-      const btn = this.items[i];
-      const active = i === nextVisible;
-      btn.classList.toggle('active', active);
-      if (active) btn.setAttribute('aria-current', 'true');
-      else btn.removeAttribute('aria-current');
+    if (prevVisible !== nextVisible) {
+      this.items[prevVisible]?.classList.remove('active');
+      this.items[prevVisible]?.removeAttribute('aria-current');
     }
+    const active = this.items[nextVisible];
+    active?.classList.add('active');
+    active?.setAttribute('aria-current', 'true');
 
     if (
       allowScrollIntoView &&

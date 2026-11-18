@@ -56,6 +56,29 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     return Array.from({ length: count }, (_, i) => `${prefix} 第 ${i + 1} 段较长占位文字，用于拉高页面并制造清晰滚动距离。`).join('\n\n');
   }
 
+  it.each([40, 400])('measures a logarithmic number of headings while typing among %i headings', async count => {
+    await open(Array.from({ length: count }, (_, i) => '# 第' + i + '节\n\n编辑段落').join('\n\n'));
+    await page.locator('#rich-root .ProseMirror > p').first().click();
+    await settleFrames();
+    await page.evaluate(() => {
+      const surface = (window as any).fileApp.surface;
+      const visible = surface.visibleHeading.bind(surface);
+      surface.visibleHeading = (...args: unknown[]) => {
+        let calls = 0;
+        const rect = Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect = function () {
+          if (this.matches('h1')) calls++;
+          return rect.call(this);
+        };
+        try { return visible(...args); }
+        finally { Element.prototype.getBoundingClientRect = rect; (window as any).headingMeasurements = calls; }
+      };
+    });
+    await page.keyboard.type('x');
+    await page.waitForFunction(() => (window as any).headingMeasurements > 0);
+    expect(await page.evaluate(() => (window as any).headingMeasurements)).toBeLessThanOrEqual(Math.ceil(Math.log2(count)) + 2);
+  });
+
   it('follows viewport headings in rich and source modes under topmost/above/none rules with aria-current', async () => {
     const doc = [
       filler('前置引子', 24),
