@@ -108,12 +108,16 @@ button:hover { background:var(--hover); }
 .milkdown .ProseMirror { max-width:var(--editor-width); margin:0 auto; padding:30px 30px 100px; min-height:calc(100vh - 100px); font-family:'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif; font-size:var(--editor-font-size); line-height:1.6; color:var(--fg); caret-color:var(--fg); outline:none; word-wrap:break-word; }
 .milkdown .ProseMirror > :first-child { margin-top:0; }
 .milkdown .ProseMirror p { margin:.8em 0; line-height:1.6; }
-.milkdown .ProseMirror h1, .milkdown .ProseMirror h2, .milkdown .ProseMirror h3, .milkdown .ProseMirror h4, .milkdown .ProseMirror h5, .milkdown .ProseMirror h6 { font-family:inherit; color:var(--fg); font-weight:700; line-height:1.4; margin:1rem 0; letter-spacing:0; position:relative; }
-.milkdown .ProseMirror h1 { font-size:2.25em; line-height:1.2; padding-bottom:.3em; border-bottom:1px solid var(--border); }
-.milkdown .ProseMirror h2 { font-size:1.75em; line-height:1.225; padding-bottom:.3em; border-bottom:1px solid var(--border); }
-.milkdown .ProseMirror h3 { font-size:1.5em; line-height:1.43; }
-.milkdown .ProseMirror h4 { font-size:1.25em; }
-.milkdown .ProseMirror h5, .milkdown .ProseMirror h6 { font-size:1em; }
+.milkdown .ProseMirror :is(h1,h2,h3,h4,h5,h6) { font-family:inherit; color:var(--fg); font-weight:700; font-size:var(--heading-size); line-height:var(--heading-leading,1.4); margin:1rem 0; letter-spacing:0; position:relative; }
+.milkdown .ProseMirror :is(h1,h2) { padding-bottom:.3em; border-bottom:1px solid var(--border); }
+/* The marker wrapper uses the same first-line height as its sibling heading. */
+.milkdown .ProseMirror {
+  h1, .label-wrapper:has(+ .children > .content-dom > h1:first-child) { --heading-size:2.25em; --heading-leading:1.2; }
+  h2, .label-wrapper:has(+ .children > .content-dom > h2:first-child) { --heading-size:1.75em; --heading-leading:1.225; }
+  h3, .label-wrapper:has(+ .children > .content-dom > h3:first-child) { --heading-size:1.5em; --heading-leading:1.43; }
+  h4, .label-wrapper:has(+ .children > .content-dom > h4:first-child) { --heading-size:1.25em; }
+  h5, h6, .label-wrapper:has(+ .children > .content-dom > :is(h5,h6):first-child) { --heading-size:1em; }
+}
 .milkdown .ProseMirror :is(a, .md-html-link) { color:var(--accent); text-decoration:none; }
 .milkdown .ProseMirror :is(a, .md-html-link):hover { text-decoration:underline; }
 .milkdown .ProseMirror strong { font-weight:650; }
@@ -122,6 +126,11 @@ button:hover { background:var(--hover); }
 .milkdown .ProseMirror li { padding:0; }
 .milkdown .ProseMirror li p { margin:.25em 0; }
 .milkdown .ProseMirror li ul, .milkdown .ProseMirror li ol { margin:.2em 0; }
+.milkdown .ProseMirror .list-item:has(> .label-wrapper > :is(.bullet,.ordered)):has(> .children > .content-dom > :is(h1,h2,h3,h4,h5,h6):first-child) {
+  & > .label-wrapper { font-size:var(--heading-size); line-height:var(--heading-leading,1.4); height:1lh; }
+  & > .label-wrapper > .label { height:auto; padding-block:0; font-size:var(--editor-font-size); line-height:1.6; }
+  & > .children > .content-dom > :first-child { margin-block:0; padding-block:0; }
+}
 /* Use the same native marker as Typora, without recoloring task checkboxes. */
 .milkdown .ProseMirror .label.bullet { display:list-item; list-style:disc inside; font:inherit; color:var(--fg); }
 .milkdown .ProseMirror ul ul .label.bullet { list-style-type:circle; }
