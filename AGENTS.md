@@ -47,6 +47,9 @@
 ## 改完之后必须做
 
 1. `npx tsc --noEmit` 和 `npm test` 全部通过。改了 Rust 就再跑 `cargo test`（在 `src-tauri/` 下）。
+   - 开发过程中只跑和改动相关的测试文件（`npx vitest run tests/某文件.test.ts`）；全量 `npm test` 在推送前跑**一次**即可。
+   - 推送后**不要**用 `gh run watch` 等 CI 跑完。CI 约 17 分钟，结果由审核方查看；CI 失败需要你处理时，会在 PR 评论里说明。
+   - CI 只在 PR 上运行，只改文档的提交不会触发；合并到 main 后不会再跑一遍。
 2. **改了前端或 Rust 代码，必须重新运行 `build.ps1`**。`croquill.exe` 不会自动更新，不重建就会测到旧版本。可以对比 exe 和源码的修改时间来确认。
 3. 在 `CHANGELOG.md` 的“未发布”部分记一笔：改了什么、对用户有什么影响。
 4. 完成或新发现的事项同步到 `docs/roadmap.md`。

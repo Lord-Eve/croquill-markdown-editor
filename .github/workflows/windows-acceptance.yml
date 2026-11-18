@@ -8,11 +8,20 @@ name: Windows Acceptance
 # What this does NOT cover: drag-in opening, real IME composition, Typora
 #   side-by-side comparison. Those still need a human-driven Windows desktop.
 
+# Runs on pull requests only. A squash merge puts the same code the PR run
+# already checked onto main, so there is no extra run on push to main.
+# Documentation-only changes are skipped; examples/** is NOT listed because
+# the tests read those files. Releases trigger a run by hand (docs/release.md).
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "CHANGELOG.md"
+      - "README.md"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "LICENSE"
   workflow_dispatch:
     inputs:
       gui_acceptance:

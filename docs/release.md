@@ -48,6 +48,14 @@ git push origin main
 git push origin vx.y.z
 ```
 
+CI 平时只在 PR 上运行，发版提交本身不会触发。推送后手动跑一次，用来在干净的 Windows 上验收这一版的安装包：
+
+```powershell
+gh workflow run "Windows Acceptance" --ref main
+```
+
+不必等它跑完再进行第 5 步；跑完后确认是绿色；失败时先查清是不是老测试偶发超时（重跑失败任务），确实是安装包问题再把这一版改成预发布。
+
 ## 5. 创建 GitHub Release
 
 从 `CHANGELOG.md` 复制本次 `[x.y.z]` 一节作为发布说明（可保存为临时说明文件后 `--notes-file` 传入，或在命令中直接指定），同时上传 `croquill.exe` 和安装包：
