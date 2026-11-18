@@ -300,6 +300,37 @@ export function inlineSyntaxSpans(run: string, options?: { emptyLinks?: boolean 
   return spans;
 }
 
+// Inline source boundaries exclude ATX fences and the Setext underline.
+export function headingContentRange(raw: string): { from: number; to: number } {
+  const opening = /^#{1,6}(?:[ \t]+|$)/.exec(raw);
+  const from = opening?.[0].length ?? 0;
+  let body = raw.slice(from).replace(/[ \t]+$/, '');
+  body = opening ? body.replace(/(?:^|[ \t]+)#+$/, '') : body.replace(/\r?\n[ \t>]*[=-]+$/, '');
+  return { from, to: from + body.replace(/[ \t]+$/, '').length };
+}
+
+export interface HeadingAttribute { from: number; to: number }
+
+export function headingAttributes(run: string, atEnd = true): HeadingAttribute[] {
+  const ranges: HeadingAttribute[] = [];
+  for (const match of run.matchAll(/\{[.#][\p{L}\p{N}_-]+(?:[ \t]+[.#][\p{L}\p{N}_-]+)*\}/gu)) {
+    const start = match.index, to = start + match[0].length;
+    // Code spans, escaped braces, HTML tags and link destinations are literal syntax.
+    if (inlineSyntaxSpans(run).some(span => start < span.to && span.from < to &&
+        (span.kind === 'code' || span.kind === 'escape' && span.from <= start ||
+         ['html', 'link', 'autolink'].includes(span.kind) && (start < span.innerFrom || to > span.innerTo)))) continue;
+    const from = atEnd && to === run.length && run[start - 1] === ' ' ? start - 1 : start;
+    ranges.push({ from, to });
+  }
+  return ranges;
+}
+
+export function withoutHeadingAttributes(run: string, atEnd = true): string {
+  let result = run;
+  for (const { from, to } of headingAttributes(run, atEnd).reverse()) result = result.slice(0, from) + result.slice(to);
+  return result;
+}
+
 /** What the reader sees for a run: markers, escape backslashes and entities resolved. */
 export function inlineSourceText(run: string): string {
   const spans = inlineSyntaxSpans(run);

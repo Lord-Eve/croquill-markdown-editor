@@ -1,10 +1,10 @@
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { Fragment, type Mark, type Node as RichNode } from '@milkdown/kit/prose/model';
-import { INLINE_OBJECT, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
+import { INLINE_OBJECT, headingAttributes, withoutHeadingAttributes, type HeadingAttribute, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
 import { createInlineHtmlImage, inlineHtmlStyle, type InlineHtmlImage } from './html-sanitize';
 
-interface BlockSyntax { run: string; map: number[]; spans: InlineSpan[] }
+interface BlockSyntax { run: string; map: number[]; spans: InlineSpan[]; attributes: HeadingAttribute[] }
 const blocks = new WeakMap<RichNode, BlockSyntax>();
 
 const isSourceBlock = (node: RichNode) => node.isTextblock && !node.type.spec.code;
@@ -46,7 +46,10 @@ function blockSyntax(block: RichNode): BlockSyntax {
   });
   if (link) add(']()', block.content.size, 0);
   map.push(block.content.size);
-  const result = { run, map, spans: mapSpans(inlineSyntaxSpans(run), map) };
+  const attributes = block.type.name === 'heading'
+    ? headingAttributes(run).map(({ from, to }) => ({ from: map[from], to: map[to] }))
+    : [];
+  const result = { run, map, attributes, spans: mapSpans(inlineSyntaxSpans(run), map) };
   blocks.set(block, result);
   return result;
 }
@@ -61,7 +64,7 @@ function blockEditSpans(block: RichNode): InlineSpan[] {
 }
 
 /** A block's text as the reader sees it (for the table of contents and previews). */
-export function visibleText(text: string): string { return inlineSourceText(text); }
+export function visibleText(text: string, heading = false): string { return inlineSourceText(heading ? withoutHeadingAttributes(text) : text); }
 
 const element: Partial<Record<InlineKind, string>> = { strong: 'strong', em: 'em', strike: 'del', code: 'code', highlight: 'mark' };
 const UNSAFE_HREF = /^(?:javascript|vbscript|data):/i;
@@ -139,6 +142,10 @@ function decorateHtml(block: RichNode, base: number, span: InlineSpan, active: b
 
 function decorateBlock(block: RichNode, position: number, selectionFrom: number, selectionTo: number, preview: ImagePreview): Decoration[] {
   const base = position + 1, decorations: Decoration[] = [];
+  const activeHeading = selectionFrom <= base + block.content.size && selectionTo >= base;
+  for (const { from, to } of blockSyntax(block).attributes) {
+    decorations.push(Decoration.inline(base + from, base + to, { class: activeHeading ? 'md-marker' : 'md-marker md-hidden' }));
+  }
   for (const span of blockSpans(block)) {
     const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
     // Touching counts: the caret right before `**` already shows it, as in Typora.
@@ -431,6 +438,21 @@ export function inlineSourcePlugin(resolveImage: (src: string) => Promise<string
       return { destroy() { destroyed = true; editor = undefined; } };
     },
   });
+}
+
+// At either outer edge delete the attribute as a unit. Inside it the source is editable.
+export function deleteHeadingAttribute(view: EditorView, event: KeyboardEvent): boolean {
+  if (!['Delete', 'Backspace'].includes(event.key) || event.isComposing || view.composing ||
+      event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  const { $from, empty } = view.state.selection;
+  if (!empty || $from.parent.type.name !== 'heading') return false;
+  const range = blockSyntax($from.parent).attributes.find(({ from, to }) =>
+    event.key === 'Backspace' ? to === $from.parentOffset : from === $from.parentOffset ||
+    (from + 1 === $from.parentOffset && $from.parent.textBetween(from, from + 1) === ' '));
+  if (!range) return false;
+  event.preventDefault();
+  view.dispatch(view.state.tr.delete($from.start() + range.from, $from.start() + range.to).scrollIntoView());
+  return true;
 }
 
 /**

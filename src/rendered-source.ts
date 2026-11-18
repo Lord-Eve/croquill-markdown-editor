@@ -28,11 +28,18 @@ function proseOf(node: SourceNode): string {
   if (['inlineCode', 'inlineMath', 'html'].includes(node.type)) return '\0';
   return node.children?.map(proseOf).join('') || '';
 }
+// Cheap prefilter for source spellings whose surrounding bytes we retain during edits.
+export function hasPlainExtension(source: string): boolean {
+  return /\[\[|:::|\{[.#]|(?:^|\s)\^[\w-]+(?=\s|$)|(?:^|[>\s])(?:[-*+]|\d+[.)])[ \t]+#{1,6}(?=[ \t]|$)/m.test(source);
+}
+
 function hasRenderedSyntax(node: SourceNode, source: string): boolean {
   if (node.type === 'footnoteDefinition' || node.type === 'footnoteReference' || tocMarkerOf(node, source)) return true;
   if (node.type === 'text' && /\[\^[^\]\r\n]+\]/.test(node.value || '')) return true;
   if (node.type === 'html') return isHtmlComment(node.value || '');
   if (['code', 'inlineCode', 'math', 'inlineMath'].includes(node.type)) return false;
+  if (node.type === 'listItem' && node.children?.[0]?.type === 'heading') return true;
+  if (node.type === 'text' && hasPlainExtension(node.value || '')) return true;
   return !!alertTypeOf(node, source) ||
     ['paragraph', 'heading', 'tableCell'].includes(node.type) && /==[^\n]+==/.test(proseOf(node)) ||
     !!node.children?.some(child => hasRenderedSyntax(child, source));
@@ -59,7 +66,7 @@ function enqueue(queues: Map<string, SourceQueue>, key: string, node: SourceNode
 
 /** Restore unchanged extension-bearing blocks, including their literal separators. */
 export function preserveRenderedSource(original: string, serialized: string): string {
-  if (!/==|<!--|\[!|\[\^|\[toc\]/i.test(original)) return serialized;
+  if (!/==|<!--|\[!|\[\^|\[toc\]/i.test(original) && !hasPlainExtension(original)) return serialized;
   const before = parser.parse(original), after = parser.parse(serialized);
   // Content queues allow unrelated blocks to be inserted, removed or moved.
   // Consume every original match once, retaining the order of repeated content

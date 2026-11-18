@@ -504,7 +504,7 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
 
   it('syncs outline follow on tab switch, sidebar resize, theme toggle, and excludes non-top-level headings without index drift', async () => {
     const doc = [
-      '# 保护 {#raw-1}',
+      '# 保护 <kbd>未闭合',
       filler('上段', 10),
       '> # 引用内标题（不进大纲）',
       '',
@@ -514,7 +514,7 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
       '',
       '[^1]: # 脚注内标题（不进大纲）',
       '',
-      '# 正常 [[wiki]] 标题',
+      '# 含 [TOC] 标题',
       filler('中段', 10),
       '## 末尾常规标题',
       filler('底段', 6),
@@ -523,7 +523,7 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     await open(doc);
 
     const texts = await page.locator('#outline .outline-item').allTextContents();
-    expect(texts).toEqual(['保护 {#raw-1}', '正常 [[wiki]] 标题', '末尾常规标题']);
+    expect(texts).toEqual(['保护 <kbd>未闭合', '含 [TOC] 标题', '末尾常规标题']);
 
     // Switch to Files tab, scroll down to 末尾常规标题, switch back to Outline tab -> syncs immediately
     await page.evaluate(() => (window as any).fileApp.setSidebarTab('files'));
@@ -534,10 +534,10 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     await page.locator('#outline-tab').click();
     await page.waitForFunction(() => document.querySelector('#outline .outline-item.active')?.textContent === '末尾常规标题');
 
-    // Clicking middle raw heading jumps cleanly to the exact 正常 [[wiki]] 标题 raw block (not HTML or normal heading)
+    // Clicking middle raw heading jumps cleanly to the exact 含 [TOC] 标题 raw block (not HTML or normal heading)
     await page.locator('#outline .outline-item').nth(1).click();
     await settleFrames(8);
-    expect(await page.locator('#outline .outline-item.active').textContent()).toBe('正常 [[wiki]] 标题');
+    expect(await page.locator('#outline .outline-item.active').textContent()).toBe('含 [TOC] 标题');
 
     // Switch light <-> dark theme and verify active text contrast differs from background
     for (const theme of ['light', 'dark']) {

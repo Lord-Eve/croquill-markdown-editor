@@ -19,6 +19,7 @@ export const fidelitySamples = [
   { name: '含空行容器', syntax: '::: warning\n\n__保留写法__\n\n最后一段\n\n:::' },
   { name: '标题属性', syntax: '## 自定义标题 {#id}' },
   { name: '段落属性', syntax: '一段文字 {.custom #name}' },
+  { name: '块引用标识', syntax: '段落末尾 ^abc123' },
   { name: '提示块', syntax: '> [!NOTE]\r\n> 注意 __原始写法__\r\n>\r\n> 第二段提示' },
   { name: '列表中的 HTML', syntax: '- 父项 <kbd>Tab</kbd>\r\n  - 子项 __原样__' },
 ] as const;

@@ -68,6 +68,51 @@ describe('real application menus and TOC layout',()=>{
     expect(await page.evaluate(()=>{const h=(window as any).chromeHarness;return {calls:h.calls,through:h.through};})).toEqual({calls:['action:save'],through:0});
   });
 
+  it('aligns list markers with the first line of each heading in both themes', async () => {
+    const original = [
+      '- 普通项', '- # ' + '换行标题'.repeat(14), '- 下一项',
+      '', '1. ## 二级', '', '* ### 三级', '',
+      '- 父项', '  - #### 四级', '    同项正文', '',
+      '+ ##### 五级', '', '3) ###### 六级',
+    ].join('\n');
+    await page.evaluate(async source => (window as any).chromeHarness.surface.load(source), original);
+    for (const theme of ['light', 'dark']) {
+      const rows = await page.evaluate(theme => {
+        document.documentElement.dataset.theme = theme;
+        const root = document.querySelector('.ProseMirror')!;
+        const gap = (block: Element, marker: Element) => block.getBoundingClientRect().left - marker.getBoundingClientRect().right;
+        const ordinary = root.querySelector('li p')!;
+        const ordinaryItem = ordinary.closest('li')!;
+        const ordinaryGap = gap(ordinary, ordinaryItem.querySelector(':scope > .label-wrapper > .label')!);
+        const ordinaryExtraHeight = ordinaryItem.getBoundingClientRect().height - parseFloat(getComputedStyle(ordinary).lineHeight);
+        return [...root.querySelectorAll('li :is(h1,h2,h3,h4,h5,h6)')].map(heading => {
+          const item = heading.closest('li')!;
+          const marker = item.querySelector(':scope > .label-wrapper > .label')!;
+          const markerBox = marker.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(heading);
+          const lines = range.getClientRects();
+          return {
+            level: heading.tagName, lines: lines.length,
+            center: markerBox.top + markerBox.height / 2, top: lines[0].top, bottom: lines[0].bottom,
+            gapDifference: gap(heading, marker) - ordinaryGap,
+            extraHeight: item.getBoundingClientRect().height - lines.length * parseFloat(getComputedStyle(heading).lineHeight),
+            ordinaryExtraHeight,
+          };
+        });
+      }, theme);
+      expect(rows.map(row => row.level)).toEqual(['H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+      expect(rows[0].lines).toBeGreaterThan(1);
+      expect(rows[0].extraHeight).toBeLessThanOrEqual(rows[0].ordinaryExtraHeight + 1);
+      for (const row of rows) {
+        expect(row.center, theme + ' ' + row.level).toBeGreaterThanOrEqual(row.top);
+        expect(row.center, theme + ' ' + row.level).toBeLessThanOrEqual(row.bottom);
+        expect(Math.abs(row.center - (row.top + row.bottom) / 2)).toBeLessThan((row.bottom - row.top) * .15);
+        expect(Math.abs(row.gapDifference)).toBeLessThan(1);
+      }
+    }
+  });
+
   it('keeps TOC entries full-width horizontal rows with level indentation in both themes',async()=>{
     const original='[TOC]\n\n'+Array.from({length:9},(_,i)=>'#'.repeat(i%6+1)+' 正常横排章节标题'+i).join('\n\n')+'\n';
     await page.evaluate(async original=>{await (window as any).chromeHarness.surface.load(original);},original);

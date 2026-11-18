@@ -8,6 +8,7 @@ import type { EditorView, NodeView } from '@milkdown/kit/prose/view';
 import type { Root } from '@milkdown/kit/transformer';
 import { $inputRule, $node, $prose } from '@milkdown/kit/utils';
 import type { Handle } from 'mdast-util-to-markdown';
+import { markdownOutline } from './fidelity';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
@@ -157,8 +158,8 @@ const rawIndexes = new WeakMap<RichNode, { headings: Omit<HeadingTarget, 'pos'>[
 function syntaxText(node: DocumentSyntaxNode): string { return node.value || node.children?.map(syntaxText).join('') || ''; }
 function indexOf(doc: RichNode): DocumentIndex {
   const headings: HeadingTarget[] = [], definitions = new Map<string, DefinitionTarget>();
-  doc.descendants((node, pos) => {
-    if (node.type.name === 'heading') headings.push({ pos, level: Number(node.attrs.level), text: visibleText(node.textContent) });
+  doc.descendants((node, pos, parent) => {
+    if (parent === doc && node.type.name === 'heading') headings.push({ pos, level: Number(node.attrs.level), text: visibleText(node.textContent, true) });
     if (node.type.name === 'footnote_definition') {
       const label = normalizeFootnoteLabel(String(node.attrs.identifier || node.attrs.label));
       if (!definitions.has(label)) definitions.set(label, { pos, text: visibleText(node.textBetween(0, node.content.size, '\n\n')) });
@@ -167,11 +168,12 @@ function indexOf(doc: RichNode): DocumentIndex {
       if (!rawIndexes.has(node)) {
         const index = { headings: [] as Omit<HeadingTarget, 'pos'>[], definitions: [] as { label: string; text: string }[] };
         function visit(child: DocumentSyntaxNode): void {
-          if (child.type === 'heading') index.headings.push({ level: child.depth || 1, text: syntaxText(child) });
           if (child.type === 'footnoteDefinition') index.definitions.push({ label: normalizeFootnoteLabel(child.identifier || child.label || ''), text: child.children?.map(syntaxText).join('\n\n') || '' });
           child.children?.forEach(visit);
         }
-        visit(rawParser.parse(String(node.attrs.value)) as unknown as DocumentSyntaxNode); rawIndexes.set(node, index);
+        const raw = String(node.attrs.value);
+        if (node.attrs.kind !== 'html') index.headings = markdownOutline(raw);
+        visit(rawParser.parse(raw) as unknown as DocumentSyntaxNode); rawIndexes.set(node, index);
       }
       const index = rawIndexes.get(node)!;
       index.headings.forEach(heading => headings.push({ ...heading, pos }));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, splitFrontmatter, preservedMarkdownBlocks } from '../src/fidelity';
+import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownForWordCount, markdownOutline, splitFrontmatter, preservedMarkdownBlocks } from '../src/fidelity';
 
 describe('Markdown protection', () => {
   it('only protects metadata that cannot yet be separated safely', () => {
@@ -44,9 +44,15 @@ describe('Markdown protection', () => {
     expect(hasEquivalentMarkdownStructure(header+'正文',header.replace('test','changed')+'正文')).toBe(false);
     expect(splitFrontmatter('\uFEFF正文')).toEqual({ prefix: '\uFEFF', frontmatter: '', body: '正文', incomplete: false });
     expect(splitFrontmatter('\uFEFF---\n\n正文')).toEqual({ prefix: '\uFEFF', frontmatter: '', body: '---\n\n正文', incomplete: false });
-    const source='\uFEFF正文\r\n\r\n[[双链]]\r\n';
+    const source='\uFEFF正文\r\n\r\n文字<kbd>未闭合\r\n';
     const block=preservedMarkdownBlocks(source)[0];
-    expect(source.slice(block.from,block.to)).toBe('[[双链]]\r\n');
+    expect(source.slice(block.from,block.to)).toBe('文字<kbd>未闭合\r\n');
+  });
+
+  it('counts heading attributes in neither ATX nor Setext, and keeps literal braces in prose, escapes and code', () => {
+    const raw = '# www.example.org {#_中文_} ##\n\n转义 \\{#原文} 和代码 `{#code}` {.cls}\n---\n\n- # 列表 {#id}\n\n正文 {.note} ^abc';
+    expect(markdownForWordCount(raw)).toBe(raw.replace(' {#_中文_}', '').replace(' {.cls}', '').replace(' {#id}', ''));
+    expect(markdownOutline(raw).map(item => item.text)).toEqual(['www.example.org', '转义 {#原文} 和代码 {#code}']);
   });
 
   it('outline uses real Markdown headings and ignores fenced samples', () => {
