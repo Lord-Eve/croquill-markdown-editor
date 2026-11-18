@@ -4,10 +4,16 @@
 
 ## [未发布]
 
+## [0.8.0] - 2026-11-18
+
 ### 新增
 
 - 所见即所得模式可以显示白名单内的行内 HTML，包括颜色、按键框、上下标、链接和图片。打完完整标签即可看到效果。
 - 光标碰到元素时展开两侧标签，可以直接修改标签和里面的文字。大纲、目录和字数忽略可渲染元素的标签。
+
+### 变更
+
+- GitHub Actions 自动验收只在 PR 上运行，跳过只改文档的提交；不再重复跑单元测试和 Rust 测试，只做类型检查、干净构建、窗口验收和安装包验收，耗时约减半。发版后手动触发一次。
 
 ### 修复
 
@@ -211,7 +217,7 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.7.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.8.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
@@ -221,3 +227,4 @@
 [0.5.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.4.0...v0.5.0
 [0.6.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.5.0...v0.6.0
 [0.7.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.6.0...v0.7.0
+[0.8.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.7.0...v0.8.0
