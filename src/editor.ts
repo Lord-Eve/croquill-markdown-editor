@@ -23,7 +23,7 @@ import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import type { OutlineHeadingBox } from './outline-tree';
-import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, buildDocumentAlignment, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
+import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore, sourceSegmentsForEdit } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { preserveTableSource } from './table-source';
@@ -101,23 +101,33 @@ function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
 /** Splice a verified inline HTML edit into the original bytes, including container whitespace. */
 function preserveInlineHtmlEdit(raw: string, before: RichNode, after: RichNode, serialized: string): string {
   if (!/<[a-z]/i.test(raw)) return serialized;
-  const from = before.content.findDiffStart(after.content), end = before.content.findDiffEnd(after.content);
+  const first = before.content.findDiffStart(after.content);
+  if (first == null) return serialized;
+  // Editing a heading also changes its generated ID, so the first difference can
+  // be the opening of the heading. Compare the inline content in its own coordinates.
+  const headingStart = before.nodeAt(first)?.type.name === 'heading' && after.nodeAt(first)?.type.name === 'heading';
+  const pos = headingStart ? first + 1 : first;
+  const $block = before.resolve(pos), next = after.resolve(pos).parent;
+  const block = $block.parent;
+  if (!block.isTextblock || block.type !== next.type) return serialized;
+  const from = block.content.findDiffStart(next.content), end = block.content.findDiffEnd(next.content);
   if (from == null || !end) return serialized;
   // Common prefix and suffix can overlap when inserting or deleting repeated text.
   const overlap = Math.max(0, from - Math.min(end.a, end.b));
-  const $from = before.resolve(from), $to = before.resolve(end.a + overlap);
-  if (!$from.sameParent($to) || !blockSpans($from.parent).some(span =>
-    span.html && span.from <= $from.parentOffset && $to.parentOffset <= span.to,
-  )) return serialized;
-  const inserted = after.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
+  const to = end.a + overlap;
+  // Structural or multi-block edits, and changes outside a rendered element,
+  // use the serializer. Only single-line text can be spliced into an exact source run.
+  if (!blockSpans(block).some(span => span.html && span.from <= from && to <= span.to)) return serialized;
+  const inserted = next.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
   if (/[\r\n]/.test(inserted) || inserted.includes(INLINE_OBJECT)) return serialized;
-  const block = buildDocumentAlignment(raw, before).blocks.find(block => block.isTextblock && block.richPos + 1 === $from.start());
-  const segment = block?.segments?.find(segment =>
-    segment.kind === 'exact' && segment.pmFrom <= $from.parentOffset && $to.parentOffset <= segment.pmTo,
+  // Missing AST positions, unverified text, or edits crossing a break/atom gap
+  // have no single exact range. A splice must also represent the entire changed document.
+  const segment = sourceSegmentsForEdit(raw, $block)?.find(segment =>
+    segment.kind === 'exact' && segment.pmFrom <= from && to <= segment.pmTo,
   );
   if (!segment) return serialized;
-  const rawFrom = segment.rawFrom + $from.parentOffset - segment.pmFrom;
-  const rawTo = segment.rawFrom + $to.parentOffset - segment.pmFrom;
+  const rawFrom = segment.rawFrom + from - segment.pmFrom;
+  const rawTo = segment.rawFrom + to - segment.pmFrom;
   const candidate = raw.slice(0, rawFrom) + inserted + raw.slice(rawTo);
   return hasEquivalentMarkdownStructure(candidate, serialized) ? candidate : serialized;
 }

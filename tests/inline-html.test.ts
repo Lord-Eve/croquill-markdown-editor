@@ -167,6 +167,24 @@ describe('inline HTML source fragments through the production editor', () => {
     expect(result.keys).toBe(contexts.length);
   }, 30000);
 
+  const tableWithHtml = '| <b>表头</b> | 备注 |\r\n| :--- | ---: |\r\n|  <b>粗</b>  | 不动 |';
+  it.each([
+    { location: 'heading', block: '## 标题 <kbd>Key</kbd>', word: 'Key' },
+    { location: 'table header', block: tableWithHtml, word: '表头' },
+    { location: 'table body', block: tableWithHtml, word: '粗' },
+  ])('changes only the inserted byte in a $location beside a CRLF list', async ({ block, word }) => {
+    const original = '* 列表 *星* 项\r\n\r\n' + block + '\r\n';
+    const saved = await page.evaluate(async ({ original, word }) => {
+      const h = (window as any).inlineHarness;
+      await h.surface.init(original);
+      h.selectText(word, 1);
+      const view = h.surface.richView();
+      view.dispatch(view.state.tr.insertText('X'));
+      return await h.save();
+    }, { original, word });
+    expect(saved).toBe(original.replace(word, word[0] + 'X' + word.slice(1)));
+  }, 30000);
+
   it('preserves nested tags and Markdown inside their exact original source range while editing nearby text', async () => {
     const raw = '<SpAn data-note="a > b"  class="red"><span>内部</span>**粗**与`代码`</SpAn>';
     const original = '前' + raw + '后\n';
