@@ -159,7 +159,7 @@ const outlineController = new OutlineController({
   container: $('outline'),
   countEl: $('heading-count'),
   scrollContainer: $('editor-scroll'),
-  measureBoxes: () => surface.getOutlineHeadingBoxes(),
+  visibleHeading: (count, top, bottom) => surface.visibleHeading(count, top, bottom),
   onJump: index => surface.scrollToHeading(index),
   isOutlineVisible: () => !document.body.classList.contains('sidebar-hidden') && !$('outline-pane').hidden,
 });

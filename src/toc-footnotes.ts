@@ -2,16 +2,14 @@ import type { Ctx } from '@milkdown/kit/ctx';
 import { remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { footnoteDefinitionSchema, footnoteReferenceSchema } from '@milkdown/kit/preset/gfm';
 import { Fragment, type Node as RichNode } from '@milkdown/kit/prose/model';
-import { NodeSelection, Plugin, PluginKey, TextSelection } from '@milkdown/kit/prose/state';
+import { NodeSelection, Plugin, TextSelection } from '@milkdown/kit/prose/state';
 import { InputRule } from '@milkdown/kit/prose/inputrules';
 import type { EditorView, NodeView } from '@milkdown/kit/prose/view';
 import type { Root } from '@milkdown/kit/transformer';
 import { $inputRule, $node, $prose } from '@milkdown/kit/utils';
 import type { Handle } from 'mdast-util-to-markdown';
 import { markdownOutline } from './fidelity';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
+import { parseMarkdownAst } from './markdown-ast';
 import { normalizeFootnoteLabel, tocMarkerOf, type DocumentSyntaxNode } from './document-syntax';
 import { literalFootnotes } from './footnote-literals';
 import { blockSpans, visibleText } from './inline-source-view';
@@ -152,8 +150,6 @@ export function handleTocFootnoteKey(view: EditorView, event: KeyboardEvent): bo
 interface HeadingTarget { pos: number; level: number; text: string }
 interface DefinitionTarget { pos: number; text: string }
 interface DocumentIndex { headings: HeadingTarget[]; definitions: Map<string, DefinitionTarget> }
-const indexKey = new PluginKey<DocumentIndex>('croquill-document-index');
-const rawParser = unified().use(remarkParse).use(remarkGfm);
 const rawIndexes = new WeakMap<RichNode, { headings: Omit<HeadingTarget, 'pos'>[]; definitions: { label: string; text: string }[] }>();
 function syntaxText(node: DocumentSyntaxNode): string { return node.value || node.children?.map(syntaxText).join('') || ''; }
 function indexOf(doc: RichNode): DocumentIndex {
@@ -173,7 +169,7 @@ function indexOf(doc: RichNode): DocumentIndex {
         }
         const raw = String(node.attrs.value);
         if (node.attrs.kind !== 'html') index.headings = markdownOutline(raw);
-        visit(rawParser.parse(raw) as unknown as DocumentSyntaxNode); rawIndexes.set(node, index);
+        visit(parseMarkdownAst(raw, 'gfm') as unknown as DocumentSyntaxNode); rawIndexes.set(node, index);
       }
       const index = rawIndexes.get(node)!;
       index.headings.forEach(heading => headings.push({ ...heading, pos }));
@@ -195,23 +191,29 @@ function jumpTo(view: EditorView, position: number): void {
 export const tocFootnotePlugin = $prose(() => {
   const live = new Set<{ refresh: () => void }>();
   let hidePreview = () => {};
-  return new Plugin<DocumentIndex>({
-    key: indexKey,
-    state: { init: (_config, state) => indexOf(state.doc), apply: (transaction, previous) => transaction.docChanged ? indexOf(transaction.doc) : previous },
+  // A document without a TOC or a footnote consumer needs no index on input.
+  // All consumers of the same immutable snapshot share one traversal.
+  let cached: { doc: RichNode; index: DocumentIndex } | undefined;
+  function currentIndex(view: EditorView): DocumentIndex {
+    const doc = view.state.doc;
+    if (cached?.doc !== doc) cached = { doc, index: indexOf(doc) };
+    return cached.index;
+  }
+  return new Plugin({
     props: {
       nodeViews: {
         croquill_toc(node, view) {
           const dom = document.createElement('nav'); dom.dataset.croquillToc = String(node.attrs.value); dom.contentEditable = 'false'; dom.setAttribute('aria-label', '文章目录');
           let signature = '';
           const instance = { refresh: () => {
-            const headings = indexKey.getState(view.state)?.headings || [];
+            const headings = currentIndex(view).headings;
             const next = JSON.stringify(headings.map(({ level, text }) => ({ level, text })));
             if (next === signature) return; signature = next;
             const fragment = document.createDocumentFragment();
             headings.forEach((heading, index) => {
               const button = document.createElement('button'); button.type = 'button'; button.textContent = heading.text || '（空标题）'; button.dataset.level = String(heading.level); button.style.setProperty('--toc-level', String(heading.level));
               button.onmousedown = event => { if (view.composing) event.preventDefault(); };
-              button.onclick = event => { event.preventDefault(); hidePreview(); const target = indexKey.getState(view.state)?.headings[index]; if (target) jumpTo(view, target.pos); };
+              button.onclick = event => { event.preventDefault(); hidePreview(); const target = currentIndex(view).headings[index]; if (target) jumpTo(view, target.pos); };
               fragment.append(button);
             });
             if (!headings.length) { const empty = document.createElement('span'); empty.textContent = '暂无标题'; fragment.append(empty); }
@@ -226,7 +228,7 @@ export const tocFootnotePlugin = $prose(() => {
           dom.dataset.footnoteReference = identifier; dom.dataset.label = String(node.attrs.label); dom.dataset.footnoteRaw = JSON.stringify(node.attrs.raw);
           let resolved: boolean | undefined;
           const instance = { refresh: () => {
-            const defined = !!indexKey.getState(view.state)?.definitions.has(identifier);
+            const defined = !!currentIndex(view).definitions.has(identifier);
             const text = defined ? String(node.attrs.label) : String(node.attrs.raw || `[^${node.attrs.label}]`);
             if (dom.textContent !== text) dom.textContent = text;
             if (defined === resolved) return;
@@ -238,7 +240,7 @@ export const tocFootnotePlugin = $prose(() => {
           // Own the whole pointer gesture on a defined reference. If the press reaches the
           // editor root, the table block schedules "select this body cell" for the next
           // frame, which lands after the click and undoes the jump.
-          const definition = () => indexKey.getState(view.state)?.definitions.get(identifier);
+          const definition = () => currentIndex(view).definitions.get(identifier);
           for (const type of ['pointerdown', 'mousedown'] as const) dom.addEventListener(type, event => {
             if (!definition()) return;
             event.stopPropagation(); if (type === 'mousedown') event.preventDefault();
@@ -254,7 +256,7 @@ export const tocFootnotePlugin = $prose(() => {
       handleKeyDown(view, event) {
         if (event.isComposing || view.composing || !['Enter', ' '].includes(event.key)) return false;
         const element = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-footnote-reference]') : null;
-        const target = element && indexKey.getState(view.state)?.definitions.get(element.dataset.footnoteReference || '');
+        const target = element && currentIndex(view).definitions.get(element.dataset.footnoteReference || '');
         if (!target) return false; event.preventDefault(); hidePreview(); jumpTo(view, target.pos); return true;
       },
     },
@@ -264,7 +266,7 @@ export const tocFootnotePlugin = $prose(() => {
       const hide = () => { hovered = null; tooltip.hidden = true; };
       hidePreview = hide;
       const show = (element: HTMLElement) => {
-        const definition = indexKey.getState(view.state)?.definitions.get(element.dataset.footnoteReference || '');
+        const definition = currentIndex(view).definitions.get(element.dataset.footnoteReference || '');
         if (!definition) { hide(); return; }
         hovered = element; tooltip.textContent = definition.text || '（空脚注）'; tooltip.hidden = false;
         const rect = element.getBoundingClientRect();

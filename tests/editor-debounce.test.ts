@@ -172,6 +172,37 @@ describe('rich editor deferred synchronization', () => {
     await page.evaluate(()=>(window as any).appSyncTest.surface.destroy());
   });
 
+  it('publishes locally after composition, then restores exact bytes on undo and redo', async () => {
+    const original = '开头\r\n\r\n正文\r\n\r\n第三段\r\n\r\n第四段\r\n\r\n末段\r\n';
+    await page.evaluate(async original => {
+      const h = (window as any).debounceHarness;
+      await h.surface.load(original);
+      h.index = h.surface.blockIndex;
+      const view = h.surface.richView();
+      view.dom.dispatchEvent(new CompositionEvent('compositionstart', { data: '中', bubbles: true }));
+      h.insert('中文');
+    }, original);
+    await page.waitForTimeout(380); // Cross the real 300 ms idle deadline with composition still active.
+    expect(await page.evaluate(() => (window as any).debounceHarness.serializations)).toBe(0);
+    await page.evaluate(() => {
+      const h = (window as any).debounceHarness;
+      h.surface.richView().dom.dispatchEvent(new CompositionEvent('compositionend', { data: '中文', bubbles: true }));
+    });
+    await page.waitForFunction(() => (window as any).debounceHarness.serializations === 1);
+    const result = await page.evaluate(() => {
+      const h = (window as any).debounceHarness, s = h.surface;
+      const local = !!h.index && h.index === s.blockIndex, edited = s.getMarkdown();
+      s.format('undo'); const undone = s.getMarkdown();
+      s.format('redo'); const redone = s.getMarkdown();
+      s.format('undo'); s.getMarkdown(); s.forceFullSerialization = true;
+      s.format('redo'); return {local, edited, undone, redone, full:s.getMarkdown()};
+    });
+    const edited = original.replace('开头', '开头中文');
+    expect(result.local).toBe(true);
+    expect([result.edited, result.undone, result.redone]).toEqual([edited, original, edited]);
+    expect(result.full.replace(/\r\n/g, '\n')).toBe(edited.replace(/\r\n/g, '\n'));
+  });
+
   it('waits for active composition to finish before idle serialization',async()=>{
     const during=await page.evaluate(async()=>{
       const h=(window as any).debounceHarness,view=h.surface.richView();

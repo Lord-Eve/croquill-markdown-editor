@@ -1,14 +1,11 @@
+import { parseMarkdownAst } from './markdown-ast';
+export { parseMarkdownAst } from './markdown-ast';
 import { headingAttributes, headingContentRange, inlineSourceText, withoutHeadingAttributes } from './inline-source';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
 import { inlineHtmlRanges, isInlineHtmlRun, renderedHtmlTagRanges, type InlineHtmlRange } from './inline-html-ranges';
 import { isHtmlComment } from './html-comments';
 import { alertTypeOf } from './alert-types';
 import { tocMarkerOf } from './document-syntax';
 
-const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SyntaxNode {
   type: string;
   value?: string;
@@ -68,11 +65,16 @@ function categoriesOf(node: SyntaxNode, source: string, renderedTags?: SourceRan
   return categories;
 }
 
+const preservedByTree = new WeakMap<object, PreservedBlock[]>();
+
 /** Parsed HTML and extension-bearing blocks are opaque locally, never executed. */
 export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
   // remark treats a leading BOM as transport metadata, excluding it from offsets.
   if (body.startsWith('\uFEFF')) return preservedMarkdownBlocks(body.slice(1)).map(block => ({ ...block, from: block.from + 1, to: block.to + 1 }));
-  const nodes = markdownParser.parse(body).children as SyntaxNode[];
+  const tree = parseMarkdownAst(body);
+  const cached = preservedByTree.get(tree);
+  if (cached) return cached;
+  const nodes = tree.children as SyntaxNode[];
   const blocks: PreservedBlock[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
@@ -107,6 +109,7 @@ export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
     blocks.push({ from, to, raw: body.slice(from, to), categories: [...categories] });
     i = last;
   }
+  preservedByTree.set(tree, blocks);
   return blocks;
 }
 
@@ -147,12 +150,17 @@ function semanticTree(value: unknown, source: string): unknown {
   return copy;
 }
 
+export function markdownNodeSignature(node: unknown, source: string): string {
+  return JSON.stringify(semanticTree(node, source));
+}
+
 /** Keep the semantic last gate, with metadata compared as its literal source. */
 export function hasEquivalentMarkdownStructure(before: string, after: string): boolean {
+  if (before === after) return true;
   const a = splitFrontmatter(before), b = splitFrontmatter(after);
   return a.frontmatter === b.frontmatter &&
-    JSON.stringify(semanticTree(markdownParser.parse(a.body), a.body)) ===
-    JSON.stringify(semanticTree(markdownParser.parse(b.body), b.body));
+    JSON.stringify(semanticTree(parseMarkdownAst(a.body), a.body)) ===
+    JSON.stringify(semanticTree(parseMarkdownAst(b.body), b.body));
 }
 
 /** A top-level Markdown heading extracted for the document outline. */
@@ -201,7 +209,7 @@ export function markdownForWordCount(markdown: string): string {
   if (!/<[a-z]|\{[.#]/i.test(markdown)) return markdown;
   const { prefix, body } = splitFrontmatter(markdown);
   const tags: SourceRange[] = [];
-  for (const block of markdownParser.parse(body).children) {
+  for (const block of parseMarkdownAst(body).children) {
     const start = tags.length;
     if (categoriesOf(block, body, tags).size) tags.length = start;
     else collectHeadingAttributes(block, body, tags);
@@ -215,14 +223,9 @@ export function markdownForWordCount(markdown: string): string {
   return result + body.slice(from);
 }
 
-/** Parses Markdown using Croquill's shared Remark parser. */
-export function parseMarkdownAst(markdown: string) {
-  return markdownParser.parse(markdown);
-}
-
 /** Counts direct top-level heading nodes in a Markdown fragment (e.g. a protected raw block). */
 export function countTopLevelAstHeadings(markdown: string): number {
-  const ast = markdownParser.parse(markdown);
+  const ast = parseMarkdownAst(markdown);
   let count = 0;
   for (const child of ast.children) {
     if (child.type === 'heading') count += 1;
@@ -231,6 +234,12 @@ export function countTopLevelAstHeadings(markdown: string): number {
 }
 
 export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
+  const parts = splitFrontmatter(markdown);
+  if (parts.frontmatter && !/\r(?!\n)/.test(parts.prefix)) {
+    const lines = parts.prefix.split('\n').length - 1;
+    return outlineOfBody(parts.body, lines);
+  }
+  if (!parts.frontmatter && !/^\s*(?:---|\+\+\+)[^\S\n]*(?:\n|$)/.test(parts.body)) return outlineOfBody(parts.body, 0);
   const rows = markdown.split('\n');
   const first = rows[0]?.replace(/^\uFEFF/, '').trim();
   if (first === '---' || first === '+++') {
@@ -239,13 +248,17 @@ export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
     for (let index = 0; index < length; index++) rows[index] = '';
   }
   const source = rows.join('\n').replace(/^\uFEFF/, '');
-  const ast = markdownParser.parse(source);
+  return outlineOfBody(source, 0);
+}
+
+function outlineOfBody(source: string, lines: number): MarkdownOutlineItem[] {
+  const ast = parseMarkdownAst(source);
   const headings: MarkdownOutlineItem[] = [];
   for (const child of ast.children) {
     if (child.type === 'heading') {
       const ranges = inlineHtmlRanges(child, source);
       const hidden = ranges?.length ? new Set(renderedHtmlTagRanges(ranges).map(tag => tag.from)) : undefined;
-      headings.push({ level: child.depth, text: astNodeVisibleText(child, hidden, source, headingAttributeOffsets(child, source)), line: child.position?.start.line ?? 1 });
+      headings.push({ level: child.depth, text: astNodeVisibleText(child, hidden, source, headingAttributeOffsets(child, source)), line: lines + (child.position?.start.line ?? 1) });
     }
   }
   return headings;

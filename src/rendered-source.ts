@@ -1,12 +1,8 @@
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
+import { parseMarkdownAst } from './markdown-ast';
 import { alertTypeOf } from './alert-types';
 import { isHtmlComment } from './html-comments';
 import { tocMarkerOf } from './document-syntax';
 
-const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 interface SourceNode {
   type: string;
   value?: string;
@@ -66,8 +62,9 @@ function enqueue(queues: Map<string, SourceQueue>, key: string, node: SourceNode
 
 /** Restore unchanged extension-bearing blocks, including their literal separators. */
 export function preserveRenderedSource(original: string, serialized: string): string {
+  if (original === serialized) return serialized;
   if (!/==|<!--|\[!|\[\^|\[toc\]/i.test(original) && !hasPlainExtension(original)) return serialized;
-  const before = parser.parse(original), after = parser.parse(serialized);
+  const before = parseMarkdownAst(original), after = parseMarkdownAst(serialized);
   // Content queues allow unrelated blocks to be inserted, removed or moved.
   // Consume every original match once, retaining the order of repeated content
   // without an O(n*m) document alignment on long files.
@@ -115,6 +112,7 @@ export function preserveRenderedSource(original: string, serialized: string): st
   restoreComments(after as SourceNode, '', false);
   let result = serialized;
   for (const change of changes.reverse()) result = result.slice(0, change.from) + change.text + result.slice(change.to);
+  if (result === serialized) return serialized;
   // Never accept a source splice that changes the document's parsed structure.
-  return JSON.stringify(semantic(parser.parse(result))) === JSON.stringify(semantic(after)) ? result : serialized;
+  return JSON.stringify(semantic(parseMarkdownAst(result))) === JSON.stringify(semantic(after)) ? result : serialized;
 }
