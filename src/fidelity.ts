@@ -2,7 +2,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import { inlineHtmlRanges } from './inline-html-ranges';
+import { inlineHtmlRanges, isInlineHtmlRun, renderedHtmlTagRanges, type InlineHtmlRange } from './inline-html-ranges';
 import { isHtmlComment } from './html-comments';
 import { alertTypeOf } from './alert-types';
 import { tocMarkerOf } from './document-syntax';
@@ -35,19 +35,31 @@ export function splitFrontmatter(markdown: string): MarkdownParts {
   return { prefix, frontmatter: markdown.slice(0, end), body: markdown.slice(prefix.length), incomplete: false };
 }
 
-function categoriesOf(node: SyntaxNode, source: string): Set<string> {
+type SourceRange = { from: number; to: number };
+
+function categoriesOf(node: SyntaxNode, source: string, renderedTags?: SourceRange[]): Set<string> {
   const categories = new Set<string>();
   const text: string[] = [];
-  function visit(child: SyntaxNode, ranges: { from: number; to: number }[] = []): void {
+  function visit(child: SyntaxNode, html?: { tags: Set<number>; literals: InlineHtmlRange[] } | null): void {
     if (tocMarkerOf(child, source)) return;
-    if (['paragraph', 'heading', 'tableCell'].includes(child.type)) ranges = inlineHtmlRanges(child, source) || [];
+    if (isInlineHtmlRun(child)) {
+      const ranges = inlineHtmlRanges(child, source);
+      const tags = ranges && renderedHtmlTagRanges(ranges);
+      html = ranges && tags ? { tags: new Set(tags.map(tag => tag.from)), literals: ranges.filter(range => !range.element) } : null;
+      if (tags && renderedTags) for (const tag of tags) renderedTags.push(tag);
+    }
     if (['code', 'inlineCode', 'math', 'inlineMath'].includes(child.type)) { text.push('\n'); return; }
-    if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !isHtmlComment(child.value || '') && !ranges.some(range =>
-      child.position?.start.offset != null && child.position?.end.offset != null &&
-      child.position.start.offset >= range.from && child.position.end.offset <= range.to)) categories.add('HTML');
+    const from = child.position?.start.offset, to = child.position?.end.offset;
+    if (from != null && to != null && html?.literals.some(range => range.from <= from && to <= range.to)) { text.push('\0'); return; }
+    if (child.type === 'html' && !isBareHtmlBreak(child.value || '') && !isHtmlComment(child.value || '') && !html?.tags.has(from ?? -1)) {
+      categories.add('HTML');
+      // Malformed inline syntax still belongs to a protected Markdown block.
+      // Only actual HTML blocks should use the block renderer.
+      if (html === null) categories.add('行内 HTML 边界');
+    }
     if (child.type === 'blockquote' && /^\[![A-Z]+\]/.test(child.children?.[0]?.children?.[0]?.value || '') && !alertTypeOf(child, source)) categories.add('提示块');
     if (child.type === 'text') text.push(child.value || '');
-    child.children?.forEach(nested => visit(nested, ranges));
+    child.children?.forEach(nested => visit(nested, html));
   }
   visit(node);
   const prose = text.join('');
@@ -163,9 +175,28 @@ export interface MarkdownOutlineItem {
 }
 
 /** Extracts visible plain text from a Remark AST node tree. */
-export function astNodeVisibleText(node: unknown): string {
-  const item = node as { value?: string; alt?: string; children?: unknown[] };
-  return item.value ?? item.alt ?? item.children?.map(astNodeVisibleText).join('') ?? '';
+export function astNodeVisibleText(node: unknown, hiddenTags?: Set<number>): string {
+  const item = node as SyntaxNode & { alt?: string };
+  if (item.type === 'html' && hiddenTags?.has(item.position?.start.offset ?? -1)) return '';
+  return item.value ?? item.alt ?? item.children?.map(child => astNodeVisibleText(child, hiddenTags)).join('') ?? '';
+}
+
+/** Keep the existing source-based count, omitting the tags of rendered inline HTML. */
+export function markdownWithoutRenderedHtmlTags(markdown: string): string {
+  if (!/<[a-z]/i.test(markdown)) return markdown;
+  const { prefix, body } = splitFrontmatter(markdown);
+  const tags: SourceRange[] = [];
+  for (const block of markdownParser.parse(body).children) {
+    const start = tags.length;
+    if (categoriesOf(block, body, tags).size) tags.length = start;
+  }
+  if (!tags.length) return markdown;
+  let result = prefix, from = 0;
+  for (const tag of tags.sort((a, b) => a.from - b.from)) {
+    result += body.slice(from, tag.from);
+    from = tag.to;
+  }
+  return result + body.slice(from);
 }
 
 /** Parses Markdown using Croquill's shared Remark parser. */
@@ -191,11 +222,14 @@ export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
     const length = closing < 0 ? rows.length : closing + 1;
     for (let index = 0; index < length; index++) rows[index] = '';
   }
-  const ast = markdownParser.parse(rows.join('\n'));
+  const source = rows.join('\n').replace(/^\uFEFF/, '');
+  const ast = markdownParser.parse(source);
   const headings: MarkdownOutlineItem[] = [];
   for (const child of ast.children) {
     if (child.type === 'heading') {
-      headings.push({ level: child.depth, text: astNodeVisibleText(child), line: child.position?.start.line ?? 1 });
+      const ranges = inlineHtmlRanges(child, source);
+      const hidden = ranges?.length ? new Set(renderedHtmlTagRanges(ranges).map(tag => tag.from)) : undefined;
+      headings.push({ level: child.depth, text: astNodeVisibleText(child, hidden), line: child.position?.start.line ?? 1 });
     }
   }
   return headings;

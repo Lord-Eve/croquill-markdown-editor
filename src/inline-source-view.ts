@@ -2,6 +2,7 @@ import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } 
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { Fragment, type Mark, type Node as RichNode } from '@milkdown/kit/prose/model';
 import { INLINE_OBJECT, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
+import { createInlineHtmlImage, inlineHtmlStyle, type InlineHtmlImage } from './html-sanitize';
 
 interface BlockSyntax { run: string; map: number[]; spans: InlineSpan[] }
 const blocks = new WeakMap<RichNode, BlockSyntax>();
@@ -95,12 +96,57 @@ function decorateLink(block: RichNode, base: number, span: InlineSpan, active: b
   if (to - 1 > innerTo) decorations.push(Decoration.inline(to - 1, to, { class: 'md-marker' }));
 }
 
-function decorateBlock(block: RichNode, position: number, selectionFrom: number, selectionTo: number): Decoration[] {
+type ImagePreview = (image: InlineHtmlImage) => string | undefined;
+
+function decorateHtml(block: RichNode, base: number, span: InlineSpan, active: boolean, preview: ImagePreview, decorations: Decoration[]): void {
+  const html = span.html!;
+  const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
+  const marker = { class: 'md-marker md-html-marker' };
+  if (html.tag === 'img') {
+    const src = active ? undefined : preview(html);
+    decorations.push(Decoration.inline(from, to, src ? { class: marker.class + ' md-hidden' } : marker));
+    if (src) {
+      const key = 'html-image:' + block.textBetween(span.from, span.to);
+      decorations.push(Decoration.widget(from, (view, getPos) => {
+        const img = createInlineHtmlImage(src, html)!;
+        img.addEventListener('mousedown', event => {
+          const pos = getPos();
+          if (pos == null || event.button !== 0 || view.composing) return;
+          event.preventDefault();
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos + '<img'.length)).scrollIntoView());
+          view.focus();
+        });
+        return img;
+      }, { side: -1, key, ignoreSelection: true }));
+    }
+    return;
+  }
+  if (!active) marker.class += ' md-hidden';
+  decorations.push(Decoration.inline(from, innerFrom, marker), Decoration.inline(innerTo, to, marker));
+  if (innerFrom === innerTo) return;
+  const attrs: Record<string, string> = { nodeName: html.tag, class: 'md-html' };
+  if (html.tag === 'a') {
+    // Navigation is handled by the editor. A span also keeps nested Markdown
+    // links valid DOM, and unsupported protocols never become DOM attributes.
+    attrs.nodeName = 'span';
+    attrs.class += ' md-html-link';
+  }
+  if (html.title) attrs.title = html.title;
+  const style = html.styles?.length ? inlineHtmlStyle(html.styles) : '';
+  if (style) attrs.style = style;
+  decorations.push(Decoration.inline(innerFrom, innerTo, attrs, { inclusiveStart: true, inclusiveEnd: true }));
+}
+
+function decorateBlock(block: RichNode, position: number, selectionFrom: number, selectionTo: number, preview: ImagePreview): Decoration[] {
   const base = position + 1, decorations: Decoration[] = [];
   for (const span of blockSpans(block)) {
     const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
     // Touching counts: the caret right before `**` already shows it, as in Typora.
     const active = selectionFrom <= to && selectionTo >= from;
+    if (span.html) {
+      decorateHtml(block, base, span, active, preview, decorations);
+      continue;
+    }
     if (span.kind === 'link' || span.kind === 'autolink') {
       decorateLink(block, base, span, active, decorations);
       continue;
@@ -127,10 +173,10 @@ function decorateBlock(block: RichNode, position: number, selectionFrom: number,
   return decorations;
 }
 
-function decorateRange(doc: RichNode, from: number, to: number, selection: { from: number; to: number }, visit: (position: number, block: RichNode, decorations: Decoration[]) => void): void {
+function decorateRange(doc: RichNode, from: number, to: number, selection: { from: number; to: number }, preview: ImagePreview, visit: (position: number, block: RichNode, decorations: Decoration[]) => void): void {
   doc.nodesBetween(Math.max(0, from), Math.min(doc.content.size, to), (node, position) => {
     if (!node.isTextblock) return true;
-    if (isSourceBlock(node)) visit(position, node, decorateBlock(node, position, selection.from, selection.to));
+    if (isSourceBlock(node)) visit(position, node, decorateBlock(node, position, selection.from, selection.to, preview));
     return false;
   });
 }
@@ -138,9 +184,9 @@ function decorateRange(doc: RichNode, from: number, to: number, selection: { fro
 interface ViewState { decorations: DecorationSet; stale: boolean }
 export const inlineSourceKey = new PluginKey<ViewState>('croquill-inline-source');
 
-function build(state: EditorState): ViewState {
+function build(state: EditorState, preview: ImagePreview): ViewState {
   const all: Decoration[] = [];
-  decorateRange(state.doc, 0, state.doc.content.size, state.selection, (_position, _block, decorations) => { all.push(...decorations); });
+  decorateRange(state.doc, 0, state.doc.content.size, state.selection, preview, (_position, _block, decorations) => { all.push(...decorations); });
   return { decorations: DecorationSet.create(state.doc, all), stale: false };
 }
 
@@ -309,17 +355,45 @@ function changedRange(transactions: readonly Transaction[]): { from: number; to:
   return from <= to ? { from, to } : null;
 }
 
-export function inlineSourcePlugin(): Plugin<ViewState> {
+export function inlineSourcePlugin(resolveImage: (src: string) => Promise<string>): Plugin<ViewState> {
   let editor: EditorView | undefined;
+  let destroyed = false;
+  let imagesChanged = false;
+  const imageSources = new Map<string, string>();
+  function refresh(view: EditorView): void {
+    if (view.isDestroyed || view.composing || !(imagesChanged || inlineSourceKey.getState(view.state)?.stale)) return;
+    view.dispatch(view.state.tr.setMeta(inlineSourceKey, 'rebuild').setMeta('addToHistory', false));
+  }
+  const preview: ImagePreview = image => {
+    if (!imageSources.has(image.src)) {
+      // An empty entry keeps the source visible and avoids repeated reads while
+      // loading or after failure.
+      imageSources.set(image.src, '');
+      void (async () => {
+        const resolved = image.local ? await resolveImage(image.src) : image.src;
+        if (destroyed) return;
+        const img = createInlineHtmlImage(resolved, image);
+        if (!img) return;
+        await img.decode();
+        if (destroyed) return;
+        imageSources.set(image.src, resolved);
+        imagesChanged = true;
+        if (editor) refresh(editor);
+      })().catch(() => { /* Keep the editable source visible. */ });
+    }
+    return imageSources.get(image.src);
+  };
   return new Plugin<ViewState>({
     key: inlineSourceKey,
     state: {
-      init: (_config, state) => build(state),
+      init: (_config, state) => build(state, preview),
       apply(transaction, value, oldState, newState) {
-        if (transaction.getMeta(inlineSourceKey) === 'rebuild') return build(newState);
         // Never restyle around an open IME composition; catch up when it closes.
         if (editor?.composing) return { decorations: value.decorations.map(transaction.mapping, transaction.doc), stale: true };
-        if (value.stale) return build(newState);
+        if (value.stale || imagesChanged || transaction.getMeta(inlineSourceKey) === 'rebuild') {
+          imagesChanged = false;
+          return build(newState, preview);
+        }
         if (!transaction.docChanged && oldState.selection.eq(newState.selection)) return value;
         let decorations = value.decorations.map(transaction.mapping, transaction.doc);
         const ranges = [
@@ -329,7 +403,7 @@ export function inlineSourcePlugin(): Plugin<ViewState> {
         const changed = transaction.docChanged ? changedRange([transaction]) : null;
         if (changed) ranges.push(changed);
         const refreshed = new Set<number>();
-        for (const range of ranges) decorateRange(newState.doc, range.from, range.to, newState.selection, (position, block, fresh) => {
+        for (const range of ranges) decorateRange(newState.doc, range.from, range.to, newState.selection, preview, (position, block, fresh) => {
           if (refreshed.has(position)) return;
           refreshed.add(position);
           decorations = decorations.remove(decorations.find(position, position + block.nodeSize)).add(newState.doc, fresh);
@@ -346,15 +420,16 @@ export function inlineSourcePlugin(): Plugin<ViewState> {
       decorations(state) { return inlineSourceKey.getState(state)?.decorations; },
       handleDOMEvents: {
         compositionend(view) {
-          setTimeout(() => {
-            if (view.isDestroyed || view.composing || !inlineSourceKey.getState(view.state)?.stale) return;
-            view.dispatch(view.state.tr.setMeta(inlineSourceKey, 'rebuild').setMeta('addToHistory', false));
-          }, 60);
+          setTimeout(() => refresh(view), 60);
           return false;
         },
       },
     },
-    view(view) { editor = view; return { destroy() { editor = undefined; } }; },
+    view(view) {
+      editor = view;
+      if (imagesChanged) queueMicrotask(() => refresh(view));
+      return { destroy() { destroyed = true; editor = undefined; } };
+    },
   });
 }
 
@@ -457,7 +532,7 @@ function spanContainsPoint(view: EditorView, fromPos: number, toPos: number, cli
 
 /** Find the inline `link` / `autolink` span directly beneath a pointer coordinate. */
 export function linkAtCoords(view: EditorView, clientX: number, clientY: number, target: EventTarget | null): InlineSpan | null {
-  if (target instanceof Element && target.closest('[data-croquill-html], .croquill-html-source, [data-croquill-toc], [data-footnote-reference], .milkdown-code-block, pre')) {
+  if (target instanceof Element && target.closest('[data-croquill-html], .croquill-html-source, [data-croquill-toc], [data-footnote-reference], .milkdown-code-block, .md-html-image, pre')) {
     return null;
   }
   const coords = view.posAtCoords({ left: clientX, top: clientY });
@@ -465,12 +540,12 @@ export function linkAtCoords(view: EditorView, clientX: number, clientY: number,
   const $pos = view.state.doc.resolve(coords.pos);
   if (!isSourceBlock($pos.parent)) return null;
   const blockStart = $pos.start(), offset = $pos.parentOffset;
-  return blockSpans($pos.parent).find(span =>
-    (span.kind === 'link' || span.kind === 'autolink') &&
+  return blockSpans($pos.parent).filter(span =>
+    (span.kind === 'link' || span.kind === 'autolink' || span.html?.tag === 'a') &&
     span.from <= offset && offset <= span.to &&
     (spanContainsPoint(view, blockStart + span.from, blockStart + span.to, clientX, clientY) ||
       spanContainsPoint(view, blockStart + span.innerFrom, blockStart + span.innerTo, clientX, clientY)),
-  ) || null;
+  ).at(-1) || null;
 }
 
 type FormatKind = 'strong' | 'em' | 'strike' | 'code' | 'highlight';

@@ -46,22 +46,26 @@ describe('syntax preservation through the production editor', () => {
         session.edit(surface.getMarkdown()); await session.save(); const untouched=saved===original;
         surface.format('heading2'); session.edit(surface.getMarkdown()); await session.save();
         const edited=saved, expected='## 无关编辑段落\r\n\r\n'+syntax+'\r\n';
-        // Inline HTML now protects its own literal range; the surrounding list
-        // uses the normal writer (which can normalize separator line endings).
+        // Opaque fragments and rendered keys both retain their exact source.
+        // The surrounding list writer can normalize separator line endings.
         const fragments=Array.from(richRoot.querySelectorAll('[data-croquill-inline-raw]')).map(node=>node.textContent || '');
-        const literals=fragments.length ? fragments : [syntax];
+        const keys=syntax.match(/<kbd>[^<]+<\/kbd>/g) || [];
+        const renderedKeys=Array.from(richRoot.querySelectorAll('kbd.md-html')).map(node=>node.textContent);
+        const literals=fragments.length || keys.length ? [...fragments,...keys] : [syntax];
         const sameSnippet=literals.every(raw=>edited.includes(raw)), once=literals.every(raw=>edited.split(raw).length===2);
         const equivalent=(window as any).syntaxEquivalent(expected,edited);
         await surface.setMode('source'); await surface.setMode('rich');
         const switched=surface.getMarkdown()===edited && surface.mode==='rich';
         surface.format('undo');
-        return { rich, reason, untouched, sameSnippet, once, equivalent, switched, undone:surface.getMarkdown()===original, output:edited };
+        return { rich, reason, untouched, sameSnippet, once, equivalent, switched, keys, renderedKeys,
+          undone:surface.getMarkdown()===original, output:edited };
       } finally { await surface.destroy(); }
     }, syntax);
     expect(result.rich, result.reason || result.output).toBe(true);
     expect(result.untouched).toBe(true);
     expect(result.sameSnippet, result.output).toBe(true);
     expect(result.once).toBe(true);
+    expect(result.renderedKeys).toEqual(result.keys.map(key => key.slice('<kbd>'.length, -'</kbd>'.length)));
     expect(result.equivalent, result.output).toBe(true);
     expect(result.switched).toBe(true);
     expect(result.undone).toBe(true);

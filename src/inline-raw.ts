@@ -3,7 +3,7 @@ import { $node } from '@milkdown/kit/utils';
 import { NodeSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import type { Node as RichNode } from '@milkdown/kit/prose/model';
-import { inlineHtmlRanges, type InlineSyntaxNode } from './inline-html-ranges';
+import { inlineHtmlRanges, isInlineHtmlRun, renderedHtmlTagRanges, type InlineSyntaxNode } from './inline-html-ranges';
 import { isHtmlComment } from './html-comments';
 
 /** Comments parsed as flow HTML get their own dimmed literal block. */
@@ -12,7 +12,7 @@ export function parseHtmlComments() {
     const source = String(file.value ?? '');
     function visit(parent: InlineSyntaxNode): void {
       parent.children = parent.children?.map(child => {
-        if (!['paragraph', 'heading', 'tableCell'].includes(parent.type) && child.type === 'html' && isHtmlComment(child.value || '')) {
+        if (!isInlineHtmlRun(parent) && child.type === 'html' && isHtmlComment(child.value || '')) {
           const from = child.position?.start.offset, to = child.position?.end.offset;
           if (from != null && to != null) return {
             type: 'croquillHtmlComment', value: source.slice(from, to), logicalValue: child.value || '', position: child.position,
@@ -54,21 +54,36 @@ export function hasUnsafeInlineTableContent(doc: RichNode): boolean {
   return unsafe;
 }
 
-/** Replace complete source ranges before HTML or soft-line transforms can rewrite them. */
+/** Route complete ranges to either source text or the existing literal atom. */
 export function preserveInlineHtml() {
   return (tree: Root, file: { value: unknown }) => {
     const source = String(file.value ?? '');
     function visit(node: InlineSyntaxNode): void {
-      if (['paragraph', 'heading', 'tableCell'].includes(node.type)) {
+      if (isInlineHtmlRun(node)) {
         const ranges = inlineHtmlRanges(node, source);
         if (!ranges?.length) return;
+        const literal = new Map(ranges.filter(range => !range.element).map(range => [range.from, range]));
+        const tags = new Set(renderedHtmlTagRanges(ranges).map(range => range.from));
         function replace(parent: InlineSyntaxNode): void {
+          let skipUntil: number | undefined;
           parent.children = parent.children?.flatMap(child => {
             const from = child.position?.start.offset, to = child.position?.end.offset;
-            const range = ranges!.find(range => from != null && to != null && from >= range.from && to <= range.to);
-            if (range) return from === range.from ? [{ type: 'croquillInlineRaw', value: range.raw, position: {
-              start: { offset: range.from }, end: { offset: range.to },
-            } }] : [];
+            if (skipUntil !== undefined) {
+              if (to === skipUntil) skipUntil = undefined;
+              return [];
+            }
+            if (child.type === 'html' && from !== undefined) {
+              const range = literal.get(from);
+              if (range) {
+                // The closing token is a sibling. Discard everything between
+                // them, including GFM autolinks with no source position.
+                if (to !== range.to) skipUntil = range.to;
+                return [{ type: 'croquillInlineRaw', value: range.raw, position: {
+                  start: { offset: range.from }, end: { offset: range.to },
+                } }];
+              }
+              if (tags.has(from)) return [{ ...child, type: 'croquillInlineHtmlTag' }];
+            }
             replace(child);
             return [child];
           });

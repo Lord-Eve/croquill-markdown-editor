@@ -16,21 +16,23 @@ function firstRun(source: string): InlineSyntaxNode {
   return found;
 }
 
-describe('source positions of inline HTML atoms', () => {
+describe('source positions of inline HTML', () => {
   it.each([
-    '<span style="color:red">**粗**</span>',
-    '<SPAN><span>同名嵌套</span><kbd>Ctrl</kbd></SPAN>',
-    '<span>**粗 <kbd>Ctrl</kbd>** 与 `code`</span>',
-    '<span title=">">内容</span>',
-    '<img src="x.png" alt="原样">',
-    '<br class="x">',
-    '<wbr>',
-    '<custom-element />',
-    '<!-- 备注 -->',
-  ])('returns a single literal slice for %s', snippet => {
+    ['<span style="color:red">**粗**</span>', ['span']],
+    ['<SPAN><span>同名嵌套</span><kbd>Ctrl</kbd></SPAN>', ['span', 'span', 'kbd']],
+    ['<span>**粗 <kbd>Ctrl</kbd>** 与 `code`</span>', ['span', 'kbd']],
+    ['<span title=">">内容</span>', ['span']],
+    ['<img src="x.png" alt="原样">', ['img']],
+    ['<br class="x">', [undefined]],
+    ['<wbr>', [undefined]],
+    ['<custom-element />', [undefined]],
+    ['<!-- 备注 -->', [undefined]],
+  ] as const)('classifies each source range in %s', (snippet, tags) => {
     const source = '前文 ' + snippet + ' 后文';
     const ranges = inlineHtmlRanges(firstRun(source), source);
-    expect(ranges).toEqual([{ from: 3, to: 3 + snippet.length, raw: snippet }]);
+    expect(ranges?.[0]).toMatchObject({ from: 3, to: 3 + snippet.length, raw: snippet });
+    expect(ranges?.map(range => range.element?.tag)).toEqual(tags);
+    for (const range of ranges!) expect(source.slice(range.from, range.to)).toBe(range.raw);
   });
 
   it('keeps adjacent fragments separate and leaves bare breaks editable', () => {
@@ -40,9 +42,11 @@ describe('source positions of inline HTML atoms', () => {
     ]);
   });
 
-  it('allows a complete atom inside a Markdown wrapper', () => {
+  it('allows a rendered element inside a Markdown wrapper', () => {
     const source = '前 **<span>文字</span>** 后';
-    expect(inlineHtmlRanges(firstRun(source), source)?.map(range => range.raw)).toEqual(['<span>文字</span>']);
+    expect(inlineHtmlRanges(firstRun(source), source)).toMatchObject([{
+      raw: '<span>文字</span>', element: { tag: 'span' }, innerFrom: source.indexOf('文字'), innerTo: source.indexOf('</span>'),
+    }]);
   });
 
   it.each(['\n', '\r\n'])('takes a multiline pair from the original %j source', newline => {

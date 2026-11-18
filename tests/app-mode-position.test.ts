@@ -304,6 +304,7 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     console.log(`Public examples in source protection: ${skipped.join(', ') || 'none'}`);
     console.log(`Scanned ${scanned.reduce((total, report) => total + report.positions, 0)} text caret positions across ${scanned.length} public examples`);
     expect(scanned.find(report => report.name === 'highlight-alert.md')?.alertTextPositions).toBeGreaterThan(0);
+    expect(scanned.find(report => report.name === 'inline-html.md')?.positions).toBeGreaterThan(0);
     expect(scanned.filter(report => report.failures.length).map(({ name, failures }) => ({ name, failures }))).toEqual([]);
   }, 60000);
 
@@ -312,6 +313,8 @@ describe('mode switch caret and scroll preservation through the real app', () =>
       '# 一级 **标题**',
       '',
       '普通中文 **加粗文字** 与 *斜体* 与 ~~删除~~ 与 `代码` 与 ==高亮== 与 [文字](https://example.com/a "t") 与 <https://angle.example> 与 \\*转义。',
+      '',
+      'HTML前 <span style="color:red">红色文字</span> HTML后',
       '',
       '1. 有序一项',
       '   - [x] 已完成任务 **子项**',
@@ -334,6 +337,11 @@ describe('mode switch caret and scroll preservation through the real app', () =>
       ['(https://example.com/a "t")', 10], // inside link URL
       ['<https://angle.example>', 9], // inside angle autolink
       ['\\*转义', 1], // between backslash and asterisk
+      ['HTML前', 2],
+      ['<span style=', 6],
+      ['红色文字', 2],
+      ['</span>', 3],
+      ['HTML后', 2],
       ['已完成任务 **子项**', 8], // inside task item nested strong
       ['引用第二行 **内部**', 8], // inside line 2 of blockquote paragraph
     ];

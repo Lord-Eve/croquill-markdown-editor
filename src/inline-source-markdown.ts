@@ -99,7 +99,7 @@ export function flattenInlineSource() {
             continue;
           }
         }
-        if (child.type === 'text') {
+        if (child.type === 'text' || child.type === 'croquillInlineHtmlTag') {
           if (from != null && to != null) result.push(...pieces(from, to));
           else if (child.value) result.push({ type: 'text', value: child.value === '\n' ? '\n' : escapeLiteralText(child.value) });
         } else if (child.type === 'inlineCode' && from != null && to != null) result.push(...pieces(from, to));

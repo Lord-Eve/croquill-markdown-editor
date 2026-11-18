@@ -1,7 +1,7 @@
 import { EditorSelection, Transaction } from '@codemirror/state';
 import type { EditorView as CMView } from '@codemirror/view';
 import { EditorStateReady, EditorViewReady, editorStateCtx, editorViewCtx, editorViewTimerCtx } from '@milkdown/kit/core';
-import type { Node as PMNode } from '@milkdown/kit/prose/model';
+import type { Node as PMNode, ResolvedPos } from '@milkdown/kit/prose/model';
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState as PMState } from '@milkdown/kit/prose/state';
 import type { EditorView as PMView } from '@milkdown/kit/prose/view';
 import { addTimer } from '@milkdown/kit/utils';
@@ -367,6 +367,35 @@ function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode):
   if (pmType === 'list_item' && astNode.type === 'listItem') return 'container';
 
   return 'mismatch';
+}
+
+/** Follow the edited block's path without applying mode switching's whole-table selection policy. */
+export function sourceSegmentsForEdit(raw: string, $pos: ResolvedPos): InlineSegment[] | null {
+  const { prefix, body } = splitFrontmatter(raw);
+  let ast = editableAst(body);
+  for (let depth = 0; depth < $pos.depth; depth++) {
+    const index = $pos.index(depth);
+    const child = ast.children?.[index];
+    const pm = $pos.node(depth + 1);
+    if (!child) return null;
+
+    if (child.type === 'tableRow' && pm.type.name === (index === 0 ? 'table_header_row' : 'table_row')) {
+      ast = child;
+      continue;
+    }
+    // Markdown stores inline children directly in the cell. Milkdown adds a paragraph.
+    if (child.type === 'tableCell' && (pm.type.name === 'table_header' || pm.type.name === 'table_cell') &&
+        pm.childCount === 1 && pm.firstChild === $pos.parent && $pos.parent.type.name === 'paragraph') {
+      return verifyTextblockSegments(body, prefix.length, child, ast, index === 0, $pos.parent)?.segments ?? null;
+    }
+    const kind = nodePairCompatible(body, child, pm);
+    if (kind === 'textblock' && depth + 1 === $pos.depth) {
+      return verifyTextblockSegments(body, prefix.length, child, ast, index === 0, pm)?.segments ?? null;
+    }
+    if (kind !== 'container' && !(kind === 'degenerate' && child.type === 'table')) return null;
+    ast = child;
+  }
+  return null;
 }
 
 /** Builds a deterministic block-and-inline correspondence table between Markdown source and ProseMirror doc. */
