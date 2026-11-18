@@ -2,7 +2,7 @@ import type { Ctx } from '@milkdown/kit/ctx';
 import { remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import type { Root } from '@milkdown/kit/transformer';
 import type { Handle } from 'mdast-util-to-markdown';
-import { escapeCellPipes, escapeLiteralText, guardLineStart } from './inline-source';
+import { escapeCellPipes, escapeLiteralText, guardLineStart, headingContentRange } from './inline-source';
 
 interface SourceNode {
   type: string;
@@ -51,17 +51,8 @@ export function flattenInlineSource() {
       if (from == null || to == null) return null;
       if (node.type === 'paragraph') return { from, to: trimRightSpaces(from, to) };
       if (node.type === 'heading') {
-        const raw = source.slice(from, to);
-        const atxOpen = /^#{1,6}(?:[ \t]+|$)/.exec(raw);
-        if (atxOpen) {
-          const start = from + atxOpen[0].length;
-          let end = trimRightSpaces(start, to);
-          const atxClose = /(?:^|[ \t]+)#+$/.exec(source.slice(start, end));
-          if (atxClose) end = trimRightSpaces(start, end - atxClose[0].length);
-          return { from: start, to: end };
-        }
-        const setextEnd = raw.replace(/\r?\n[ \t>]*[=-]+[ \t]*$/, '').length;
-        return { from, to: trimRightSpaces(from, from + setextEnd) };
+        const content = headingContentRange(source.slice(from, to));
+        return { from: from + content.from, to: from + content.to };
       }
       if (node.type === 'tableCell') {
         const raw = source.slice(from, to);

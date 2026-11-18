@@ -304,13 +304,15 @@ describe('mode switch caret and scroll preservation through the real app', () =>
     console.log(`Public examples in source protection: ${skipped.join(', ') || 'none'}`);
     console.log(`Scanned ${scanned.reduce((total, report) => total + report.positions, 0)} text caret positions across ${scanned.length} public examples`);
     expect(scanned.find(report => report.name === 'highlight-alert.md')?.alertTextPositions).toBeGreaterThan(0);
+    expect(scanned.find(report => report.name === 'wikilinks-attributes.md')?.positions).toBeGreaterThan(0);
     expect(scanned.find(report => report.name === 'inline-html.md')?.positions).toBeGreaterThan(0);
     expect(scanned.filter(report => report.failures.length).map(({ name, failures }) => ({ name, failures }))).toEqual([]);
   }, 60000);
 
   it('preserves exact character offsets inside inline syntax markers, CJK text, headings, lists, task items, and blockquotes', async () => {
     const doc = [
-      '# 一级 **标题**',
+      '# 一级 **标题** {#位置}',
+      '', '* ## 列内标题', '', '文字 [[定位]]',
       '',
       '普通中文 **加粗文字** 与 *斜体* 与 ~~删除~~ 与 `代码` 与 ==高亮== 与 [文字](https://example.com/a "t") 与 <https://angle.example> 与 \\*转义。',
       '',
@@ -329,6 +331,7 @@ describe('mode switch caret and scroll preservation through the real app', () =>
 
     // 1. Inside inline markers in heading & paragraph & link URL & angle autolink & escape
     const checks: [string, number][] = [
+      ['{#位置}', 0], ['{#位置}', 3], ['{#位置}', 5], ['列内标题', 2], ['[[定位]]', 3],
       ['**标题**', 2], // between ** and 标
       ['**加粗文字**', 4], // between 加粗 and 文字
       ['~~删除~~', 3], // inside 删除
@@ -500,7 +503,7 @@ describe('mode switch caret and scroll preservation through the real app', () =>
       '',
       '<div>\n<p>HTML 块内段</p>\n</div>',
       '',
-      '# 原文保护标题 {#raw-anchor}',
+      '# 原文保护标题 <kbd>锚点',
       '',
       '![示意图](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==)',
       '',
@@ -518,7 +521,7 @@ describe('mode switch caret and scroll preservation through the real app', () =>
       { needle: 'secondLine', blockStart: '```ts' },
       { needle: 'E = mc^2', blockStart: '$$' },
       { needle: 'HTML 块内段', blockStart: '<div>' },
-      { needle: '#raw-anchor', blockStart: '# 原文保护标题 {#raw-anchor}' },
+      { needle: '锚点', blockStart: '# 原文保护标题 <kbd>锚点' },
       { needle: '示意图', blockStart: '![示意图](' },
       { needle: '[TOC]', blockStart: '[TOC]' },
       { needle: '脚注定义内容', blockStart: '[^note]: 脚注定义内容' },
@@ -563,9 +566,9 @@ describe('mode switch caret and scroll preservation through the real app', () =>
       needles: ['TAILA', 'TAILB'],
     },
     {
-      name: 'a protected container between paragraphs',
+      name: 'an editable container between paragraphs',
       doc: '前文\n\n::: note\n\n内容甲\n\n内容乙\n\n:::\n\n后续正文 TAILA 结束\n\n另一段 TAILB 结束\n',
-      needles: ['前文', 'TAILA', 'TAILB'],
+      needles: ['前文', '::: note', '内容甲', '内容乙', 'TAILA', 'TAILB'],
     },
     {
       name: 'details with Markdown-like content',

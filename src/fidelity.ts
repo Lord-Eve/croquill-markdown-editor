@@ -1,3 +1,4 @@
+import { headingAttributes, headingContentRange, inlineSourceText, withoutHeadingAttributes } from './inline-source';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
@@ -64,10 +65,6 @@ function categoriesOf(node: SyntaxNode, source: string, renderedTags?: SourceRan
   visit(node);
   const prose = text.join('');
   if (/\[TOC\]/i.test(prose)) categories.add('目录');
-  if (/!?\[\[[\s\S]+?\]\]/.test(prose)) categories.add('双链');
-  if (/(?:^|\n)\s*:{3,}/.test(prose)) categories.add('容器');
-  if (/\{[.#][^}\n]+\}/.test(prose)) categories.add('属性');
-  if (/(?:^|\s)\^[\w-]+\s*$/.test(prose)) categories.add('块引用标识');
   return categories;
 }
 
@@ -97,15 +94,6 @@ export function preservedMarkdownBlocks(body: string): PreservedBlock[] {
             else if (!/\/\s*>$/.test(token[0])) balance++;
           }
           if (balance <= 0) { last = j; break; }
-        }
-      }
-    }
-    if (categories.has('容器')) {
-      const start = node.position?.start.offset ?? 0, end = node.position?.end.offset ?? start;
-      const raw = body.slice(start, end);
-      if (/^\s*:{3,}\s*\S/.test(raw) && !/\n\s*:{3,}[ \t]*$/.test(raw)) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          if (nodes[j].type === 'paragraph' && /(?:^|\n)\s*:{3,}[ \t]*$/.test(body.slice(nodes[j].position?.start.offset, nodes[j].position?.end.offset))) { last = Math.max(last, j); break; }
         }
       }
     }
@@ -174,21 +162,49 @@ export interface MarkdownOutlineItem {
   line: number;
 }
 
-/** Extracts visible plain text from a Remark AST node tree. */
-export function astNodeVisibleText(node: unknown, hiddenTags?: Set<number>): string {
-  const item = node as SyntaxNode & { alt?: string };
-  if (item.type === 'html' && hiddenTags?.has(item.position?.start.offset ?? -1)) return '';
-  return item.value ?? item.alt ?? item.children?.map(child => astNodeVisibleText(child, hiddenTags)).join('') ?? '';
+function headingAttributeOffsets(node: SyntaxNode, source: string): SourceRange[] {
+  const start = node.position?.start.offset, end = node.position?.end.offset;
+  if (start == null || end == null) return [];
+  const raw = source.slice(start, end);
+  if (!raw.includes('{')) return [];
+  const { from, to } = headingContentRange(raw), base = start + from;
+  return headingAttributes(raw.slice(from, to)).map(attr => ({ from: base + attr.from, to: base + attr.to }));
 }
 
-/** Keep the existing source-based count, omitting the tags of rendered inline HTML. */
-export function markdownWithoutRenderedHtmlTags(markdown: string): string {
-  if (!/<[a-z]/i.test(markdown)) return markdown;
+/** Extract visible text while retaining Markdown's interpretation of images, links and code. */
+export function astNodeVisibleText(node: unknown, hiddenTags?: Set<number>, source = '', attributes: SourceRange[] = []): string {
+  const item = node as SyntaxNode & { alt?: string };
+  const from = item.position?.start.offset, to = item.position?.end.offset;
+  if (item.type === 'html' && hiddenTags?.has(from ?? -1)) return '';
+  if (attributes.length) {
+    if (from != null && to != null) {
+      if (attributes.some(attr => attr.from <= from && to <= attr.to)) return '';
+      if (item.type === 'text' && attributes.some(attr => attr.from < to && attr.to > from)) {
+        let raw = source.slice(from, to);
+        for (const attr of [...attributes].reverse()) {
+          if (attr.from < to && attr.to > from) raw = raw.slice(0, Math.max(0, attr.from - from)) + raw.slice(Math.min(to, attr.to) - from);
+        }
+        return inlineSourceText(raw);
+      }
+    } else if (item.type === 'text') return withoutHeadingAttributes(item.value || '');
+  }
+  return item.value ?? item.alt ?? item.children?.map(child => astNodeVisibleText(child, hiddenTags, source, attributes)).join('') ?? '';
+}
+
+function collectHeadingAttributes(node: SyntaxNode, source: string, ranges: SourceRange[]): void {
+  if (node.type === 'heading') ranges.push(...headingAttributeOffsets(node, source));
+  else node.children?.forEach(child => collectHeadingAttributes(child, source, ranges));
+}
+
+/** Keep the existing source-based count, omitting hidden HTML tags and heading attributes. */
+export function markdownForWordCount(markdown: string): string {
+  if (!/<[a-z]|\{[.#]/i.test(markdown)) return markdown;
   const { prefix, body } = splitFrontmatter(markdown);
   const tags: SourceRange[] = [];
   for (const block of markdownParser.parse(body).children) {
     const start = tags.length;
     if (categoriesOf(block, body, tags).size) tags.length = start;
+    else collectHeadingAttributes(block, body, tags);
   }
   if (!tags.length) return markdown;
   let result = prefix, from = 0;
@@ -229,7 +245,7 @@ export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
     if (child.type === 'heading') {
       const ranges = inlineHtmlRanges(child, source);
       const hidden = ranges?.length ? new Set(renderedHtmlTagRanges(ranges).map(tag => tag.from)) : undefined;
-      headings.push({ level: child.depth, text: astNodeVisibleText(child, hidden), line: child.position?.start.line ?? 1 });
+      headings.push({ level: child.depth, text: astNodeVisibleText(child, hidden, source, headingAttributeOffsets(child, source)), line: child.position?.start.line ?? 1 });
     }
   }
   return headings;

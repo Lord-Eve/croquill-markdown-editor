@@ -14,7 +14,7 @@ import { sameDocumentPath } from './document-path';
 import { imageDestinations, rebaseImageSources } from './image-paths';
 import { installGlobalShortcuts } from './shortcuts';
 import { droppedDocumentPath } from './dropped-document';
-import { markdownWithoutRenderedHtmlTags } from './fidelity';
+import { markdownForWordCount } from './fidelity';
 import { hasExternalLinkScheme } from './inline-source';
 import './style.css';
 
@@ -240,7 +240,7 @@ function updateTitle() {
 }
 function scheduleStats() { clearTimeout(statsTimer); statsTimer=window.setTimeout(updateStats,180); }
 function updateStats() {
-  const text=markdownWithoutRenderedHtmlTags(session.text);
+  const text=markdownForWordCount(session.text);
   const chinese=(text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu)||[]).length;
   const words=(text.replace(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu,' ').match(/[\p{L}\p{N}]+/gu)||[]).length;
   $('word-count').textContent=`${(chinese+words).toLocaleString('zh-CN')} 字`;

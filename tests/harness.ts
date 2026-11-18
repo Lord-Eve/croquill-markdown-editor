@@ -81,11 +81,11 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = async () => {
       await surface.setMode('rich'); await surface.setMode('source');
       assert(surface.getMarkdown() === edited, '源码往返丢失修改');
     });
-    await step('frontmatter / HTML / 未知扩展源码保护', async () => {
+    await step('元数据、HTML、脚注和普通扩展打开后保持原文', async () => {
       for (const original of ['---\ntitle: 中文\n---\n\n正文', '<details><summary>摘要</summary>正文</details>', '正文[^a]\n\n[^a]: 注释', '[[双向链接]]', '::: warning\n注意\n:::']) {
         edits = [];
         await surface.load(original); await surface.setMode('rich');
-        assert(surface.mode === 'source', '保护文档进入了富编辑');
+        assert(surface.mode === 'rich', '文档未进入富编辑');
         assert(surface.getMarkdown() === original, '保护文档被转换');
         assert(edits.length === 0, '保护切换触发修改');
       }

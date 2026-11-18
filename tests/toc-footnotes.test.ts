@@ -17,9 +17,9 @@ describe('TOC and complete footnote protection boundaries', () => {
     expect(preservedMarkdownBlocks(original)).toEqual([]);
   });
   it.each([
-    '正文[^a]与[[双链]]\n\n[^a]: 说明',
-    '[^a]: 第一段\n\n    第二段有[[双链]]。',
-    '- [TOC]\n- [[双链]]',
+    '正文[^a]与文字<kbd>未闭合\n\n[^a]: 说明',
+    '[^a]: 第一段\n\n    第二段有文字<kbd>未闭合。',
+    '- [TOC]\n- 文字<kbd>未闭合',
     '<div>\n[TOC]\n</div>',
     '段内 [TOC] 继续保护',
   ])('keeps other unsupported syntax opaque: %s', original => {
@@ -67,7 +67,7 @@ describe('live TOC and editable complete footnotes', () => {
     expect(result).toMatchObject({mode:'rich',reason:null,saved:original,toc:1,definitions:2});expect(result.orphans).toBeGreaterThan(0);
   });
 
-  it('renders a noneditable TOC containing all heading levels, nested headings and duplicate titles', async () => {
+  it('renders a noneditable TOC with top-level heading levels and duplicate titles, excluding nested headings', async () => {
     const original='[TOC]\n\n# 第一章 **粗体**\n\n### 同名\n\n> ## 引用标题\n\n- 项目\n\n  #### 列表标题\n\n###### 同名\n\n```md\n# 不是真标题\n```\n';
     const result=await page.evaluate(async original=>{
       const h=(window as any).notesHarness;await h.surface.init(original);
@@ -76,7 +76,7 @@ describe('live TOC and editable complete footnotes', () => {
         entries:[...(toc?.querySelectorAll('button')||[])].map(node=>({text:node.textContent,level:node.getAttribute('data-level')})),saved:h.surface.getMarkdown()};
     },original);
     expect(result).toMatchObject({mode:'rich',raw:0,editable:false,saved:original});
-    expect(result.entries).toEqual([{text:'第一章 粗体',level:'1'},{text:'同名',level:'3'},{text:'引用标题',level:'2'},{text:'列表标题',level:'4'},{text:'同名',level:'6'}]);
+    expect(result.entries).toEqual([{text:'第一章 粗体',level:'1'},{text:'同名',level:'3'},{text:'同名',level:'6'}]);
   });
 
   it('updates TOC text and levels directly from editor state without forcing serialization', async () => {
@@ -239,8 +239,8 @@ describe('live TOC and editable complete footnotes', () => {
   });
 
   it('keeps a whole definition protected when its second paragraph contains other unsupported syntax',async()=>{
-    const original='正文[^n]\n\n[^n]: 第一段\n\n    第二段 [[双链]]\n\n结尾\n';
+    const original='正文[^n]\n\n[^n]: 第一段\n\n    第二段 文字<kbd>未闭合\n\n结尾\n';
     const result=await page.evaluate(async original=>{const h=(window as any).notesHarness;await h.surface.init(original);return {raw:[...h.richRoot.querySelectorAll('[data-croquill-raw]')].map(node=>node.textContent),loose:[...h.richRoot.querySelectorAll('.ProseMirror > p')].map(node=>node.textContent),saved:h.surface.getMarkdown()};},original);
-    expect(result.raw).toHaveLength(1);expect(result.raw[0]).toContain('    第二段 [[双链]]');expect(result.loose.join('')).not.toContain('第二段');expect(result.saved).toBe(original);
+    expect(result.raw).toHaveLength(1);expect(result.raw[0]).toContain('    第二段 文字<kbd>未闭合');expect(result.loose.join('')).not.toContain('第二段');expect(result.saved).toBe(original);
   });
 });

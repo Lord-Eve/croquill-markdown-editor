@@ -197,7 +197,7 @@ describe('mode-position deterministic alignment unit tests', () => {
       '| - | - |',
       '| 1 | 2 |',
       '',
-      '# 保护 {#raw-id}',
+      '# 保护 [TOC] 锚点',
       '',
       '后段正文',
     ].join('\n');
@@ -206,7 +206,7 @@ describe('mode-position deterministic alignment unit tests', () => {
       testSchema.node('paragraph', null, [testSchema.text('前段正文')]),
       testSchema.node('code_block', null, [testSchema.text('const a = 1;\nconst b = 2;')]),
       testSchema.node('table', null, [testSchema.node('paragraph', null, [testSchema.text('A')]), testSchema.node('paragraph', null, [testSchema.text('1')])]),
-      testSchema.node('croquill_raw_block', { value: '# 保护 {#raw-id}', kind: 'markdown' }),
+      testSchema.node('croquill_raw_block', { value: '# 保护 [TOC] 锚点', kind: 'markdown' }),
       testSchema.node('paragraph', null, [testSchema.text('后段正文')]),
     ]);
 
@@ -225,7 +225,7 @@ describe('mode-position deterministic alignment unit tests', () => {
     expect(mapRichSelectionToRawOffset(alignment, raw.length, richTableSel)).toBe(tableStart);
 
     // Raw block NodeSelection <-> rawStart of raw block
-    const rawBlockMid = raw.indexOf('#raw-id');
+    const rawBlockMid = raw.indexOf('锚点');
     const richRawSel = mapRawOffsetToRichSelection(alignment, richDoc, rawBlockMid);
     expect(richRawSel).toBeInstanceOf(NodeSelection);
     expect(mapRichSelectionToRawOffset(alignment, raw.length, richRawSel)).toBe(raw.indexOf('# 保护'));

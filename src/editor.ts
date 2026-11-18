@@ -32,9 +32,9 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts } from './alerts';
 import { highlightMark } from './highlight';
 import { configureInlineSource } from './inline-source-markdown';
-import { blockSpans, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
+import { blockSpans, deleteHeadingAttribute, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
 import { hasExternalLinkScheme, INLINE_OBJECT } from './inline-source';
-import { preserveRenderedSource } from './rendered-source';
+import { hasPlainExtension, preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import { richMarkdownTransforms } from './rich-markdown';
 import { SearchPanel, type SearchReplaceResult } from './search-panel';
@@ -88,6 +88,18 @@ function headingLevelShortcut(event: KeyboardEvent): string | null {
   return null;
 }
 
+function handleListHeadingEnter(view: RichView, event: KeyboardEvent): boolean {
+  if (event.key !== 'Enter' || event.isComposing || view.composing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
+  const { selection, schema, tr } = view.state, { $from } = selection;
+  if (!selection.empty || $from.parent.type !== schema.nodes.heading || $from.parentOffset !== $from.parent.content.size ||
+      $from.node(-1).type !== schema.nodes.list_item) return false;
+  const pos = $from.after();
+  tr.insert(pos, schema.nodes.paragraph.create());
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, pos + 1)).scrollIntoView());
+  event.preventDefault();
+  return true;
+}
+
 /** Typora: Backspace at the very start of a heading turns it into a paragraph in one step. */
 function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
   if (event.key !== 'Backspace' || event.isComposing || view.composing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
@@ -98,37 +110,40 @@ function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
   return true;
 }
 
-/** Splice a verified inline HTML edit into the original bytes, including container whitespace. */
-function preserveInlineHtmlEdit(raw: string, before: RichNode, after: RichNode, serialized: string): string {
-  if (!/<[a-z]/i.test(raw)) return serialized;
-  const first = before.content.findDiffStart(after.content);
-  if (first == null) return serialized;
-  // Editing a heading also changes its generated ID, so the first difference can
-  // be the opening of the heading. Compare the inline content in its own coordinates.
-  const headingStart = before.nodeAt(first)?.type.name === 'heading' && after.nodeAt(first)?.type.name === 'heading';
-  const pos = headingStart ? first + 1 : first;
-  const $block = before.resolve(pos), next = after.resolve(pos).parent;
-  const block = $block.parent;
-  if (!block.isTextblock || block.type !== next.type) return serialized;
-  const from = block.content.findDiffStart(next.content), end = block.content.findDiffEnd(next.content);
-  if (from == null || !end) return serialized;
-  // Common prefix and suffix can overlap when inserting or deleting repeated text.
-  const overlap = Math.max(0, from - Math.min(end.a, end.b));
-  const to = end.a + overlap;
-  // Structural or multi-block edits, and changes outside a rendered element,
-  // use the serializer. Only single-line text can be spliced into an exact source run.
-  if (!blockSpans(block).some(span => span.html && span.from <= from && to <= span.to)) return serialized;
-  const inserted = next.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
-  if (/[\r\n]/.test(inserted) || inserted.includes(INLINE_OBJECT)) return serialized;
-  // Missing AST positions, unverified text, or edits crossing a break/atom gap
-  // have no single exact range. A splice must also represent the entire changed document.
-  const segment = sourceSegmentsForEdit(raw, $block)?.find(segment =>
-    segment.kind === 'exact' && segment.pmFrom <= from && to <= segment.pmTo,
-  );
-  if (!segment) return serialized;
-  const rawFrom = segment.rawFrom + from - segment.pmFrom;
-  const rawTo = segment.rawFrom + to - segment.pmFrom;
-  const candidate = raw.slice(0, rawFrom) + inserted + raw.slice(rawTo);
+/** Map pending text edits back to their original blocks, keeping list markers and whitespace. */
+function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, serialized: string): string {
+  const plainExtension = hasPlainExtension(raw);
+  if (!plainExtension && !/<[a-z]/i.test(raw)) return serialized;
+  const changes: SourceChange[] = [];
+  function compare(block: RichNode, next: RichNode, pos: number): boolean {
+    if (block.eq(next)) return true;
+    if (block.type !== next.type) return false;
+    if (!block.isTextblock) {
+      if (block.childCount !== next.childCount) return false;
+      let offset = block === before ? 0 : pos + 1;
+      for (let i = 0; i < block.childCount; i++) {
+        const child = block.child(i);
+        if (!compare(child, next.child(i), offset)) return false;
+        offset += child.nodeSize;
+      }
+      return true;
+    }
+    // A heading's generated ID can change together with its text. Compare its inline content.
+    const from = block.content.findDiffStart(next.content), end = block.content.findDiffEnd(next.content);
+    if (from == null || !end) return true;
+    const overlap = Math.max(0, from - Math.min(end.a, end.b));
+    const to = end.a + overlap;
+    if (!plainExtension && !blockSpans(block).some(span => span.html && span.from <= from && to <= span.to)) return false;
+    const insert = next.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
+    if (/[\r\n]/.test(insert) || insert.includes(INLINE_OBJECT)) return false;
+    const segment = sourceSegmentsForEdit(raw, before.resolve(pos + 1))?.find(segment =>
+      segment.kind === 'exact' && segment.pmFrom <= from && to <= segment.pmTo);
+    if (!segment) return false;
+    changes.push({ from: segment.rawFrom + from - segment.pmFrom, to: segment.rawFrom + to - segment.pmFrom, insert });
+    return true;
+  }
+  if (!compare(before, after, 0) || !changes.length) return serialized;
+  const candidate = applySourceChanges(raw, changes);
   return hasEquivalentMarkdownStructure(candidate, serialized) ? candidate : serialized;
 }
 import '@milkdown/crepe/theme/common/style.css';
@@ -412,7 +427,7 @@ export class MarkdownSurface {
         }
         const exact = this.richExactSources.size ? this.richExactSources.get(JSON.stringify(document.toJSON())) : undefined;
         this.raw = exact !== undefined ? exact : this.richOriginDocument?.eq(document) ? this.richOriginText
-          : preserveInlineHtmlEdit(this.raw, this.richSnapshot, document, this.serializeRich());
+          : preserveInlineEdit(this.raw, this.richSnapshot, document, this.serializeRich());
         this.richSnapshot = document;
         this.richInput = this.raw;
         this.cancelRichTimer();
@@ -789,7 +804,7 @@ export class MarkdownSurface {
         },
         props: {
           handleDOMEvents: {
-            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
             mousedown: (view, event) => {
               if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
               if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;

@@ -33,7 +33,7 @@ describe('syntax preservation through the production editor', () => {
   });
   afterEach(async () => { await page?.close(); });
 
-  it.each(fidelitySamples)('$name: open, edit elsewhere, save literal source, switch and undo', async ({ syntax }) => {
+  it.each(fidelitySamples)('$name: open, edit elsewhere, save literal source, switch and undo', async ({ syntax, name }) => {
     const result = await page.evaluate(async syntax => {
       const richRoot=document.createElement('div'), sourceRoot=document.createElement('div'); document.body.append(richRoot,sourceRoot);
       const original='无关编辑段落\r\n\r\n'+syntax+'\r\n'; let saved='';
@@ -43,6 +43,7 @@ describe('syntax preservation through the production editor', () => {
       try {
         await surface.init(original);
         const rich=surface.mode==='rich', reason=surface.getSafetyReason();
+        const rawBlocks=richRoot.querySelectorAll('[data-croquill-raw]').length;
         session.edit(surface.getMarkdown()); await session.save(); const untouched=saved===original;
         surface.format('heading2'); session.edit(surface.getMarkdown()); await session.save();
         const edited=saved, expected='## 无关编辑段落\r\n\r\n'+syntax+'\r\n';
@@ -57,11 +58,12 @@ describe('syntax preservation through the production editor', () => {
         await surface.setMode('source'); await surface.setMode('rich');
         const switched=surface.getMarkdown()===edited && surface.mode==='rich';
         surface.format('undo');
-        return { rich, reason, untouched, sameSnippet, once, equivalent, switched, keys, renderedKeys,
+        return { rich, reason, rawBlocks, untouched, sameSnippet, once, equivalent, switched, keys, renderedKeys,
           undone:surface.getMarkdown()===original, output:edited };
       } finally { await surface.destroy(); }
     }, syntax);
     expect(result.rich, result.reason || result.output).toBe(true);
+    if (['双链', '容器', '含空行容器', '标题属性', '段落属性', '块引用标识'].includes(name)) expect(result.rawBlocks).toBe(0);
     expect(result.untouched).toBe(true);
     expect(result.sameSnippet, result.output).toBe(true);
     expect(result.once).toBe(true);

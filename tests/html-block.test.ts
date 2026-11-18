@@ -166,7 +166,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
   }, 30000);
 
   it('3. keeps mixed-category protected blocks as literal <pre data-croquill-raw>', async () => {
-    await open('<div>\n\n[[双链]]\n\n</div>\n');
+    await open('<div>\n\n正文中的 [TOC] 标记\n\n</div>\n');
     const info = await page.evaluate(() => {
       const rawPre = document.querySelector('pre[data-croquill-raw]');
       return {
@@ -177,7 +177,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     });
     expect(info.preCount).toBe(1);
     expect(info.htmlBlockCount).toBe(0);
-    expect(info.text).toContain('[[双链]]');
+    expect(info.text).toContain('正文中的 [TOC] 标记');
   });
 
   it('4. resolves relative <img> paths without app-origin fetches and tolerates resolveImage rejection', async () => {
@@ -1019,7 +1019,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     );
 
     // 2) ArrowDown onto a mixed-category raw block (kind === '') -> insertImage('mixed.png')
-    await open('前段\n\n<div>\n\n[[双链]]\n\n</div>\n\n后段\n');
+    await open('前段\n\n<div>\n\n正文中的 [TOC] 标记\n\n</div>\n\n后段\n');
     await page.evaluate(() => {
       const view = (window as any).htmlHarness.surface.richView();
       view.focus();
@@ -1046,9 +1046,9 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
     expect(afterMixedInsert.preCount).toBe(1);
     expect(afterMixedInsert.selectedType).toBe('croquill_raw_block');
     expect(afterMixedInsert.selectedKind).toBe('');
-    expect(afterMixedInsert.markdown).toContain('<div>\n\n[[双链]]\n\n</div>');
+    expect(afterMixedInsert.markdown).toContain('<div>\n\n正文中的 [TOC] 标记\n\n</div>');
     expect(afterMixedInsert.markdown.indexOf('![](mixed.png)')).toBeGreaterThan(
-      afterMixedInsert.markdown.indexOf('<div>\n\n[[双链]]\n\n</div>'),
+      afterMixedInsert.markdown.indexOf('<div>\n\n正文中的 [TOC] 标记\n\n</div>'),
     );
     expect(afterMixedInsert.markdown.indexOf('后段')).toBeGreaterThan(
       afterMixedInsert.markdown.indexOf('![](mixed.png)'),
@@ -1057,7 +1057,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
 
   it('28. protects selected croquill_raw_block from format() across both HTML and mixed blocks without relying on focus', async () => {
     const htmlOriginal = '前段\n\n<div>html原文</div>\n\n后段\n';
-    const mixedOriginal = '前段\n\n<div>\n\n[[双链]]\n\n</div>\n\n后段\n';
+    const mixedOriginal = '前段\n\n<div>\n\n正文中的 [TOC] 标记\n\n</div>\n\n后段\n';
 
     const selectRawBlock = async (kind: 'html' | 'mixed') => {
       if (kind === 'html') {
@@ -1084,7 +1084,7 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
 
     for (const [kind, marker] of [
       ['html', '<div>html原文</div>'],
-      ['mixed', '<div>\n\n[[双链]]\n\n</div>'],
+      ['mixed', '<div>\n\n正文中的 [TOC] 标记\n\n</div>'],
     ] as const) {
       const original = kind === 'html' ? htmlOriginal : mixedOriginal;
 

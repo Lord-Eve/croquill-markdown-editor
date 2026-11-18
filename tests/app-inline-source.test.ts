@@ -353,6 +353,113 @@ describe('inline Markdown as source text through the real app', () => {
     await page.keyboard.press('Control+z'); await page.waitForFunction(sample => (window as any).fileApp.surface.getMarkdown() === sample, sample);
   }, 30000);
 
+  it.each(['\n', '\r\n'])('edits plain extensions and retains the rest of the file byte for byte (%j)', async eol => {
+    const spellings = '[[a]]、![[a]]、[[a|b]]、{.note}、{#para} ^abc123';
+    const original = ['开头', '', '段落' + spellings, '', '> 引用' + spellings, '', '* 列项' + spellings,
+      '', '| 表头 |', '| :------ |', '|  单元格' + spellings.replace('|', '\\|') + '  |',
+      '', '::: warning', '容器甲', ':::', '', '::: note', '', '容器乙', '', ':::'].join(eol);
+    await open(original);
+    expect(await page.locator('pre[data-croquill-raw]').count()).toBe(0);
+    expect(await markdown()).toBe(original);
+    let expected = original;
+    for (const word of ['段落', '引用', '列项', '单元格', '容器甲', '容器乙']) {
+      await caret(word, 1); await page.keyboard.insertText('改');
+      expected = expected.replace(word, word[0] + '改' + word.slice(1));
+      expect(await markdown()).toBe(expected);
+    }
+  });
+
+  it('shows attributes in the active heading, excludes them from navigation and counts, and deletes a whole boundary', async () => {
+    const original = '正文 {.note}\n\n[TOC]\n\n## 甲 {#mid} 乙 {#a .b}\n\n丙 {.cls}\n---\n\n- # 列内 {#id}\n\n末尾 {key=value}\n';
+    await open(original);
+    const root = page.locator('#rich-root');
+    const headings = root.locator('h2');
+    expect(await headings.allInnerTexts()).toEqual(['甲  乙', '丙']);
+    expect(await root.locator('li h1').innerText()).toBe('列内');
+    expect(await root.locator('p .md-hidden').count()).toBe(0);
+    expect(await root.locator('[data-croquill-toc] button').allTextContents()).toEqual(['甲  乙', '丙']);
+    await page.evaluate(() => { const h = (window as any).fileApp; h.updateStats(); h.setSidebarTab('outline'); });
+    expect(await page.locator('#outline button').allTextContents()).toEqual(['甲  乙', '丙']);
+    const count = await page.locator('#word-count').innerText();
+    await caret('乙'); expect(await headings.allInnerTexts()).toEqual(['甲 {#mid} 乙 {#a .b}', '丙']);
+    await caret('{#mid}', 0); await page.keyboard.press('Delete');
+    expect(await markdown()).toBe(original.replace('{#mid}', ''));
+    await caret('{#a .b}', 7); await page.keyboard.press('Backspace');
+    expect(await markdown()).toBe(original.replace('{#mid}', '').replace(' {#a .b}', ''));
+    await caret('丙', 1); await page.keyboard.type(' {#x}'); await settle();
+    expect(await headings.nth(1).locator('.md-marker:not(.md-hidden)').allTextContents()).toEqual(['{#x}', ' {.cls}']);
+    await caret('正文');
+    expect(await headings.nth(1).locator('.md-hidden').count()).toBe(2);
+    await page.evaluate(() => (window as any).fileApp.updateStats());
+    expect(await page.locator('#word-count').innerText()).toBe(count);
+  });
+
+  it('keeps heading attributes stable during composition and leaves other braces visible', async () => {
+    await open('# 甲 {key=value} {#中文}\n\n正文\n');
+    await caret('甲', 1);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text: 'zhong', selectionStart: 5, selectionEnd: 5 });
+    expect(await look()).toMatchObject({ shown: ' {#中文}', hidden: 0 });
+    await cdp.send('Input.insertText', { text: '中' });
+    await caret('正文'); expect(await page.locator('#rich-root h1').innerText()).toBe('甲中 {key=value}');
+    expect(await markdown()).toBe('# 甲中 {key=value} {#中文}\n\n正文\n');
+  });
+
+  it.each(['- # 标题甲\n- 第二项', '3. ## 标题甲\n\n4. 第二项', '* ### 标题甲\n  下方正文', '+ # 标题甲',
+    '- 父项\n  - ## 标题甲'])('edits a list heading in its original item: %s', async source => {
+    const original = source.replaceAll('\n', '\r\n');
+    await open(original);
+    expect(await markdown()).toBe(original);
+    const level = /#+/.exec(source)![0].length;
+    expect(await page.locator('#rich-root li h' + level).innerText()).toBe('标题甲');
+    await caret('标题甲', 2); await page.keyboard.insertText('中');
+    expect(await markdown()).toBe(original.replace('标题甲', '标题中甲'));
+  });
+
+  it('retains both edits made before the next save in a loose, nonsequential ordered list', async () => {
+    const original = '8) # 甲乙\r\n\r\n13) ## 丙丁';
+    await open(original); await caret('甲乙', 1); await page.keyboard.insertText('一');
+    await caret('丙丁', 1); await page.keyboard.insertText('二');
+    expect(await markdown()).toBe('8) # 甲一乙\r\n\r\n13) ## 丙二丁');
+  });
+
+  it('keeps paragraph list-item indent, outdent, split and empty-item exit', async () => {
+    await open('- 第一项\n- 第二项\n'); await caret('第二项', 3);
+    await page.keyboard.press('Tab');
+    expect(await page.locator('#rich-root li li p').innerText()).toBe('第二项');
+    await page.keyboard.press('Shift+Tab');
+    expect(await page.locator('#rich-root li li').count()).toBe(0);
+    await page.keyboard.press('Enter'); expect(await page.locator('#rich-root li').count()).toBe(3);
+    await page.keyboard.press('Enter'); await page.keyboard.insertText('列表外');
+    expect(await page.locator('#rich-root li').count()).toBe(2);
+    expect(await page.locator('.ProseMirror > ul + p').innerText()).toBe('列表外');
+    expect(await markdown()).toMatch(/^- 第一项\n- 第二项\n\n列表外\n/);
+  });
+
+  it('moves through expanded attribute text with arrows, Home and End', async () => {
+    await open('开头\n\n## 标题 {#id}\n\n结尾\n');
+    await caret('标题'); await press('End'); expect((await look()).caret).toBe('标题 {#id}|');
+    await press('ArrowLeft'); expect((await look()).caret).toBe('标题 {#id|}');
+    await press('ArrowRight'); expect((await look()).caret).toBe('标题 {#id}|');
+    await press('Home'); expect((await look()).caret).toBe('|标题 {#id}');
+    await caret('结尾'); expect(await page.locator('#rich-root h2').innerText()).toBe('标题');
+  });
+
+  it('keeps list heading commands and Enter inside the same item', async () => {
+    await open('* # 标题甲\n'); await caret('标题甲', 3);
+    await page.keyboard.press('Control+2'); expect(await page.locator('#rich-root li h2').innerText()).toBe('标题甲');
+    expect(await markdown()).toBe('* ## 标题甲\n');
+    await page.keyboard.press('Control+0'); expect(await page.locator('#rich-root li p').innerText()).toBe('标题甲');
+    expect(await markdown()).toBe('* 标题甲\n');
+    await caret('标题甲'); await page.keyboard.type('# '); expect(await page.locator('#rich-root li h1').innerText()).toBe('标题甲');
+    await page.keyboard.press('Backspace'); expect(await page.locator('#rich-root li p').innerText()).toBe('标题甲');
+    await page.keyboard.press('Control+='); expect(await page.locator('#rich-root li h6').innerText()).toBe('标题甲');
+    await caret('标题甲', 3); await page.keyboard.press('Enter'); await page.keyboard.insertText('同项正文');
+    expect(await page.locator('#rich-root li').count()).toBe(1);
+    expect(await page.locator('#rich-root li p').innerText()).toBe('同项正文');
+    expect(await markdown()).not.toContain('<br');
+  });
+
   it('keeps the table of contents and outline free of marker characters', async () => {
     await open('[TOC]\n\n## 标题 **粗** 与 `码` \\*\n\n正文\n'); await caret('正文'); await settle();
     expect(await page.locator('[data-croquill-toc] button').allTextContents()).toEqual(['标题 粗 与 码 *']);

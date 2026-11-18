@@ -22,11 +22,11 @@ describe('rendered Markdown extension protection boundaries', () => {
 
   it.each([
     '前==高亮==与[TOC]后',
-    '前==高亮==与[[双链]]后',
-    '前==高亮==与[^a]和[[双链]]后\n\n[^a]: 定义',
+    '前==高亮==与文字<kbd>未闭合后',
+    '前==高亮==与[^a]和文字<kbd>未闭合后\n\n[^a]: 定义',
     '> [!NOTE]\n> 提示与[TOC]',
-    '> [!WARNING]\n> 提示与[[双链]]',
-    '> [!TIP]\n> 提示[^a]与[[双链]]\n\n[^a]: 定义',
+    '> [!WARNING]\n> 提示与文字<kbd>未闭合',
+    '> [!TIP]\n> 提示[^a]与文字<kbd>未闭合\n\n[^a]: 定义',
     '前<!-- 注释 -->与[TOC]后',
     '<div>\n==高亮==\n</div>',
     '> [!UNKNOWN]\n> 未支持类型',

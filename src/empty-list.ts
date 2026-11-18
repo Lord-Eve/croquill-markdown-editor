@@ -20,6 +20,7 @@ export function configureEmptyListItems(ctx: Ctx): void {
     const schema = previous(innerCtx);
     return {
       ...schema,
+      content: '(paragraph | heading) block*',
       toMarkdown: {
         ...schema.toMarkdown,
         runner: (state, node) => {
@@ -69,12 +70,20 @@ export function preserveEmptyListSource(original: string, serialized: string): s
       changes.push({ from: b.start.offset, to: b.end.offset + newTail.length, text: original.slice(a.start.offset, a.end.offset) + oldTail });
       continue;
     }
+    const headingList = [left, right].some(list => list.node.children?.some(item => item.children?.[0]?.type === 'heading'));
     left.node.children?.forEach((item, itemIndex) => {
       const next = right.node.children![itemIndex];
-      if (item.children?.length || next.children?.length) return;
       const a = item.position, b = next.position;
       if (a?.start.offset == null || a.end.offset == null || b?.start.offset == null || b.end.offset == null) return;
-      changes.push({ from: b.start.offset, to: b.end.offset, text: original.slice(a.start.offset, a.end.offset) });
+      if (!item.children?.length && !next.children?.length) {
+        changes.push({ from: b.start.offset, to: b.end.offset, text: original.slice(a.start.offset, a.end.offset) });
+      } else if (headingList) {
+        // Keep the original bullet or ordinal on structural edits such as Ctrl+2 and Enter.
+        const marker = /^(?:[-*+]|\d+[.)])(?=[ \t])/;
+        const oldMark = marker.exec(original.slice(a.start.offset))?.[0];
+        const newMark = marker.exec(serialized.slice(b.start.offset))?.[0];
+        if (oldMark && newMark && oldMark !== newMark) changes.push({ from: b.start.offset, to: b.start.offset + newMark.length, text: oldMark });
+      }
     });
   }
   if (!changes.length) return serialized;
