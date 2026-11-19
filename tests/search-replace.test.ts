@@ -4,6 +4,7 @@ import type { ViteDevServer } from 'vite';
 import { readFileSync } from 'node:fs';
 import { createTestServer } from './server';
 import { launchTestBrowser } from './browser';
+import { defaultSearchOptions, findSourceMatches } from '../src/search-core';
 
 describe('find and replace through both production editing surfaces', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
@@ -20,9 +21,10 @@ describe('find and replace through both production editing surfaces', () => {
     await page.addScriptTag({ type: 'module', content: `
       import { MarkdownSurface } from '/src/editor.ts';
       import { DocumentSession } from '/src/session.ts';
+      import { richMarkdownTransforms } from '/src/rich-markdown.ts';
       const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
       document.body.append(richRoot, sourceRoot);
-      const h = window.searchHarness = {richRoot, sourceRoot, edits: [], errors: []};
+      const h = window.searchHarness = {richRoot, sourceRoot, richMarkdownTransforms, edits: [], errors: []};
       h.session = new DocumentSession({write: async (_path, text) => {h.saved = text;return {revision:'test'};}});
       h.session.path = 'D:/验收/查找.md';
       h.surface = new MarkdownSurface({richRoot, sourceRoot, onChange: text => {h.edits.push(text);h.session.edit(text);}, resolveImage: async src => src});
@@ -43,6 +45,64 @@ describe('find and replace through both production editing surfaces', () => {
   const replacement = () => page.getByRole('textbox', { name: '替换为', exact: true });
   const count = async () => page.locator('[data-search-count]').textContent();
   const command = async (name: string) => page.locator(`[data-search-command="${name}"]`).click();
+
+  const currentRange = () => page.evaluate(() => {
+    const current = [...CSS.highlights.entries()].find(([name]) => name.endsWith('-current'));
+    const range = current && [...current[1]][0] as Range;
+    return range && [range.startContainer.textContent, range.startOffset, range.endContainer.textContent, range.endOffset];
+  });
+
+  it.each(['\n', '<br>', '  \n', '\\\n'])('does not paint a false ab across %j', async br => {
+    await load('a' + br + 'b ab\n', 'rich');
+    await page.keyboard.press('Control+f'); await query().fill('ab');
+    expect(await count()).toBe('1 / 1');
+    expect(await currentRange()).toEqual(['b ab', 2, 'b ab', 4]);
+  });
+
+  it.each(['\n', '\r\n'])('maps a multiline source match to the correct DOM lines (%j)', async eol => {
+    const source = 'a<br>b a' + eol + 'b ab' + eol;
+    await load(source, 'rich');
+    // The find box is single-line. Exercise its production matcher and painter directly.
+    const query = 'a' + eol + 'b';
+    const matches = findSourceMatches(source, query, defaultSearchOptions);
+    expect(matches).toHaveLength(1);
+    await page.evaluate(args => (window as any).searchHarness.surface.paintSearch(
+      args.source, args.matches, 0, args.query, args.options), { source, matches, query, options: defaultSearchOptions });
+    expect(await currentRange()).toEqual(['b a', 2, 'b ab', 1]);
+  });
+
+  it('scrolls to the current occurrence within a tall multiline paragraph', async () => {
+    const source = ['ab', 'a', 'b', ...Array(120).fill('中间行'), '末行 ab', ''].join('\n');
+    await load(source, 'rich'); await page.keyboard.press('Control+f'); await query().fill('ab');
+    await command('next'); expect(await count()).toBe('2 / 2');
+    expect(await currentRange()).toEqual(['末行 ab', 3, '末行 ab', 5]);
+    const visible = await page.evaluate(() => {
+      const current = [...CSS.highlights.entries()].find(([name]) => name.endsWith('-current'))!;
+      const rect = ([...current[1]][0] as Range).getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= window.innerHeight;
+    });
+    expect(visible).toBe(true);
+  });
+
+  it.each([20, 400])('shares the full-document transformation across %i matching multiline paragraphs', async paragraphs => {
+    const source = Array.from({ length: paragraphs }, (_, i) => `第${i}段第一行文字\n第二行继续写正文`).join('\n\n');
+    await load(source, 'rich'); await page.keyboard.press('Control+f');
+    const passes = await page.evaluate(() => {
+      const transforms = (window as any).searchHarness.richMarkdownTransforms;
+      let calls = 0;
+      // Count executions of the real transform pipeline after the editor has loaded.
+      transforms.push(() => (tree: unknown) => { calls++; return tree; });
+      try {
+        const input = document.querySelector<HTMLInputElement>('[aria-label="查找内容"]')!;
+        input.value = '文字'; input.dispatchEvent(new Event('input', { bubbles: true }));
+        const initial = calls;
+        document.querySelector<HTMLButtonElement>('[data-search-command="next"]')!.click();
+        return [initial, calls - initial];
+      } finally { transforms.pop(); }
+    });
+    expect(await count()).toBe('2 / ' + paragraphs);
+    expect(passes).toEqual([1, 1]);
+  });
 
   it.each(['\n', '\r\n'])('opens the manual sample, searches without editing, and preserves bytes over modes (%j)', async eol => {
     const source = readFileSync(new URL('../examples/search-replace.md', import.meta.url), 'utf8').replace(/\r?\n/g, eol);

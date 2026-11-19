@@ -1,12 +1,8 @@
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
+import { parseMarkdownAst, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { findSourceMatches, type SearchMatch, type SearchOptions } from './search-core';
+import { createSourceSegmentLookup, type SourceSegmentLookup } from './mode-position';
 
-const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 let sequence = 0;
 
 /** Paint DOM ranges without inserting markup into the editable document. */
@@ -22,7 +18,8 @@ export class RichSearchPainter {
   paint(source: string, view: EditorView, matches: SearchMatch[], current: number, query: string, options: SearchOptions): void {
     this.clear(); if (!matches.length) return;
     const { prefix, body } = splitFrontmatter(source);
-    const nodes = parser.parse(body).children;
+    const nodes = parseMarkdownAst(body).children;
+    const segmentsAt = createSourceSegmentLookup(body, prefix.length);
     const protectedBlocks = preservedMarkdownBlocks(body);
     const blocks: { from: number; to: number }[] = [];
     for (const node of nodes) {
@@ -44,7 +41,7 @@ export class RichSearchPainter {
       const indices: number[] = [];
       while (matchIndex < matches.length && matches[matchIndex].from < block.to) indices.push(matchIndex++);
       if (!indices.length) return;
-      const visible = this.visibleRanges(dom, query, options);
+      const visible = this.visibleRanges(dom, query, options, source, view, segmentsAt);
       indices.forEach((index, ordinal) => {
         if (visible[ordinal]) this.ranges[index] = visible[ordinal];
         else { const range = document.createRange(); range.selectNodeContents(dom); this.ranges[index] = range; }
@@ -60,24 +57,47 @@ export class RichSearchPainter {
       const selected = this.ranges[current]; if (selected) CSS.highlights.set(this.currentName, new Highlight(selected));
     }
   }
-  private visibleRanges(element: HTMLElement, query: string, options: SearchOptions): Range[] {
-    const groups = new Map<Element, Text[]>();
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  private visibleRanges(element: HTMLElement, query: string, options: SearchOptions, source: string, view: EditorView, segmentsAt: SourceSegmentLookup): Range[] {
+    const groups = new Map<Element, (Text | HTMLBRElement)[]>();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!(node instanceof Text || node instanceof HTMLBRElement) || node instanceof HTMLBRElement && node.classList.contains('ProseMirror-trailingBreak')) continue;
       const parent = node.parentElement;
       if (!parent || parent.closest('[data-croquill-toc],[data-footnote-tooltip],button,input,textarea,.cm-gutters,.katex-mathml')) continue;
       const group = parent.closest('p,h1,h2,h3,h4,h5,h6,pre,dt,.cm-line') || element;
-      if (!groups.has(group)) groups.set(group, []); groups.get(group)!.push(node as Text);
+      if (!groups.has(group)) groups.set(group, []); groups.get(group)!.push(node);
     }
     const ranges: Range[] = [];
-    for (const texts of groups.values()) {
-      const joined = texts.map(text => text.data).join('');
+    for (const nodes of groups.values()) {
+      // A rendered break occupies a DOM node even when its source is CRLF,
+      // a backslash + newline, or a literal <br>. Never join its adjacent words.
+      let breaks: Map<number, string> | undefined;
+      const parts = nodes.map(node => {
+        if (node instanceof Text) return node.data;
+        const pos = view.state.doc.resolve(view.posAtDOM(node, 0, -1));
+        if (pos.nodeAfter?.type.name !== 'hardbreak') return '\n';
+        if (!breaks) {
+          const segments = segmentsAt(pos) || [];
+          breaks = new Map(segments.filter(s => s.kind === 'gap').map(s => [s.pmFrom, source.slice(s.rawFrom, s.rawTo)]));
+        }
+        return breaks.get(pos.parentOffset) ?? (pos.nodeAfter.attrs.croquillHtmlBreak || '\n');
+      });
+      const joined = parts.join('');
       for (const match of findSourceMatches(joined, query, options)) {
         let offset = 0; const range = document.createRange(); let started = false;
-        for (const text of texts) {
-          if (!started && match.from < offset + text.length) { range.setStart(text, match.from - offset); started = true; }
-          if (started && match.to <= offset + text.length) { range.setEnd(text, match.to - offset); ranges.push(range); break; }
-          offset += text.length;
+        for (const [i, node] of nodes.entries()) {
+          const end = offset + parts[i].length;
+          if (!started && match.from < end) {
+            if (node instanceof Text) range.setStart(node, match.from - offset);
+            else range.setStartBefore(node);
+            started = true;
+          }
+          if (started && match.to <= end) {
+            if (node instanceof Text) range.setEnd(node, match.to - offset);
+            else range.setEndAfter(node);
+            ranges.push(range); break;
+          }
+          offset = end;
         }
       }
     }
@@ -88,7 +108,15 @@ export class RichSearchPainter {
     if (!element) { this.root.scrollIntoView({ block: 'start' }); return; }
     element.scrollIntoView({ block: 'center', inline: 'nearest' });
     let parent: HTMLElement | null = element instanceof HTMLElement ? element : element.parentElement;
-    while (parent && parent !== this.root.parentElement) {
+    while (parent) {
+      const viewport = parent === document.scrollingElement;
+      if (parent.scrollHeight > parent.clientHeight && (viewport || /auto|scroll/.test(getComputedStyle(parent).overflowY))) {
+        const rect = range!.getClientRects()[0];
+        const top = viewport ? 0 : parent.getBoundingClientRect().top + parent.clientTop;
+        if (rect && (rect.top < top || rect.bottom > top + parent.clientHeight)) {
+          parent.scrollTop += (rect.top + rect.bottom - parent.clientHeight) / 2 - top;
+        }
+      }
       if (parent.scrollWidth > parent.clientWidth && /auto|scroll/.test(getComputedStyle(parent).overflowX)) {
         const rect = range!.getBoundingClientRect(), bounds = parent.getBoundingClientRect();
         if (rect.right > bounds.right) parent.scrollLeft += rect.right - bounds.right + 12;

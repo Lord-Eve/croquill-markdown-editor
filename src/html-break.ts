@@ -1,6 +1,6 @@
 import type { Ctx } from '@milkdown/kit/ctx';
 import type { Root } from '@milkdown/kit/transformer';
-import { hardbreakFilterNodes, hardbreakSchema, paragraphSchema } from '@milkdown/kit/preset/commonmark';
+import { hardbreakFilterNodes, hardbreakSchema, headingSchema, paragraphSchema } from '@milkdown/kit/preset/commonmark';
 import { tableCellSchema, tableHeaderSchema } from '@milkdown/kit/preset/gfm';
 import { TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
@@ -28,7 +28,8 @@ export function handleHtmlBreakKey(view: EditorView, event: KeyboardEvent): bool
   // Stop the editor keymaps while leaving the native IME event untouched.
   if (event.isComposing || view.composing) return true;
   event.preventDefault();
-  view.dispatch(tr.setMeta('hardbreak', true).replaceSelectionWith(schema.nodes.hardbreak.create({ croquillHtmlBreak: '<br />' }), false).scrollIntoView());
+  const attrs = !inCell && $from.parent.type.name === 'paragraph' ? { isInline: true } : { croquillHtmlBreak: '<br />' };
+  view.dispatch(tr.setMeta('hardbreak', true).replaceSelectionWith(schema.nodes.hardbreak.create(attrs), false).scrollIntoView());
   return true;
 }
 
@@ -63,6 +64,8 @@ export function configureHtmlBreaks(ctx: Ctx): void {
     return {
       ...schema,
       attrs: { ...schema.attrs, croquillHtmlBreak: { default: '', validate: 'string' } },
+      toDOM: node => node.attrs.isInline ? ['br', { 'data-is-inline': 'true' }] : schema.toDOM!(node),
+      parseDOM: [{ tag: 'br[data-is-inline="true"]', attrs: { isInline: true } }, ...schema.parseDOM || []],
       parseMarkdown: {
         ...schema.parseMarkdown,
         runner: (state, node, type) => {
@@ -91,19 +94,22 @@ export function configureHtmlBreaks(ctx: Ctx): void {
       toMarkdown: {
         ...schema.toMarkdown,
         runner: (state, node) => {
-          const last = node.lastChild;
-          if (last?.type.name !== 'hardbreak' || last.attrs.isInline) {
-            schema.toMarkdown.runner(state, node);
-            return;
-          }
           let content = node.content;
+          let trailing = true;
+          // A line containing only leading break tags can open a CommonMark HTML block.
+          const firstContent = node.content.content.findIndex(child =>
+            child.type.name !== 'hardbreak' && !(child.isText && /^[ \t]+$/.test(child.text!)));
           for (let index = node.childCount - 1; index >= 0; index--) {
             const child = node.child(index);
-            if (child.type.name !== 'hardbreak' || child.attrs.isInline) break;
+            if (child.type.name !== 'hardbreak') { trailing = false; continue; }
+            const previous = node.maybeChild(index - 1);
+            const emptyLine = !previous || previous.type.name === 'hardbreak' && !previous.attrs.croquillHtmlBreak;
+            if (!trailing && !(child.attrs.isInline && (emptyLine || firstContent === -1 || index < firstContent))) continue;
             if (isBareHtmlBreak(String(child.attrs.croquillHtmlBreak || ''))) continue;
-            content = content.replaceChild(index, child.type.create({ ...child.attrs, croquillHtmlBreak: '<br />' }, null, child.marks));
+            content = content.replaceChild(index, child.type.create({ ...child.attrs, isInline: false, croquillHtmlBreak: '<br />' }, null, child.marks));
           }
-          state.openNode('paragraph').next(content).closeNode();
+          if (content === node.content && node.lastChild?.type.name !== 'hardbreak') schema.toMarkdown.runner(state, node);
+          else state.openNode('paragraph').next(content).closeNode();
         },
       },
     };
@@ -127,4 +133,11 @@ export function configureHtmlBreaks(ctx: Ctx): void {
       };
     });
   }
+  ctx.update(headingSchema.key, previous => innerCtx => {
+    const schema = previous(innerCtx);
+    return { ...schema, toMarkdown: { ...schema.toMarkdown, runner: (state, node) => {
+      // The stock heading writer also drops its last break, including an explicit HTML tag.
+      state.openNode('heading', undefined, { depth: node.attrs.level }).next(node.content).closeNode();
+    } } };
+  });
 }

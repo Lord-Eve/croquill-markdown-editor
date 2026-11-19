@@ -369,10 +369,19 @@ function nodePairCompatible(body: string, astNode: AstNodeLike, pmNode: PMNode):
   return 'mismatch';
 }
 
-/** Follow the edited block's path without applying mode switching's whole-table selection policy. */
-export function sourceSegmentsForEdit(raw: string, $pos: ResolvedPos): InlineSegment[] | null {
-  const { prefix, body } = splitFrontmatter(raw);
-  let ast = editableAst(body);
+export type SourceSegmentLookup = (pos: ResolvedPos) => InlineSegment[] | null;
+
+/** Build the positioned tree on the first lookup and share it for the life of this source snapshot. */
+export function createSourceSegmentLookup(body: string, prefixLength: number): SourceSegmentLookup {
+  let root: AstNodeLike | undefined;
+  return pos => {
+    root ??= editableAst(body);
+    return segmentsForBlock(body, prefixLength, root, pos);
+  };
+}
+
+/** Follow the textblock path without applying mode switching's whole-table selection policy. */
+function segmentsForBlock(body: string, prefixLength: number, ast: AstNodeLike, $pos: ResolvedPos): InlineSegment[] | null {
   for (let depth = 0; depth < $pos.depth; depth++) {
     const index = $pos.index(depth);
     const child = ast.children?.[index];
@@ -386,11 +395,11 @@ export function sourceSegmentsForEdit(raw: string, $pos: ResolvedPos): InlineSeg
     // Markdown stores inline children directly in the cell. Milkdown adds a paragraph.
     if (child.type === 'tableCell' && (pm.type.name === 'table_header' || pm.type.name === 'table_cell') &&
         pm.childCount === 1 && pm.firstChild === $pos.parent && $pos.parent.type.name === 'paragraph') {
-      return verifyTextblockSegments(body, prefix.length, child, ast, index === 0, $pos.parent)?.segments ?? null;
+      return verifyTextblockSegments(body, prefixLength, child, ast, index === 0, $pos.parent)?.segments ?? null;
     }
     const kind = nodePairCompatible(body, child, pm);
     if (kind === 'textblock' && depth + 1 === $pos.depth) {
-      return verifyTextblockSegments(body, prefix.length, child, ast, index === 0, pm)?.segments ?? null;
+      return verifyTextblockSegments(body, prefixLength, child, ast, index === 0, pm)?.segments ?? null;
     }
     if (kind !== 'container' && !(kind === 'degenerate' && child.type === 'table')) return null;
     ast = child;

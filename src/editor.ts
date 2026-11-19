@@ -4,12 +4,14 @@ import { dropIndicatorPlugin } from '@milkdown/kit/plugin/cursor';
 import { isImageFile } from './images';
 import { hasFileTransfer } from './file-drop';
 import { commandsCtx, editorViewCtx, nodesCtx, parserCtx, serializerCtx, remarkPluginsCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
-import { docSchema, emphasisKeymap, emphasisStarInputRule, emphasisUnderscoreInputRule, inlineCodeInputRule, inlineCodeKeymap, strongInputRule, strongKeymap } from '@milkdown/kit/preset/commonmark';
+import { docSchema, emphasisKeymap, emphasisStarInputRule, emphasisUnderscoreInputRule, headingKeymap, wrapInHeadingInputRule, inlineCodeInputRule, inlineCodeKeymap, strongInputRule, strongKeymap } from '@milkdown/kit/preset/commonmark';
 import { insertTableCommand, strikethroughInputRule, strikethroughKeymap } from '@milkdown/kit/preset/gfm';
 import { imageBlockSchema } from '@milkdown/kit/component/image-block';
-import { $prose } from '@milkdown/kit/utils';
+import { $inputRule, $prose } from '@milkdown/kit/utils';
+import { InputRule } from '@milkdown/kit/prose/inputrules';
+import { Typewriter, writingDecorations } from './writing-modes';
 import { NodeSelection, Plugin, Selection, TextSelection, type Command, type Transaction as ProseTransaction } from '@milkdown/kit/prose/state';
-import { Decoration, DecorationSet, type EditorView as RichView } from '@milkdown/kit/prose/view';
+import type { EditorView as RichView } from '@milkdown/kit/prose/view';
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
 import { closeHistory, undo as richUndo, redo as richRedo } from '@milkdown/kit/prose/history';
@@ -23,7 +25,7 @@ import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { orderedVisibleHeading, pickVisibleHeadingIndex } from './outline-tree';
-import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore, sourceSegmentsForEdit } from './mode-position';
+import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, createSourceSegmentLookup, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { retainMarkdown } from './markdown-ast';
@@ -103,10 +105,13 @@ function handleListHeadingEnter(view: RichView, event: KeyboardEvent): boolean {
 }
 
 /** Typora: Backspace at the very start of a heading turns it into a paragraph in one step. */
-function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
-  if (event.key !== 'Backspace' || event.isComposing || view.composing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+function handleHeadingStart(view: RichView, event: KeyboardEvent): boolean {
+  if ((event.key !== 'Backspace' && event.key !== 'Delete') || event.isComposing || view.composing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
   const { $from, empty } = view.state.selection, { heading, paragraph } = view.state.schema.nodes;
   if (!empty || $from.parent.type !== heading || $from.parentOffset !== 0) return false;
+  // Let native forward deletion handle graphemes. Bypass Milkdown's
+  // LiftFirstListItem binding when the heading is inside a list.
+  if (event.key === 'Delete') return $from.parent.content.size > 0 && $from.node(-1).type.name === 'list_item';
   if (!setBlockType(paragraph)(view.state, view.dispatch, view)) return false;
   event.preventDefault();
   return true;
@@ -115,6 +120,8 @@ function handleHeadingBackspace(view: RichView, event: KeyboardEvent): boolean {
 /** Map pending text edits back to their original blocks, keeping list markers and whitespace. */
 function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, serialized: string, plainExtension = hasPlainExtension(raw)): string {
   if (!plainExtension && !/<[a-z]/i.test(raw)) return serialized;
+  const { body, prefix } = splitFrontmatter(raw);
+  const segmentsAt = createSourceSegmentLookup(body, prefix.length);
   const changes: SourceChange[] = [];
   function compare(block: RichNode, next: RichNode, pos: number): boolean {
     if (block.eq(next)) return true;
@@ -137,7 +144,7 @@ function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, seri
     if (!plainExtension && !blockSpans(block).some(span => span.html && span.from <= from && to <= span.to)) return false;
     const insert = next.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
     if (/[\r\n]/.test(insert) || insert.includes(INLINE_OBJECT)) return false;
-    const segment = sourceSegmentsForEdit(raw, before.resolve(pos + 1))?.find(segment =>
+    const segment = segmentsAt(before.resolve(pos + 1))?.find(segment =>
       segment.kind === 'exact' && segment.pmFrom <= from && to <= segment.pmTo);
     if (!segment) return false;
     changes.push({ from: segment.rawFrom + from - segment.pmFrom, to: segment.rawFrom + to - segment.pmFrom, insert });
@@ -207,14 +214,22 @@ export class MarkdownSurface {
   private linkHintShown = false;
   private outlineCache?: { raw: string; items: MarkdownOutlineItem[] };
   private cancelModeScrollRestore?: () => void;
+  private readonly typewriter?: Typewriter;
+
+  setWritingMode(name: 'focus-mode' | 'typewriter', enabled: boolean): void {
+    if (name === 'focus-mode') this.options.richRoot.classList.toggle(name, enabled);
+    else this.typewriter?.setEnabled(enabled);
+  }
 
   constructor(private readonly options: MarkdownSurfaceOptions) {
+    if (options.scrollContainer) this.typewriter = new Typewriter(options.richRoot, options.scrollContainer, () => this.richView());
     this.searchPainter = new RichSearchPainter(options.richRoot);
     this.find = new SearchPanel({
       text: () => this.getMarkdown(), focus: () => this.focus(),
       replace: (matches, replacement) => this.replaceSearchMatches(matches, replacement),
       paint: (text, matches, current, query, settings) => this.paintSearch(text, matches, current, query, settings),
       reveal: (index, match) => {
+        this.typewriter?.cancel();
         if (this.currentMode === 'rich') this.searchPainter.reveal(index);
         else if (this.source) { const from = normalizedOffset(this.raw, match.from), to = normalizedOffset(this.raw, match.to); this.source.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: 'center' }) }); }
       },
@@ -327,6 +342,7 @@ export class MarkdownSurface {
   async init(markdownText: string): Promise<void> { await this.load(markdownText); }
 
   async load(markdownText: string): Promise<void> {
+    this.typewriter?.cancel();
     this.cancelModeScrollRestore?.();
     this.cancelModeScrollRestore = undefined;
     this.cancelRichTimer();
@@ -366,6 +382,7 @@ export class MarkdownSurface {
 
   async setMode(mode: EditingMode): Promise<void> {
     if (this.hasFocusedComposition()) return;
+    this.typewriter?.cancel();
     this.cancelModeScrollRestore?.();
     this.cancelModeScrollRestore = undefined;
     const fromMode = this.currentMode;
@@ -573,6 +590,7 @@ export class MarkdownSurface {
   }
 
   scrollToHeading(index: number): void {
+    this.typewriter?.cancel();
     if (this.currentMode === 'source' && this.source) {
       const heading = this.getOutline()[index];
       if (!heading) return;
@@ -590,6 +608,7 @@ export class MarkdownSurface {
     if (this.currentMode === 'source') { this.formatSource(action); return; }
     if (!this.crepe) return;
     const view = this.richView();
+    if (action === 'undo' || action === 'redo') this.typewriter?.schedule(view.dom);
     if (isFocusedHtmlSource(this.options.richRoot)) {
       if (action === 'undo') { richUndo(view.state, view.dispatch, view); this.notifyRichChange(); }
       else if (action === 'redo') { richRedo(view.state, view.dispatch, view); this.notifyRichChange(); }
@@ -644,6 +663,7 @@ export class MarkdownSurface {
   }
 
   async destroy(): Promise<void> {
+    this.typewriter?.destroy();
     this.clearHeadingCache();
     this.releaseOrigin?.(); this.releaseOrigin = undefined;
     this.destroyed = true;
@@ -815,6 +835,7 @@ export class MarkdownSurface {
         defaultLineEnding: () => this.richDefaultNewline,
       })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin(this.options.resolveImage))).use($prose(() => modeNodeSelectionGuardPlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
+        ctx.update(headingKeymap.key, keys => ({ ...keys, DowngradeHeading: { shortcuts: [] } }));
         configureHtmlBreaks(ctx);
         configureEmptyListItems(ctx);
         configureInlineSource(ctx);
@@ -827,6 +848,12 @@ export class MarkdownSurface {
       // Crepe's block-only drop indicator also handles text selections, snapping
       // them to block boundaries. Keep ProseMirror's native inline/block drops.
       await crepe.editor.remove(dropIndicatorPlugin);
+      await crepe.editor.remove(wrapInHeadingInputRule);
+      crepe.editor.use($inputRule(() => new InputRule(/^(#{1,6})\s$/, (state, match, from, to) => {
+        const pos = state.doc.resolve(from), heading = state.schema.nodes.heading;
+        if (pos.parent.type.name !== 'paragraph' || !pos.node(-1).canReplaceWith(pos.index(-1), pos.indexAfter(-1), heading)) return null;
+        return state.tr.delete(from, to).setBlockType(from, from, heading, { level: match[1].length });
+      })));
       // Inline formatting is source text here (src/inline-source.ts). The stock rules and
       // shortcuts would turn it back into marks.
       await crepe.editor.remove([strongInputRule, emphasisStarInputRule, emphasisUnderscoreInputRule, inlineCodeInputRule, strikethroughInputRule, strongKeymap, emphasisKeymap, inlineCodeKeymap, strikethroughKeymap].flat());
@@ -886,7 +913,7 @@ export class MarkdownSurface {
         },
         props: {
           handleDOMEvents: {
-            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingBackspace(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
             mousedown: (view, event) => {
               if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
               if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;
@@ -923,13 +950,7 @@ export class MarkdownSurface {
             this.format(action);
             return true;
           },
-          decorations(state) {
-            const { $from } = state.selection;
-            if (!$from.depth) return DecorationSet.empty;
-            const node = $from.parent;
-            const syntax = node.type.name === 'heading' ? '#'.repeat(Number(node.attrs.level)) : node.type.name === 'blockquote' ? '>' : '';
-            return DecorationSet.create(state.doc, [Decoration.node($from.before(), $from.after(), { class: 'tx-active-block', 'data-syntax': syntax })]);
-          },
+          decorations: writingDecorations,
         },
         view: () => ({ update: (view, previous) => {
           if (this.suppress || this.destroyed || this.currentMode !== 'rich' || view.state.doc.eq(previous.doc)) return;

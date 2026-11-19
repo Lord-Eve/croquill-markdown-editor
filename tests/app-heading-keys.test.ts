@@ -68,14 +68,41 @@ describe('heading level keys through the real app', () => {
       const results: boolean[] = [];
       // A real IME opens the composition before its keydowns reach the page.
       document.activeElement!.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-      for (const init of [{ key: 'Backspace', code: 'Backspace' }, { key: '0', code: 'Digit0', ctrlKey: true }, { key: '=', code: 'Equal', ctrlKey: true }, { key: '-', code: 'Minus', ctrlKey: true }, { key: 'Process', code: 'Digit3', ctrlKey: true }]) {
+      for (const init of [{ key: 'Delete', code: 'Delete' }, { key: '#', code: 'Digit3', shiftKey: true }, { key: 'Backspace', code: 'Backspace' }, { key: '0', code: 'Digit0', ctrlKey: true }, { key: '=', code: 'Equal', ctrlKey: true }, { key: '-', code: 'Minus', ctrlKey: true }, { key: 'Process', code: 'Digit3', ctrlKey: true }]) {
         const event = new KeyboardEvent('keydown', { ...init, isComposing: true, bubbles: true, cancelable: true });
         document.activeElement!.dispatchEvent(event); results.push(event.defaultPrevented);
       }
       return results;
     });
-    expect(prevented).toEqual([false, false, false, false, false]); expect(await text()).toBe(original);
+    expect(prevented).toEqual(Array(7).fill(false)); expect(await text()).toBe(original);
   }, 30000);
+
+  it('keeps the level on forward Delete and literal hash-space, including after reopen', async () => {
+    await open('## 甲二级标题\n', 'rich');
+    await steps([['Delete', '## 二级标题\n']]);
+    await page.keyboard.type('# ');
+    await waitText('## # 二级标题\n');
+    await page.evaluate(async () => { const s = (window as any).fileApp.surface; await s.load(s.getMarkdown()); });
+    expect(await page.locator('.ProseMirror h2').textContent()).toBe('# 二级标题');
+  });
+
+  it('only shows the level hint on H4 through H6 and still recognizes a paragraph prefix', async () => {
+    await open('正文\n', 'rich');
+    await page.keyboard.type('## ');
+    await waitText('## 正文\n');
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      await page.keyboard.press('Control+' + level);
+      expect(await page.locator('.ProseMirror h' + level).getAttribute('data-syntax')).toBe(level < 4 ? '' : '#'.repeat(level));
+    }
+  });
+
+  it('deletes the first character of a list heading without lifting the item', async () => {
+    await open('- ## 甲标题\n', 'rich');
+    await page.locator('li h2').click();
+    await page.keyboard.press('Home');
+    await page.waitForFunction(() => (window as any).fileApp.surface.richView().state.selection.$head.parentOffset === 0);
+    await steps([['Delete', '- ## 标题\n']]);
+  });
 
   it.each(['rich', 'source'])('applies Ctrl+digit, Ctrl+0, Ctrl+= and Ctrl+- in %s mode', async mode => {
     await open('正文甲\n', mode);
