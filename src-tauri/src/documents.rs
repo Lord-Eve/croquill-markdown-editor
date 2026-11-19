@@ -163,14 +163,52 @@ pub fn write_document(
 
 // Markdown saves and image imports share the same synced, same-directory staging path.
 fn stage_bytes(parent: &Path, bytes: &[u8]) -> Result<tempfile::TempPath, String> {
+    stage_with_suffix(parent, bytes, ".tmp")
+}
+
+fn stage_with_suffix(parent: &Path, bytes: &[u8], suffix: &str) -> Result<tempfile::TempPath, String> {
     let mut temporary = tempfile::Builder::new()
         .prefix(".croquill-save-")
-        .suffix(".tmp")
+        .suffix(suffix)
         .tempfile_in(parent)
         .map_err(|e| format!("无法创建保存临时文件，原文件未修改：{e}"))?;
     temporary.write_all(bytes).map_err(|e| format!("写入临时文件失败，原文件未修改：{e}"))?;
     temporary.as_file().sync_all().map_err(|e| format!("同步临时文件失败，原文件未修改：{e}"))?;
     Ok(temporary.into_temp_path())
+}
+
+/// TempPath owns both files until WebView2 completes. Dropping an unfinished
+/// export removes even a partially printed PDF without touching the destination.
+pub struct PdfExport {
+    pub page: tempfile::TempPath,
+    pub output: tempfile::TempPath,
+    target: PathBuf,
+    existing: bool,
+}
+
+impl PdfExport {
+    pub fn stage(path: &str, html: &str) -> Result<Self, String> {
+        let target = resolve_destination(Path::new(path))?;
+        let existing = target.exists();
+        if existing && fs::metadata(&target).map_err(|e| e.to_string())?.permissions().readonly() {
+            return Err("导出目标为只读文件。".into());
+        }
+        let output = stage_bytes(target.parent().ok_or("导出路径无效。")?, &[])?;
+        let page = stage_with_suffix(&std::env::temp_dir(), html.as_bytes(), ".html")?;
+        Ok(Self { page, output, target, existing })
+    }
+
+    pub fn finish(self) -> Result<(), String> {
+        use std::io::Read;
+        let file = fs::OpenOptions::new().read(true).write(true).open(&self.output).map_err(|e| e.to_string())?;
+        let mut signature = [0; 5];
+        (&file).read_exact(&mut signature).map_err(|e| format!("PDF 输出不完整：{e}"))?;
+        if &signature != b"%PDF-" { return Err("WebView2 没有生成 PDF 文件。".into()); }
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        let _guard = SAVE_LOCK.lock().map_err(|_| "保存服务不可用")?;
+        replace_file(&self.output, &self.target, self.existing)
+    }
 }
 
 #[cfg(windows)]
@@ -569,6 +607,41 @@ mod tests {
 
     fn file_path(directory: &tempfile::TempDir, name: &str) -> String {
         directory.path().join(name).to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn pdf_commits_a_complete_same_directory_file_and_cleans_both_temps() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = file_path(&directory, "河岸.pdf");
+        for previous in [None, Some(b"old".as_slice())] {
+            if let Some(bytes) = previous { fs::write(&path, bytes).unwrap(); }
+            let job = PdfExport::stage(&path, "<p>正文</p>").unwrap();
+            let output = job.output.to_path_buf();
+            let page = job.page.to_path_buf();
+            assert_eq!(output.parent().unwrap(), fs::canonicalize(directory.path()).unwrap());
+            assert_eq!(fs::read_to_string(&page).unwrap(), "<p>正文</p>");
+            fs::write(&output, b"%PDF-1.7 sample").unwrap();
+            assert_eq!(fs::read(&path).ok().as_deref(), previous);
+            job.finish().unwrap();
+            assert_eq!(fs::read(&path).unwrap(), b"%PDF-1.7 sample");
+            assert!(!page.exists() && !output.exists());
+        }
+    }
+
+    #[test]
+    fn pdf_print_failure_and_invalid_output_leave_original_intact() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = file_path(&directory, "existing.pdf");
+        fs::write(&path, b"original").unwrap();
+        for completed in [false, true] {
+            let job = PdfExport::stage(&path, "page").unwrap();
+            let output = job.output.to_path_buf();
+            let page = job.page.to_path_buf();
+            fs::write(&output, b"partial").unwrap();
+            if completed { assert!(job.finish().is_err()); } else { drop(job); }
+            assert_eq!(fs::read(&path).unwrap(), b"original");
+            assert!(!page.exists() && !output.exists());
+        }
     }
 
     #[test]

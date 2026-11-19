@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify';
 import { decodeEntity } from './character-references';
 
 export interface SanitizeHtmlOptions {
+  exportDocument?: Document;
   resolveImage?: (src: string) => Promise<string>;
   isStale?: () => boolean;
 }
@@ -211,7 +212,11 @@ export function sanitizeHtmlFragment(source: string, options: SanitizeHtmlOption
     pendingImages.push({ img, src: rawSrc });
   }
 
-  const adopted = document.adoptNode(fragment) as DocumentFragment;
+  const adopted = (options.exportDocument ?? document).adoptNode(fragment) as DocumentFragment;
+  if (options.exportDocument) {
+    for (const { img, src } of pendingImages) img.setAttribute('src', src);
+    for (const node of adopted.querySelectorAll('[contenteditable]')) node.removeAttribute('contenteditable');
+  }
   if (options.resolveImage) {
     for (const { img, src } of pendingImages) {
       void options.resolveImage(src).then(resolved => {
