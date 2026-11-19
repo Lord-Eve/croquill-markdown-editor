@@ -25,7 +25,7 @@ import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
 import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { orderedVisibleHeading, pickVisibleHeadingIndex } from './outline-tree';
-import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore, sourceSegmentsForEdit } from './mode-position';
+import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, createSourceSegmentLookup, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { retainMarkdown } from './markdown-ast';
@@ -120,6 +120,8 @@ function handleHeadingStart(view: RichView, event: KeyboardEvent): boolean {
 /** Map pending text edits back to their original blocks, keeping list markers and whitespace. */
 function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, serialized: string, plainExtension = hasPlainExtension(raw)): string {
   if (!plainExtension && !/<[a-z]/i.test(raw)) return serialized;
+  const { body, prefix } = splitFrontmatter(raw);
+  const segmentsAt = createSourceSegmentLookup(body, prefix.length);
   const changes: SourceChange[] = [];
   function compare(block: RichNode, next: RichNode, pos: number): boolean {
     if (block.eq(next)) return true;
@@ -142,7 +144,7 @@ function preserveInlineEdit(raw: string, before: RichNode, after: RichNode, seri
     if (!plainExtension && !blockSpans(block).some(span => span.html && span.from <= from && to <= span.to)) return false;
     const insert = next.textBetween(from, end.b + overlap, '\n', INLINE_OBJECT);
     if (/[\r\n]/.test(insert) || insert.includes(INLINE_OBJECT)) return false;
-    const segment = sourceSegmentsForEdit(raw, before.resolve(pos + 1))?.find(segment =>
+    const segment = segmentsAt(before.resolve(pos + 1))?.find(segment =>
       segment.kind === 'exact' && segment.pmFrom <= from && to <= segment.pmTo);
     if (!segment) return false;
     changes.push({ from: segment.rawFrom + from - segment.pmFrom, to: segment.rawFrom + to - segment.pmFrom, insert });

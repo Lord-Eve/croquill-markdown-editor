@@ -21,9 +21,10 @@ describe('find and replace through both production editing surfaces', () => {
     await page.addScriptTag({ type: 'module', content: `
       import { MarkdownSurface } from '/src/editor.ts';
       import { DocumentSession } from '/src/session.ts';
+      import { richMarkdownTransforms } from '/src/rich-markdown.ts';
       const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
       document.body.append(richRoot, sourceRoot);
-      const h = window.searchHarness = {richRoot, sourceRoot, edits: [], errors: []};
+      const h = window.searchHarness = {richRoot, sourceRoot, richMarkdownTransforms, edits: [], errors: []};
       h.session = new DocumentSession({write: async (_path, text) => {h.saved = text;return {revision:'test'};}});
       h.session.path = 'D:/验收/查找.md';
       h.surface = new MarkdownSurface({richRoot, sourceRoot, onChange: text => {h.edits.push(text);h.session.edit(text);}, resolveImage: async src => src});
@@ -81,6 +82,26 @@ describe('find and replace through both production editing surfaces', () => {
       return rect.top >= 0 && rect.bottom <= window.innerHeight;
     });
     expect(visible).toBe(true);
+  });
+
+  it.each([20, 400])('shares the full-document transformation across %i matching multiline paragraphs', async paragraphs => {
+    const source = Array.from({ length: paragraphs }, (_, i) => `第${i}段第一行文字\n第二行继续写正文`).join('\n\n');
+    await load(source, 'rich'); await page.keyboard.press('Control+f');
+    const passes = await page.evaluate(() => {
+      const transforms = (window as any).searchHarness.richMarkdownTransforms;
+      let calls = 0;
+      // Count executions of the real transform pipeline after the editor has loaded.
+      transforms.push(() => (tree: unknown) => { calls++; return tree; });
+      try {
+        const input = document.querySelector<HTMLInputElement>('[aria-label="查找内容"]')!;
+        input.value = '文字'; input.dispatchEvent(new Event('input', { bubbles: true }));
+        const initial = calls;
+        document.querySelector<HTMLButtonElement>('[data-search-command="next"]')!.click();
+        return [initial, calls - initial];
+      } finally { transforms.pop(); }
+    });
+    expect(await count()).toBe('2 / ' + paragraphs);
+    expect(passes).toEqual([1, 1]);
   });
 
   it.each(['\n', '\r\n'])('opens the manual sample, searches without editing, and preserves bytes over modes (%j)', async eol => {

@@ -1,13 +1,8 @@
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
+import { parseMarkdownAst, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { findSourceMatches, type SearchMatch, type SearchOptions } from './search-core';
-import { sourceSegmentsForEdit } from './mode-position';
+import { createSourceSegmentLookup, type SourceSegmentLookup } from './mode-position';
 
-const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 let sequence = 0;
 
 /** Paint DOM ranges without inserting markup into the editable document. */
@@ -23,7 +18,8 @@ export class RichSearchPainter {
   paint(source: string, view: EditorView, matches: SearchMatch[], current: number, query: string, options: SearchOptions): void {
     this.clear(); if (!matches.length) return;
     const { prefix, body } = splitFrontmatter(source);
-    const nodes = parser.parse(body).children;
+    const nodes = parseMarkdownAst(body).children;
+    const segmentsAt = createSourceSegmentLookup(body, prefix.length);
     const protectedBlocks = preservedMarkdownBlocks(body);
     const blocks: { from: number; to: number }[] = [];
     for (const node of nodes) {
@@ -45,7 +41,7 @@ export class RichSearchPainter {
       const indices: number[] = [];
       while (matchIndex < matches.length && matches[matchIndex].from < block.to) indices.push(matchIndex++);
       if (!indices.length) return;
-      const visible = this.visibleRanges(dom, query, options, source, view);
+      const visible = this.visibleRanges(dom, query, options, source, view, segmentsAt);
       indices.forEach((index, ordinal) => {
         if (visible[ordinal]) this.ranges[index] = visible[ordinal];
         else { const range = document.createRange(); range.selectNodeContents(dom); this.ranges[index] = range; }
@@ -61,7 +57,7 @@ export class RichSearchPainter {
       const selected = this.ranges[current]; if (selected) CSS.highlights.set(this.currentName, new Highlight(selected));
     }
   }
-  private visibleRanges(element: HTMLElement, query: string, options: SearchOptions, source: string, view: EditorView): Range[] {
+  private visibleRanges(element: HTMLElement, query: string, options: SearchOptions, source: string, view: EditorView, segmentsAt: SourceSegmentLookup): Range[] {
     const groups = new Map<Element, (Text | HTMLBRElement)[]>();
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -81,7 +77,7 @@ export class RichSearchPainter {
         const pos = view.state.doc.resolve(view.posAtDOM(node, 0, -1));
         if (pos.nodeAfter?.type.name !== 'hardbreak') return '\n';
         if (!breaks) {
-          const segments = sourceSegmentsForEdit(source, pos) || [];
+          const segments = segmentsAt(pos) || [];
           breaks = new Map(segments.filter(s => s.kind === 'gap').map(s => [s.pmFrom, source.slice(s.rawFrom, s.rawTo)]));
         }
         return breaks.get(pos.parentOffset) ?? (pos.nodeAfter.attrs.croquillHtmlBreak || '\n');
