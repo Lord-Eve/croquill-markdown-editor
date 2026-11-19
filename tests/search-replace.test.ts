@@ -4,6 +4,7 @@ import type { ViteDevServer } from 'vite';
 import { readFileSync } from 'node:fs';
 import { createTestServer } from './server';
 import { launchTestBrowser } from './browser';
+import { defaultSearchOptions, findSourceMatches } from '../src/search-core';
 
 describe('find and replace through both production editing surfaces', () => {
   let server: ViteDevServer, browser: Browser, page: Page, baseURL: string;
@@ -43,6 +44,44 @@ describe('find and replace through both production editing surfaces', () => {
   const replacement = () => page.getByRole('textbox', { name: '替换为', exact: true });
   const count = async () => page.locator('[data-search-count]').textContent();
   const command = async (name: string) => page.locator(`[data-search-command="${name}"]`).click();
+
+  const currentRange = () => page.evaluate(() => {
+    const current = [...CSS.highlights.entries()].find(([name]) => name.endsWith('-current'));
+    const range = current && [...current[1]][0] as Range;
+    return range && [range.startContainer.textContent, range.startOffset, range.endContainer.textContent, range.endOffset];
+  });
+
+  it.each(['\n', '<br>', '  \n', '\\\n'])('does not paint a false ab across %j', async br => {
+    await load('a' + br + 'b ab\n', 'rich');
+    await page.keyboard.press('Control+f'); await query().fill('ab');
+    expect(await count()).toBe('1 / 1');
+    expect(await currentRange()).toEqual(['b ab', 2, 'b ab', 4]);
+  });
+
+  it.each(['\n', '\r\n'])('maps a multiline source match to the correct DOM lines (%j)', async eol => {
+    const source = 'a<br>b a' + eol + 'b ab' + eol;
+    await load(source, 'rich');
+    // The find box is single-line. Exercise its production matcher and painter directly.
+    const query = 'a' + eol + 'b';
+    const matches = findSourceMatches(source, query, defaultSearchOptions);
+    expect(matches).toHaveLength(1);
+    await page.evaluate(args => (window as any).searchHarness.surface.paintSearch(
+      args.source, args.matches, 0, args.query, args.options), { source, matches, query, options: defaultSearchOptions });
+    expect(await currentRange()).toEqual(['b a', 2, 'b ab', 1]);
+  });
+
+  it('scrolls to the current occurrence within a tall multiline paragraph', async () => {
+    const source = ['ab', 'a', 'b', ...Array(120).fill('中间行'), '末行 ab', ''].join('\n');
+    await load(source, 'rich'); await page.keyboard.press('Control+f'); await query().fill('ab');
+    await command('next'); expect(await count()).toBe('2 / 2');
+    expect(await currentRange()).toEqual(['末行 ab', 3, '末行 ab', 5]);
+    const visible = await page.evaluate(() => {
+      const current = [...CSS.highlights.entries()].find(([name]) => name.endsWith('-current'))!;
+      const rect = ([...current[1]][0] as Range).getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= window.innerHeight;
+    });
+    expect(visible).toBe(true);
+  });
 
   it.each(['\n', '\r\n'])('opens the manual sample, searches without editing, and preserves bytes over modes (%j)', async eol => {
     const source = readFileSync(new URL('../examples/search-replace.md', import.meta.url), 'utf8').replace(/\r?\n/g, eol);

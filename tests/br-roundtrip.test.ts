@@ -176,6 +176,28 @@ describe('bare HTML line breaks through the production editor', () => {
     expect(await page.evaluate(() => (window as any).brHarness.save())).toBe('## 标题<br />\n');
   });
 
+  it.each(['<br />', '<br>', '<BR/>', '<br><BR/>', '甲<br />'])(
+    'keeps an editable paragraph after Shift+Enter following %s', async prefix => {
+      const original = prefix + '乙\n\n尾\n';
+      await page.evaluate(async original => {
+        const h = (window as any).brHarness;
+        await h.surface.init(original); h.selectText('乙');
+      }, original);
+      await page.keyboard.press('Shift+Enter');
+      const saved = await page.evaluate(() => (window as any).brHarness.save());
+      expect(saved).toBe(prefix + (prefix.startsWith('甲') ? '\n' : '<br />') + '乙\n\n尾\n');
+      const shape = await page.evaluate(async saved => {
+        const h = (window as any).brHarness;
+        await h.surface.load(saved);
+        const first = h.surface.richView().state.doc.firstChild;
+        h.selectText('乙');
+        return [h.surface.mode, first.type.name, h.richRoot.querySelectorAll('[data-croquill-raw],[data-croquill-html]').length];
+      }, saved);
+      expect(shape).toEqual(['rich', 'paragraph', 0]);
+      await page.keyboard.insertText('新');
+      expect(await page.evaluate(() => (window as any).brHarness.save())).toBe(saved.replace('乙', '新乙'));
+    });
+
   it.each([
     { name: 'table cell', original: '| 内容 | 备注 |\n| --- | --- |\n| 甲<br/> | 待改 |\n', editable: '待改' },
     { name: 'table header', original: '| 标题<BR /> | 备注 |\n| --- | --- |\n| 甲 | 待改 |\n', editable: '待改' },

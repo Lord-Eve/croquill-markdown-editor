@@ -96,14 +96,15 @@ export function configureHtmlBreaks(ctx: Ctx): void {
         runner: (state, node) => {
           let content = node.content;
           let trailing = true;
+          // A line containing only leading break tags can open a CommonMark HTML block.
+          const firstContent = node.content.content.findIndex(child =>
+            child.type.name !== 'hardbreak' && !(child.isText && /^[ \t]+$/.test(child.text!)));
           for (let index = node.childCount - 1; index >= 0; index--) {
             const child = node.child(index);
             if (child.type.name !== 'hardbreak') { trailing = false; continue; }
-            // Keep a newline after an explicit HTML tag. Only two actual line
-            // endings in a row (or an initial newline) lose paragraph content.
             const previous = node.maybeChild(index - 1);
             const emptyLine = !previous || previous.type.name === 'hardbreak' && !previous.attrs.croquillHtmlBreak;
-            if (!trailing && !(child.attrs.isInline && emptyLine)) continue;
+            if (!trailing && !(child.attrs.isInline && (emptyLine || firstContent === -1 || index < firstContent))) continue;
             if (isBareHtmlBreak(String(child.attrs.croquillHtmlBreak || ''))) continue;
             content = content.replaceChild(index, child.type.create({ ...child.attrs, isInline: false, croquillHtmlBreak: '<br />' }, null, child.marks));
           }
