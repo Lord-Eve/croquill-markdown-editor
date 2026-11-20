@@ -127,13 +127,19 @@ describe('文件菜单导出与自动保存', () => {
 
   it.each(['rich','source'])('%s 自动保存冲突在上屏后才弹窗', async mode => {
     await openFileApp(page, baseURL, { files:{ [currentFile]:'乙' }, holdWrite:true });
-    await page.clock.install();
     await page.evaluate(async mode => {
       const h = (window as any).fileApp;
-      await h.surface.setMode(mode); h.surface.focus(); await h.action('autosave');
+      await h.surface.setMode(mode);
+      if (mode === 'rich') {
+        const view = h.surface.richView(), tr = view.state.tr.insertText('甲', 1);
+        view.dispatch(tr.setSelection(view.state.selection.constructor.create(tr.doc, 2)));
+      } else {
+        h.surface.source.dispatch({ changes:{ from:0, insert:'甲' }, selection:{ anchor:1 } });
+      }
+      h.surface.focus(); await h.action('autosave');
     }, mode);
-    await page.keyboard.press('Control+Home'); await page.keyboard.insertText('甲');
-    await page.clock.runFor(1000);
+    await page.waitForFunction(() => typeof (window as any).fileApp.rejectWrite === 'function');
+    expect(await page.evaluate(() => (window as any).fileApp.writes[0].text.trimEnd())).toBe('甲乙');
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Input.imeSetComposition', { text:'nihao', selectionStart:5, selectionEnd:5 });
     await page.evaluate(() => {
@@ -151,7 +157,6 @@ describe('文件菜单导出与自动保存', () => {
     await page.waitForSelector('dialog[open]');
     expect(await page.locator('dialog').textContent()).toContain('自动保存已暂停');
     await page.getByRole('button', { name:'返回文档' }).click();
-    await page.clock.runFor(5000);
     const after = await page.evaluate(() => {
       const h = (window as any).fileApp;
       return [h.surface.getMarkdown().trimEnd(), h.session.dirty, h.writes.length, h.files[h.initial]];

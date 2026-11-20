@@ -65,6 +65,17 @@ it('版本冲突暂停本文档，失败的切换退回询问，重新打开后�
   f.edit('乙'); await vi.advanceTimersByTimeAsync(6000); expect(f.write).toHaveBeenCalledTimes(1);
   f.auto.resetDocument(); f.edit('丙'); await vi.advanceTimersByTimeAsync(1000); expect(f.session.savedText).toBe('丙');
 });
+it('冲突会取消写入期间排队的定时保存', async () => {
+  const f = await setup(); f.auto.setEnabled(true);
+  let conflict!: (error: Error) => void;
+  f.write.mockImplementationOnce(() => new Promise((_resolve, reject) => { conflict = reject; }));
+  f.edit('甲乙'); await vi.advanceTimersByTimeAsync(1000);
+  f.composing(true); f.edit('甲nihao乙');
+  conflict(new Error('原文件已被其他程序修改或移走')); await f.auto.settle();
+  f.edit('甲你好乙'); f.composing(false); await vi.advanceTimersByTimeAsync(5000);
+  expect(f.write).toHaveBeenCalledTimes(1); expect(f.session.savedText).toBe('原文');
+  expect(f.session.text).toBe('甲你好乙'); expect(f.session.dirty).toBe(true);
+});
 it('只读错误只提示一次，下一次修改重试；成功切换及关窗直接保存', async () => {
   const f = await setup(); f.auto.setEnabled(true); f.write.mockRejectedValue('只读');
   f.edit('甲'); await vi.advanceTimersByTimeAsync(5000); expect(f.write).toHaveBeenCalledTimes(1);
