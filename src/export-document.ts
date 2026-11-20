@@ -9,6 +9,8 @@ import { splitFrontmatter } from './fidelity';
 import { headingAttributes, INLINE_OBJECT, inlineSyntaxSpans, type InlineSpan } from './inline-source';
 import { inlineHtmlStyle, sanitizeHtmlFragment } from './html-sanitize';
 import { parseMarkdownAst } from './markdown-ast';
+import type { Nodes } from 'mdast';
+import { isHtmlComment } from './html-comments';
 import theme from './markdown-theme.css?raw';
 import alerts from './alerts.css?raw';
 import styles from './export.css?raw';
@@ -20,6 +22,7 @@ export function exportName(path: string, format: ExportFormat) {
 
 interface Block {
   type: string; value?: string; children?: Block[]; depth?: number; kind?: string;
+  position?: { start: { offset?: number } };
   lang?: string; alertType?: AlertType; url?: string; title?: string; alt?: string;
   checked?: boolean; ordered?: boolean; start?: number; align?: (string | null)[];
   identifier?: string; label?: string; data?: Record<string, unknown>;
@@ -45,15 +48,36 @@ export async function exportDocument(markdown: string, name: string, activeTheme
   const { body } = splitFrontmatter(markdown);
   const tree: Block = parsePositionedRichMarkdown(body) as Block;
   const destinations = new Map<string, { url: string; title?: string | null }>();
-  const notes = new Map<string, { id: string; refs: string[]; target?: HTMLElement }>();
-  for (const node of parseMarkdownAst(body).children) {
-    if (node.type === 'definition') destinations.set(node.identifier, node);
+  const notes = new Map<string, { refs: HTMLElement[]; target?: HTMLElement }>();
+  const comments: { from: number; to: number }[] = [];
+  function indexSource(node: Nodes) {
+    if (node.type === 'definition' && !destinations.has(node.identifier)) destinations.set(node.identifier, node);
+    if (node.type === 'html' && isHtmlComment(node.value)) {
+      const from = node.position?.start.offset, to = node.position?.end.offset;
+      if (from !== undefined && to !== undefined) comments.push({ from, to });
+    }
+    if ('children' in node) node.children.forEach(indexSource);
+  }
+  indexSource(parseMarkdownAst(body));
+  // Protected fragments retain their original spelling, including code examples.
+  // Remove only the ranges the Markdown parser identified as actual comments.
+  function rawText(node: Block, value: string) {
+    const from = node.position?.start.offset;
+    if (from === undefined || !value.includes('<!--')) return value;
+    let text = '', cursor = from;
+    for (const comment of comments) {
+      if (comment.from >= from + value.length) break;
+      if (comment.from < from || comment.to > from + value.length) continue;
+      text += value.slice(cursor - from, comment.from - from);
+      cursor = comment.to;
+    }
+    return text + value.slice(cursor - from);
   }
   const headings: HTMLElement[] = [], tocs: HTMLElement[] = [], pending: Promise<void>[] = [];
-  let headingCount = 0;
+  const preferredIds = new Map<HTMLElement, string>();
   function note(label: string) {
     const key = label.toLowerCase();
-    if (!notes.has(key)) notes.set(key, { id: 'fn-' + (notes.size + 1), refs: [] });
+    if (!notes.has(key)) notes.set(key, { refs: [] });
     return notes.get(key)!;
   }
   function link(href: string, label?: string) {
@@ -105,7 +129,11 @@ export async function exportDocument(markdown: string, name: string, activeTheme
       openings.get(span.from)!.push(span); closings.get(span.to)!.push(span);
       hide(span.from, span.innerFrom); hide(span.innerTo, span.to);
     }
-    for (const range of attributes) hide(range.from, range.to);
+    for (const range of attributes) {
+      hide(range.from, range.to);
+      const id = /#([^\s}]+)/u.exec(run.slice(range.from, range.to))?.[1];
+      if (id && !preferredIds.has(parent)) preferredIds.set(parent, id);
+    }
     for (const offset of objects.keys()) { points.add(offset); points.add(offset + 1); }
     const offsets = [...points].sort((a, b) => a - b);
     const active = new Set<InlineSpan>();
@@ -145,7 +173,7 @@ export async function exportDocument(markdown: string, name: string, activeTheme
       case 'heading': case 'paragraph': case 'tableCell': {
         const el = element(node.type === 'heading' ? 'h' + node.depth : node.type === 'tableCell' ? 'td' : 'p');
         phrasing(el, node);
-        if (node.type === 'heading') { el.id = 'heading-' + ++headingCount; if (top) headings.push(el); }
+        if (top && node.type === 'heading') headings.push(el);
         return el;
       }
       case 'croquillToc': { const el = element('nav'); tocs.push(el); return el; }
@@ -204,18 +232,18 @@ export async function exportDocument(markdown: string, name: string, activeTheme
       }
       case 'footnoteReference': {
         const label = node.label || node.identifier!, entry = note(node.identifier || label);
-        const sup = element('sup'); sup.id = entry.id + '-ref-' + (entry.refs.length + 1);
-        entry.refs.push(sup.id); sup.append(link('#' + entry.id, label)); return sup;
+        const sup = element('sup', label);
+        entry.refs.push(sup); return sup;
       }
       case 'footnoteDefinition': {
-        const entry = note(node.identifier!), el = children('aside'); el.className = 'footnote'; el.id = entry.id;
+        const entry = note(node.identifier!), el = children('aside'); el.className = 'footnote';
         el.prepend(element('strong', node.label || node.identifier)); entry.target = el; return el;
       }
       case 'croquillRawBlock': case 'html': {
         if (node.kind === 'html' || node.type === 'html') return sanitizeHtmlFragment(value, { exportDocument: doc });
-        const el = element('pre', value.trimEnd());
+        const el = element('pre', rawText(node, value).trimEnd());
         const definition = /^\[\^([^\]]+)\]:/.exec(value);
-        if (definition) { const entry = note(definition[1]); el.id = entry.id; entry.target = el; }
+        if (definition) note(definition[1]).target = el;
         return el;
       }
       case 'image': case 'imageReference': {
@@ -227,25 +255,45 @@ export async function exportDocument(markdown: string, name: string, activeTheme
       }
       case 'link': case 'linkReference': {
         const el = link(node.url ?? destinations.get(node.identifier!)?.url ?? '');
-        for (const child of kids) el.append(render(child));
+        phrasing(el, node);
         return el;
       }
-      case 'croquillHtmlComment': case 'croquillInlineRaw': {
-        const el = element(node.type === 'croquillHtmlComment' ? 'pre' : 'span', value); el.className = 'comment'; return el;
+      case 'croquillHtmlComment': return doc.createTextNode('');
+      case 'croquillInlineRaw': {
+        if (isHtmlComment(value)) return doc.createTextNode('');
+        const el = element('span', rawText(node, value)); el.className = 'comment'; return el;
       }
       default: return doc.createTextNode(value);
     }
   }
   for (const child of tree.children ?? []) main.append(render(child, true));
-  for (const h of main.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
-    if (!h.id) h.id = 'heading-' + ++headingCount;
+  const usedIds = new Set(Array.from(doc.querySelectorAll('[id]'), el => el.id));
+  const nextSuffix = new Map<string, number>();
+  function uniqueId(base: string) {
+    let id = base, suffix = nextSuffix.get(base) ?? 1;
+    while (usedIds.has(id)) id = base + '-' + suffix++;
+    usedIds.add(id); nextSuffix.set(base, suffix);
+    return id;
+  }
+  for (const entry of notes.values()) if (!entry.target) {
+    for (const sup of entry.refs) sup.replaceWith('[^' + sup.textContent + ']');
+  }
+  for (const h of main.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')) {
+    if (!h.id) h.id = uniqueId(preferredIds.get(h) || h.textContent?.trim() || 'heading');
   }
   for (const toc of tocs) for (const h of headings) {
     const a = link('#' + h.id, h.textContent || '（空标题）'); a.style.setProperty('--level', h.tagName.slice(1)); toc.append(a);
   }
-  for (const entry of notes.values()) for (const id of entry.refs) {
-    if (entry.target) entry.target.append(' ', link('#' + id, '↩'));
-    else { const sup = doc.getElementById(id)!; sup.replaceWith('[^' + sup.textContent + ']'); }
+  let noteNumber = 0;
+  for (const entry of notes.values()) {
+    if (!entry.target) continue;
+    const id = uniqueId('fn-' + ++noteNumber);
+    entry.target.id = id;
+    for (const [index, sup] of entry.refs.entries()) {
+      sup.id = uniqueId(id + '-ref-' + (index + 1));
+      sup.replaceChildren(link('#' + id, sup.textContent ?? ''));
+      entry.target.append(' ', link('#' + sup.id, '↩'));
+    }
   }
   if (format === 'pdf') {
     const cache = new Map<string, Promise<string>>();

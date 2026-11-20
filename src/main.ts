@@ -83,12 +83,16 @@ function toast(message: string, reveal?: string) {
   }
   clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').hidden = true, reveal ? 8000 : 3200);
 }
-async function modal(title:string, body:string, choices:{label:string,value:string,primary?:boolean}[]): Promise<string> {
+async function modal(title:string, body:string, choices:{label:string,value:string,primary?:boolean}[], waitForIme = false): Promise<string> {
   const root = $('modal-root');
   // An export can finish while another native operation or autosave is reporting an error.
-  while (root.querySelector('dialog[open]')) {
-    const current = root.querySelector('dialog[open]')!;
-    await new Promise<void>(resolve => current.addEventListener('close', () => resolve(), { once:true }));
+  for (;;) {
+    const current = root.querySelector('dialog[open]');
+    if (current) await new Promise<void>(resolve => current.addEventListener('close', () => resolve(), { once:true }));
+    // Recheck just before taking focus. Native EditContext and contenteditable
+    // deliver their composition events to different targets.
+    else if (waitForIme && surface.hasFocusedComposition()) await new Promise(requestAnimationFrame);
+    else break;
   }
   const previousFocus = document.activeElement as HTMLElement | null;
   const dialog = document.createElement('dialog'); dialog.className = 'app-dialog';
@@ -160,7 +164,7 @@ const autosave = new Autosave({
   session, storage: localStorage, snapshot: () => surface.getMarkdown(),
   composing: () => surface.hasFocusedComposition(), blocked: () => busy,
   updated: updateTitle, report: async (message, conflict) => {
-    if (conflict) await modal('自动保存已暂停', message, [{ label:'返回文档', value:'ok', primary:true }]);
+    if (conflict) await modal('自动保存已暂停', message, [{ label:'返回文档', value:'ok', primary:true }], true);
     else toast(message);
   },
 });

@@ -86,6 +86,79 @@ describe('文件菜单导出与自动保存', () => {
     expect(result.css).toContain('A4 portrait'); expect(result.css).toContain('break-inside:avoid'); expect(result.css).toContain('table-layout:fixed');
   });
 
+  it.each(['html','pdf'])('%s 渲染嵌套定义的引用、可见标题锚点与脚注，省略作者注释', async format => {
+    const body = [
+      '# 河岸散步', '[TOC]', '## 桥头 {.wide #bridge}', '## **重名**', '## `重名`', '## 重名',
+      '## `{#literal}`', '## fn-1', '[去河岸](#河岸散步) [去桥头](#bridge) 注[^a]',
+      '见 [**加粗** &amp; \\*][id]、[**普通链接** &amp; \\*](#bridge) 和 ![示意图][pic]。',
+      '> [pic]: images/a.png', '- [id]: https://example.com', '[id]: https://later.example',
+      '<!-- 作者备注 -->', '前<!-- 行内小注 -->后', '`<!-- 代码字面量 -->`',
+      '保护段落 [[笔记]] <!-- 保护段备注 -->未闭合 <kbd> 字面标签。',
+      '保留 <span data-x="literal">原样<!-- 片段备注 --></span>。', '[^a]: 说明',
+    ].join('\n\n');
+    await openFileApp(page, baseURL, { files:{ [currentFile]:body }, saveSelected:'D:/导出/当前.' + format });
+    const result = await page.evaluate(async format => {
+      const h = (window as any).fileApp;
+      await h.action('export-' + format);
+      const html = format === 'html' ? h.writes.at(-1).text : h.calls.find((c:any) => c.cmd === 'export_pdf').args.html;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const links = Array.from(doc.querySelectorAll<HTMLAnchorElement>('p a'));
+      const footnote = doc.querySelector('.footnote')!, sup = doc.querySelector('sup')!;
+      return {
+        titles:[...doc.querySelectorAll('h1,h2')].map(e => e.id),
+        toc:[...doc.querySelectorAll('nav a')].map(e => e.getAttribute('href')),
+        destinations:links.filter(e => e.textContent?.startsWith('去')).map(e => doc.getElementById(e.hash.slice(1))?.textContent ??
+          doc.getElementById(decodeURIComponent(e.hash.slice(1)))?.textContent),
+        formatted:links.filter(e => e.querySelector('strong')).map(e => [e.getAttribute('href'),e.textContent,e.querySelector('strong')?.textContent]),
+        src:doc.querySelector('img')?.getAttribute('src'), remarks:/作者备注|行内小注|保护段备注|片段备注/.test(html), text:doc.body.textContent,
+        footnote:footnote.id, forward:sup.querySelector('a')?.getAttribute('href') === '#' + footnote.id,
+        back:footnote.querySelector('a')?.getAttribute('href') === '#' + sup.id,
+      };
+    }, format);
+    const ids = ['河岸散步','bridge','重名','重名-1','重名-2','{#literal}','fn-1'];
+    expect(result.titles).toEqual(ids); expect(result.toc).toEqual(ids.map(id => '#' + id));
+    expect(result.destinations).toEqual(['河岸散步','桥头']);
+    expect(result.formatted).toEqual([['https://example.com','加粗 & *','加粗'],['#bridge','普通链接 & *','普通链接']]);
+    if (format === 'html') expect(result.src).toBe('images/a.png');
+    else expect(result.src).toMatch(/^data:image\//);
+    expect(result.remarks).toBe(false); expect(result.text).toContain('前后'); expect(result.text).toContain('<!-- 代码字面量 -->');
+    expect(result.footnote).not.toBe('fn-1'); expect(result.forward && result.back).toBe(true);
+  });
+
+  it.each(['rich','source'])('%s 自动保存冲突在上屏后才弹窗', async mode => {
+    await openFileApp(page, baseURL, { files:{ [currentFile]:'乙' }, holdWrite:true });
+    await page.clock.install();
+    await page.evaluate(async mode => {
+      const h = (window as any).fileApp;
+      await h.surface.setMode(mode); h.surface.focus(); await h.action('autosave');
+    }, mode);
+    await page.keyboard.press('Control+Home'); await page.keyboard.insertText('甲');
+    await page.clock.runFor(1000);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text:'nihao', selectionStart:5, selectionEnd:5 });
+    await page.evaluate(() => {
+      const h = (window as any).fileApp;
+      h.composingEditor = document.activeElement;
+      h.rejectWrite('原文件已被其他程序修改或移走');
+    });
+    const during = await page.evaluate(() => {
+      const h = (window as any).fileApp, editor = h.composingEditor;
+      return { composing:h.surface.hasFocusedComposition(), dialog:!!document.querySelector('dialog[open]'),
+        focus:editor === document.activeElement && document.querySelector('#editor-scroll')!.contains(editor) };
+    });
+    expect(during).toEqual({ composing:true, dialog:false, focus:true });
+    await cdp.send('Input.insertText', { text:'你好' });
+    await page.waitForSelector('dialog[open]');
+    expect(await page.locator('dialog').textContent()).toContain('自动保存已暂停');
+    await page.getByRole('button', { name:'返回文档' }).click();
+    await page.clock.runFor(5000);
+    const after = await page.evaluate(() => {
+      const h = (window as any).fileApp;
+      return [h.surface.getMarkdown().trimEnd(), h.session.dirty, h.writes.length, h.files[h.initial]];
+    });
+    expect(after).toEqual(['甲你好乙',true,1,'乙']);
+  });
+
   it('自动保存等待写盘时正文可继续输入，焦点、选区和滚动位置保持', async () => {
     await openFileApp(page, baseURL, { holdWrite:true });
     await page.clock.install(); await page.evaluate(async () => {

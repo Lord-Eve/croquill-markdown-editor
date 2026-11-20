@@ -75,6 +75,7 @@ export class Autosave {
     }).catch(async error => {
       const message = String(error);
       this.paused = message.includes('原文件已被其他程序修改或移走');
+      if (this.paused) this.cancelTimer();
       if (message !== this.lastError) {
         this.lastError = message;
         await this.options.report(message, this.paused);

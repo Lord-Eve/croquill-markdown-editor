@@ -33,7 +33,7 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
         }
         if(cmd==='write_document'){
           if(h.writeError)throw h.writeError;
-          h.writes.push(args);if(h.holdWrite)await new Promise(resolve=>h.releaseWrite=resolve);
+          h.writes.push(args);if(h.holdWrite)await new Promise((resolve,reject)=>{h.releaseWrite=resolve;h.rejectWrite=reject;});
           h.files[args.path]=args.text;return {revision:'saved-revision'};
         }
         if(cmd==='read_local_image'){
