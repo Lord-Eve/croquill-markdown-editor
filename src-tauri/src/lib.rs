@@ -1,7 +1,22 @@
 mod documents;
+#[cfg(windows)]
+mod pdf;
 mod folders;
 #[cfg(windows)]
 mod file_drop_bridge;
+
+#[tauri::command]
+async fn export_pdf(app: tauri::AppHandle, path: String, html: String) -> Result<(), String> {
+    #[cfg(windows)]
+    { tauri::async_runtime::spawn_blocking(move || pdf::render(app, path, html)).await.map_err(|e| e.to_string())? }
+    #[cfg(not(windows))]
+    { let _ = (app, path, html); Err("当前平台不支持 WebView2 PDF 导出。".into()) }
+}
+
+#[tauri::command]
+fn reveal_export(path: String) -> Result<(), String> {
+    std::process::Command::new("explorer.exe").arg("/select,").arg(path).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn document_exists(path: String) -> Result<bool, String> {
@@ -150,7 +165,7 @@ pub fn run() {
             #[cfg(not(windows))] let _ = app;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path, document_exists, rebase_image_paths, open_external_link])
+        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path, document_exists, rebase_image_paths, open_external_link, export_pdf, reveal_export])
         .run(tauri::generate_context!())
         .expect("Croquill 桌面窗口启动失败");
 }

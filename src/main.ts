@@ -5,6 +5,8 @@ import { createIcons, PanelLeft, Code2 } from 'lucide';
 import { MarkdownSurface } from './editor';
 import { ImageImporter, type ImageSource } from './images';
 import { DocumentSession, type DocumentFile } from './session';
+import { Autosave } from './autosave';
+import type { ExportFormat } from './export-document';
 import { protectFileDrops } from './file-drop';
 import { FileSidebar, type FolderListing } from './sidebar';
 import { OutlineController } from './outline-tree';
@@ -25,6 +27,8 @@ app.innerHTML = `
     <details><summary data-menu-key="f">文件(F)</summary><div class="menu">
       <button data-action="new">新建<span>Ctrl+N</span></button><button data-action="open">打开…<span>Ctrl+O</span></button><button data-action="folder">打开文件夹…<span>Ctrl+Shift+O</span></button><hr>
       <button data-action="save">保存<span>Ctrl+S</span></button><button data-action="saveAs">另存为…<span>Ctrl+Shift+S</span></button>
+      <button data-action="autosave" role="menuitemcheckbox">自动保存</button>
+      <hr><button data-action="export-html">导出为 HTML…</button><button data-action="export-pdf">导出为 PDF…</button>
       <hr><div class="menu-label">最近打开</div><div id="recent-files"></div>
     </div></details>
     <details><summary data-menu-key="e">编辑(E)</summary><div class="menu"><button data-format="undo">撤销<span>Ctrl+Z</span></button><button data-format="redo">重做<span>Ctrl+Y</span></button><hr><button data-action="find">查找…<span>Ctrl+F</span></button><button data-action="replace">替换…<span>Ctrl+H</span></button></div></details>
@@ -70,12 +74,26 @@ document.documentElement.style.setProperty('--editor-font-size', `${fontSize}px`
 document.documentElement.dataset.theme = localStorage.getItem('croquill-theme') || 'light';
 const imageCache = new Map<string, Promise<string>>();
 
-function toast(message: string) {
+function toast(message: string, reveal?: string) {
   $('toast').textContent = message; $('toast').hidden = false;
-  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').hidden = true, 3200);
+  if (reveal) {
+    const button = document.createElement('button'); button.textContent = '在资源管理器中显示';
+    button.onclick = () => { void invoke('reveal_export', { path: reveal }).catch(error => toast(String(error))); };
+    $('toast').append(' ', button);
+  }
+  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => $('toast').hidden = true, reveal ? 8000 : 3200);
 }
-function modal(title:string, body:string, choices:{label:string,value:string,primary?:boolean}[]): Promise<string> {
+async function modal(title:string, body:string, choices:{label:string,value:string,primary?:boolean}[], waitForIme = false): Promise<string> {
   const root = $('modal-root');
+  // An export can finish while another native operation or autosave is reporting an error.
+  for (;;) {
+    const current = root.querySelector('dialog[open]');
+    if (current) await new Promise<void>(resolve => current.addEventListener('close', () => resolve(), { once:true }));
+    // Recheck just before taking focus. Native EditContext and contenteditable
+    // deliver their composition events to different targets.
+    else if (waitForIme && surface.hasFocusedComposition()) await new Promise(requestAnimationFrame);
+    else break;
+  }
   const previousFocus = document.activeElement as HTMLElement | null;
   const dialog = document.createElement('dialog'); dialog.className = 'app-dialog';
   const h = document.createElement('h2'); h.textContent = title;
@@ -101,12 +119,13 @@ const session = new DocumentSession({
     }
   },
   write: (path,text,bom,newline,expectedRevision) => invoke('write_document',{path,text,bom,newline,expectedRevision:expectedRevision ?? null}),
+  saveBeforeLeave: (): Promise<boolean> => autosave.beforeLeave(),
   confirmSave: name => modal('保存更改？',`“${name}”有尚未保存的修改。`,[{label:'不保存',value:'discard'},{label:'取消',value:'cancel'},{label:'保存',value:'save',primary:true}]) as Promise<'save'|'discard'|'cancel'>,
   prepareSaveAs: (from, to, text) => rebaseImageSources(text, sources => invoke<(string | null)[]>('rebase_image_paths',{fromPath:from,toPath:to,sources})),
 }, {
-  opened: file => { savedAt = null; recentDocuments.opened(file.path); renderRecentFiles(); },
+  opened: file => { autosave.resetDocument(); savedAt = null; recentDocuments.opened(file.path); renderRecentFiles(); },
   saved: path => { savedAt = { path, time: new Date().toLocaleTimeString('zh-CN', { hour12: false }) }; recentDocuments.opened(path); renderRecentFiles(); },
-  fresh: () => { savedAt = null; recentDocuments.fresh(); },
+  fresh: () => { autosave.resetDocument(); savedAt = null; recentDocuments.fresh(); },
 });
 const imageImporter = new ImageImporter({
   documentPath: () => session.path,
@@ -117,7 +136,7 @@ const imageImporter = new ImageImporter({
 const surface = new MarkdownSurface({
   richRoot:$('rich-root'), sourceRoot:$('source-root'), scrollContainer:$('editor-scroll'),
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
-  onEdit: () => outlineController.notifyDocumentEdited(),
+  onEdit: () => { outlineController.notifyDocumentEdited(); autosave.changed(); },
   onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },
   onWarning: toast,
   onLinkHint: toast,
@@ -140,6 +159,18 @@ const surface = new MarkdownSurface({
     return imageCache.get(key)!;
   },
 });
+
+const autosave = new Autosave({
+  session, storage: localStorage, snapshot: () => surface.getMarkdown(),
+  composing: () => surface.hasFocusedComposition(), blocked: () => busy,
+  updated: updateTitle, report: async (message, conflict) => {
+    if (conflict) await modal('自动保存已暂停', message, [{ label:'返回文档', value:'ok', primary:true }], true);
+    else toast(message);
+  },
+});
+const autosaveButton = document.querySelector<HTMLElement>('[data-action="autosave"]')!;
+autosaveButton.setAttribute('aria-checked', String(autosave.enabled));
+$('editor-scroll').addEventListener('compositionend', () => autosave.resume());
 
 // Browsing a folder never reads Markdown bodies until a file is opened.
 const fileSidebar = new FileSidebar({
@@ -264,10 +295,11 @@ async function run(operation:()=>Promise<void>) {
   session.edit(surface.getMarkdown());
   const restoreFocus = surface.deferFocus();
   busy=true; $('editor-scroll').inert=true;
-  try { await operation(); }
+  try { await autosave.settle(); await operation(); }
   catch(error){await modal('操作未完成',String(error),[{label:'返回文档',value:'cancel',primary:true}]);}
   finally {
     busy=false;$('editor-scroll').inert=false;updateTitle();updateStats();
+    autosave.resume();
     restoreFocus();
     const requested = queuedSave; queuedSave = null;
     if (requested) queueMicrotask(() => { void action(requested); });
@@ -287,6 +319,7 @@ async function saveCurrentDocument(as = false): Promise<boolean> {
   const previous = session.path, before = session.text;
   $('save-status').textContent = '正在保存…';
   if (!await session.save(as)) return false;
+  if (as) autosave.resetDocument();
   if (!sameDocumentPath(previous, session.path)) {
     imageCache.clear();
     if (session.text !== before || !previous && imageDestinations(before).length) await surface.load(session.text);
@@ -305,6 +338,12 @@ async function insertImages(sources: ImageSource[]) {
 }
 async function action(name:string, path?:string) {
   document.querySelectorAll('.menubar details[open]').forEach(e=>e.removeAttribute('open'));
+  if (name === 'autosave') {
+    autosave.setEnabled(!autosave.enabled); autosaveButton.setAttribute('aria-checked', String(autosave.enabled)); return;
+  }
+  if (name === 'export-html' || name === 'export-pdf') {
+    await exportCurrent(name === 'export-html' ? 'html' : 'pdf'); return;
+  }
   if (name === 'focus-mode' || name === 'typewriter') {
     const enabled = localStorage.getItem('croquill-' + name) !== 'true';
     localStorage.setItem('croquill-' + name, String(enabled));
@@ -331,8 +370,34 @@ async function action(name:string, path?:string) {
     if(name==='open'||name==='recent'){if(!desktop){toast('请在桌面程序中打开本地文件');return;}if(name==='recent'&&path)await requireRecentFile(path);if(name==='open'||path)await openDocument(path);}
     if(name==='save'||name==='saveAs'){if(!desktop){toast('请在桌面程序中保存本地文件');return;}if(await saveCurrentDocument(name==='saveAs'))toast('已保存到本地');}
     if(name==='mode'){outlineController.clearPin();await surface.setMode(surface.mode==='rich'?'source':'rich');outlineController.scheduleSync(true);}
-    if(name==='help')await modal('在 Croquill 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\n左侧文件标签可打开文件夹，单击文件切换；分隔边可拖动调宽，底部按钮收起侧栏。\n\nCtrl+Shift+O 打开文件夹\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nCtrl+1～6 标题　Ctrl+0 正文　Ctrl+= / Ctrl+- 升降标题级别\n标题行首按退格变回正文\nTab / Shift+Tab 调整列表层级\n\n文件保存在本地，采用手动保存。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
+    if(name==='help')await modal('在 Croquill 中写作','直接输入 Markdown：标题、列表、引用和加粗会自然排版。点击正文继续修改。\n\n左侧文件标签可打开文件夹，单击文件切换；分隔边可拖动调宽，底部按钮收起侧栏。\n\nCtrl+Shift+O 打开文件夹\nCtrl+N 新建　Ctrl+O 打开　Ctrl+S 保存\nCtrl+Shift+S 另存为　Ctrl+/ 切换源码\nCtrl+B 加粗　Ctrl+I 斜体　Ctrl+K 链接\nCtrl+1～6 标题　Ctrl+0 正文　Ctrl+= / Ctrl+- 升降标题级别\n标题行首按退格变回正文\nTab / Shift+Tab 调整列表层级\n\n文件菜单可以导出 HTML 和 PDF。自动保存默认关闭，开启后会在停手约一秒时保存已有路径的文档。源码保护提示表示当前语法需在源码模式编辑；编辑后的 Markdown 可能被规范化。', [{label:'开始写作',value:'ok',primary:true}]);
   });
+}
+let exporting = false;
+async function exportCurrent(format: ExportFormat) {
+  if (exporting) { toast('正在导出'); return; }
+  if (busy || surface.hasFocusedComposition() || $('modal-root').childElementCount) return;
+  if (!desktop) { toast('请在桌面程序中导出文件'); return; }
+  exporting = true;
+  try {
+    const markdown = surface.getMarkdown(), sourcePath = session.path, name = session.name;
+    const theme = document.documentElement.dataset.theme ?? 'light';
+    const { exportName, exportDocument } = await import('./export-document');
+    const path = await save({ title: '导出为 ' + format.toUpperCase(), defaultPath: exportName(sourcePath ?? name, format),
+      filters: [{ name: format.toUpperCase(), extensions: [format] }] });
+    if (!path) return;
+    if (sameDocumentPath(path, sourcePath) || sameDocumentPath(path, session.path) || !path.toLowerCase().endsWith('.' + format))
+      throw Error('请选择单独的 .' + format + ' 导出文件。');
+    const html = await exportDocument(markdown, name.replace(/\.[^.]+$/, ''), theme, format, src => {
+      if (!sourcePath) throw Error('请先保存文档，以便读取本地图片。');
+      return invoke<string>('read_local_image', { documentPath: sourcePath, src });
+    });
+    if (format === 'pdf') await invoke('export_pdf', { path, html });
+    else await invoke('write_document', { path, text: html, bom: false, newline: 'lf', expectedRevision: null });
+    toast('已导出：' + path.split(/[\\/]/).pop(), path);
+  } catch (error) {
+    await modal('导出未完成', String(error), [{ label:'返回文档', value:'cancel', primary:true }], true);
+  } finally { exporting = false; }
 }
 function executeCommand(command: MenuCommand) {
   document.querySelectorAll('.menubar details[open]').forEach(node => node.removeAttribute('open'));

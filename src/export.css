@@ -1,0 +1,36 @@
+* { box-sizing:border-box; }
+body { margin: 0; background:var(--bg); color:var(--fg); }
+#write { padding:30px; max-width:var(--editor-width); margin:auto; font:16px/1.6 'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif; overflow-wrap:anywhere; }
+p, blockquote, ul, ol { margin:.8em 0; }
+p, td, th { white-space:pre-line; }
+h1,h2,h3,h4,h5,h6 { margin:1rem 0; line-height:1.4; }
+h1,h2 { border-bottom:1px solid var(--border); padding-bottom:.3em; }
+h1 { font-size:2.25em; line-height:1.2; } h2 { font-size:1.75em; line-height:1.225; } h3 { font-size:1.5em; } h4 { font-size:1.25em; } h5,h6 { font-size:1em; }
+a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+blockquote { color:var(--quote); border-left:4px solid var(--border); padding:0 15px; margin-left:0; }
+li p { margin:.25em 0; } li ul,li ol { margin:.2em 0; }
+li.task { list-style:none; } li.task > input { margin-left:-1.5em; }
+img { max-width:100%; height:auto; }
+table { border-collapse:collapse; width:100%; line-height:var(--table-line-height); }
+td,th { border:1px solid var(--table-border); padding:var(--table-cell-padding); }
+th,tr:nth-child(even) { background:var(--table-stripe); }
+code,kbd,pre { font-family:'Cascadia Code',Consolas,monospace; }
+code,kbd { font-size:.88em; padding:.14em .35em; background:var(--code); border:1px solid var(--border); border-radius:3px; white-space:pre-wrap; }
+pre { padding:var(--code-block-padding); background:var(--code-block-bg); border:var(--code-block-border-width) solid var(--code-block-border); font-size:var(--code-block-font-size); white-space:pre-wrap; }
+pre code { padding:0; border:0; background:transparent; font-size:inherit; }
+mark { background:#fff3a3; color:inherit; } [data-theme='dark'] mark { background:#756013; color:#fff2bb; }
+hr { height:2px; border:0; background:var(--rule-color); margin:var(--rule-margin) 0; }
+nav a { display:block; padding-inline-start:calc((var(--level) - 1) * 1.2em); }
+.footnote { border-top:1px solid var(--border); padding-top:.5em; }
+.comment { color:var(--muted); }
+math { font-family:math,'Cambria Math',serif; } math[display='block'] { margin:1em 0; }
+@page { size:A4 portrait; margin:20mm; }
+@media print {
+  #write { max-width:none; padding:0; }
+  * { print-color-adjust:exact; }
+  h1,h2,h3,h4,h5,h6 { break-after:avoid; }
+  img,tr { break-inside:avoid; } img { max-height:250mm; object-fit:contain; }
+  table { table-layout:fixed; } td,th { min-width:0; overflow-wrap:anywhere; }
+  pre,code { white-space:pre-wrap; overflow-wrap:anywhere; }
+  p { orphans:2; widows:2; }
+}
