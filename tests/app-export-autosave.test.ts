@@ -125,6 +125,56 @@ describe('文件菜单导出与自动保存', () => {
     expect(result.footnote).not.toBe('fn-1'); expect(result.forward && result.back).toBe(true);
   });
 
+  it.each(['html','pdf'])('%s 的文内链接能跳到 HTML 块，同名标题和目录保留独立目标', async format => {
+    const body = [
+      '[TOC]', '## 同名标题 {#details}', '[查看详情](#details) 和 [中文](#%E6%B2%B3)',
+      '<div id="details">详情</div>', '<div id="河"><a href="#details">回到详情</a></div>',
+      '<div id="user-content-details">另一个目标</div>', '[另一个](#user-content-details)',
+    ].join('\n\n');
+    await openFileApp(page, baseURL, { files:{ [currentFile]:body }, saveSelected:'D:/导出/当前.' + format });
+    const result = await page.evaluate(async format => {
+      const h = (window as any).fileApp;
+      await h.action('export-' + format);
+      const html = format === 'html' ? h.writes.at(-1).text : h.calls.find((c:any) => c.cmd === 'export_pdf').args.html;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const ids = [...doc.querySelectorAll('[id]')].map(el => el.id);
+      const links = [...doc.querySelectorAll('a')].map(a => {
+        const target = doc.getElementById(decodeURIComponent(a.getAttribute('href')!.slice(1)));
+        return [a.textContent, target?.textContent];
+      });
+      return { heading:doc.querySelector('h2')!.id, unique:ids.length === new Set(ids).size, links };
+    }, format);
+    expect(result).toEqual({ heading:'details-1', unique:true, links:[
+      ['同名标题','同名标题'], ['查看详情','详情'], ['中文','回到详情'], ['回到详情','详情'], ['另一个','另一个目标'],
+    ] });
+  });
+
+  it('导出挂起后开始组词，写入失败的弹窗等上屏再出现', async () => {
+    await openFileApp(page, baseURL, { files:{ [currentFile]:'乙' }, saveSelected:'D:/导出/当前.html', holdWrite:true });
+    await page.evaluate(() => { void (window as any).fileApp.action('export-html'); });
+    await page.waitForFunction(() => typeof (window as any).fileApp.rejectWrite === 'function');
+    await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView();
+      view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, 1)));
+      view.focus();
+    });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text:'nihao', selectionStart:5, selectionEnd:5 });
+    const during = await page.evaluate(async () => {
+      const h = (window as any).fileApp, editor = document.activeElement;
+      h.rejectWrite('导出文件写入失败');
+      await new Promise(requestAnimationFrame);
+      return [h.surface.hasFocusedComposition(), document.activeElement === editor, !!document.querySelector('dialog[open]')];
+    });
+    expect(during).toEqual([true, true, false]);
+    await cdp.send('Input.insertText', { text:'你好' });
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor();
+    expect(await dialog.textContent()).toContain('导出文件写入失败');
+    await dialog.getByRole('button', { name:'返回文档' }).click();
+    expect(await page.evaluate(() => (window as any).fileApp.surface.getMarkdown().trimEnd())).toBe('你好乙');
+  });
+
   it.each(['rich','source'])('%s 自动保存冲突在上屏后才弹窗', async mode => {
     await openFileApp(page, baseURL, { files:{ [currentFile]:'乙' }, holdWrite:true });
     await page.evaluate(async mode => {

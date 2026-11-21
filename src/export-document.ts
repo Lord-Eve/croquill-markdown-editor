@@ -75,6 +75,7 @@ export async function exportDocument(markdown: string, name: string, activeTheme
   }
   const headings: HTMLElement[] = [], tocs: HTMLElement[] = [], pending: Promise<void>[] = [];
   const preferredIds = new Map<HTMLElement, string>();
+  const htmlSourceIds = new WeakMap<Element, string>();
   function note(label: string) {
     const key = label.toLowerCase();
     if (!notes.has(key)) notes.set(key, { refs: [] });
@@ -240,7 +241,7 @@ export async function exportDocument(markdown: string, name: string, activeTheme
         el.prepend(element('strong', node.label || node.identifier)); entry.target = el; return el;
       }
       case 'croquillRawBlock': case 'html': {
-        if (node.kind === 'html' || node.type === 'html') return sanitizeHtmlFragment(value, { exportDocument: doc });
+        if (node.kind === 'html' || node.type === 'html') return sanitizeHtmlFragment(value, { exportDocument: doc, sourceIds: htmlSourceIds });
         const el = element('pre', rawText(node, value).trimEnd());
         const definition = /^\[\^([^\]]+)\]:/.exec(value);
         if (definition) note(definition[1]).target = el;
@@ -267,13 +268,29 @@ export async function exportDocument(markdown: string, name: string, activeTheme
     }
   }
   for (const child of tree.children ?? []) main.append(render(child, true));
-  const usedIds = new Set(Array.from(doc.querySelectorAll('[id]'), el => el.id));
+  const elementsWithIds = Array.from(doc.querySelectorAll('[id]'));
+  const usedIds = new Set(elementsWithIds.filter(el => !htmlSourceIds.has(el)).map(el => el.id));
   const nextSuffix = new Map<string, number>();
   function uniqueId(base: string) {
     let id = base, suffix = nextSuffix.get(base) ?? 1;
     while (usedIds.has(id)) id = base + '-' + suffix++;
     usedIds.add(id); nextSuffix.set(base, suffix);
     return id;
+  }
+  // Keep the sanitizer's ID on surviving HTML elements and redirect authored links to it.
+  const htmlAnchors = new Map<string, string>();
+  for (const el of elementsWithIds) {
+    const original = htmlSourceIds.get(el);
+    if (original === undefined) continue;
+    el.id = uniqueId(el.id);
+    if (original && !htmlAnchors.has(original)) htmlAnchors.set(original, el.id);
+  }
+  for (const original of htmlAnchors.keys()) usedIds.add(original);
+  for (const a of main.querySelectorAll('a[href^="#"]')) {
+    let fragment = a.getAttribute('href')!.slice(1);
+    try { fragment = decodeURIComponent(fragment); } catch { /* Literal percent in the ID. */ }
+    const target = htmlAnchors.get(fragment);
+    if (target) a.setAttribute('href', '#' + encodeURIComponent(target));
   }
   for (const entry of notes.values()) if (!entry.target) {
     for (const sup of entry.refs) sup.replaceWith('[^' + sup.textContent + ']');

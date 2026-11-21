@@ -396,7 +396,7 @@ async function exportCurrent(format: ExportFormat) {
     else await invoke('write_document', { path, text: html, bom: false, newline: 'lf', expectedRevision: null });
     toast('已导出：' + path.split(/[\\/]/).pop(), path);
   } catch (error) {
-    await modal('导出未完成', String(error), [{ label:'返回文档', value:'cancel', primary:true }]);
+    await modal('导出未完成', String(error), [{ label:'返回文档', value:'cancel', primary:true }], true);
   } finally { exporting = false; }
 }
 function executeCommand(command: MenuCommand) {
