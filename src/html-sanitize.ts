@@ -2,6 +2,8 @@ import DOMPurify from 'dompurify';
 import { decodeEntity } from './character-references';
 
 export interface SanitizeHtmlOptions {
+  exportDocument?: Document;
+  sourceIds?: WeakMap<Element, string>;
   resolveImage?: (src: string) => Promise<string>;
   isStale?: () => boolean;
 }
@@ -132,12 +134,14 @@ export function createInlineHtmlImage(src: string, image: InlineHtmlImage): HTML
 
 let htmlSanitizer: ReturnType<typeof DOMPurify> | null = null;
 let activePendingImages: Map<Element, string> | null = null;
+let activeSourceIds: WeakMap<Element, string> | undefined;
 
 function getHtmlSanitizer(): ReturnType<typeof DOMPurify> {
   if (htmlSanitizer) return htmlSanitizer;
   // Isolate hooks from the default DOMPurify export so @milkdown/crepe keeps stock behavior.
   const instance = DOMPurify(window);
   instance.addHook('uponSanitizeAttribute', (node, data) => {
+    if (data.attrName === 'id') activeSourceIds?.set(node, data.attrValue);
     if (!activePendingImages) return;
     if (node.nodeName.toLowerCase() !== 'img' || data.attrName !== 'src') return;
     const trimmed = data.attrValue.trim();
@@ -189,6 +193,7 @@ export function sanitizeHtmlFragment(source: string, options: SanitizeHtmlOption
   const pendingMap = new Map<Element, string>();
   let fragment: DocumentFragment;
   activePendingImages = pendingMap;
+  activeSourceIds = options.sourceIds;
   try {
     fragment = getHtmlSanitizer().sanitize(source, {
       USE_PROFILES: { html: true },
@@ -200,6 +205,7 @@ export function sanitizeHtmlFragment(source: string, options: SanitizeHtmlOption
     }) as unknown as DocumentFragment;
   } finally {
     activePendingImages = null;
+    activeSourceIds = undefined;
   }
 
   // Only resolve surviving <img> elements; discarded elements remain ignored.
@@ -211,7 +217,11 @@ export function sanitizeHtmlFragment(source: string, options: SanitizeHtmlOption
     pendingImages.push({ img, src: rawSrc });
   }
 
-  const adopted = document.adoptNode(fragment) as DocumentFragment;
+  const adopted = (options.exportDocument ?? document).adoptNode(fragment) as DocumentFragment;
+  if (options.exportDocument) {
+    for (const { img, src } of pendingImages) img.setAttribute('src', src);
+    for (const node of adopted.querySelectorAll('[contenteditable]')) node.removeAttribute('contenteditable');
+  }
   if (options.resolveImage) {
     for (const { img, src } of pendingImages) {
       void options.resolveImage(src).then(resolved => {

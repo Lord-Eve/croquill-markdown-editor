@@ -77,13 +77,17 @@ function alertIcon(type: AlertType): DOMOutputSpec {
   }, ...drawings[type]];
 }
 
+export function alertTitle(type: AlertType, inEditor = false): DOMOutputSpec {
+  return ['div', { class: 'croquill-alert-title', ...(inEditor ? { contenteditable: 'false' } : {}) }, alertIcon(type), ['span', {}, titles[type]]];
+}
+
 export const alertBlock = $node('croquill_alert', () => ({
   content: 'block+', group: 'block', defining: true,
   attrs: { alertType: { default: 'NOTE', validate: 'string' } },
   toDOM: node => {
     const type = isAlertType(String(node.attrs.alertType)) ? node.attrs.alertType as AlertType : 'NOTE';
     return ['blockquote', { 'data-croquill-alert': type },
-      ['div', { class: 'croquill-alert-title', contenteditable: 'false' }, alertIcon(type), ['span', {}, titles[type]]],
+      alertTitle(type, true),
       ['div', { class: 'croquill-alert-body' }, 0],
     ];
   },

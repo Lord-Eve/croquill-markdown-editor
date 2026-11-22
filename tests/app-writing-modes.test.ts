@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, Locator, Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
 import { readFileSync } from 'node:fs';
 import { createTestServer } from './server';
@@ -35,11 +35,14 @@ describe('writing modes through the application', () => {
     return Math.abs((rect.top + rect.bottom - box.top - box.bottom) / 2) <= box.height / 10;
   }, undefined, { timeout: 4000 });
   const text = () => page.evaluate(() => (window as any).fileApp.surface.getMarkdown());
+  const waitForFocusedBlock = (target: Locator) =>
+    target.and(page.locator('.tx-focus-block, .tx-focus-block *')).waitFor({ state: 'attached' });
   const splitMiddle = async () => {
-    await page.getByText('甲乙', { exact: true }).click();
-    await page.evaluate(() => {
+    const paragraph = page.getByText('甲乙', { exact: true });
+    await paragraph.click();
+    await paragraph.evaluate(el => {
       const view = (window as any).fileApp.surface.richView(), selection = view.state.selection;
-      view.dispatch(view.state.tr.setSelection(selection.constructor.create(view.state.doc, selection.$head.start() + 1)));
+      view.dispatch(view.state.tr.setSelection(selection.constructor.create(view.state.doc, view.posAtDOM(el.firstChild!, 1))));
     });
     await page.keyboard.press('Shift+Enter');
   };
@@ -72,7 +75,8 @@ describe('writing modes through the application', () => {
       await page.evaluate(theme => (window as any).fileApp.action(theme), theme);
       for (const [selector, dim] of [['h2', 'h1'], ['.ProseMirror > p', 'h2'], ['li p', 'li li p'],
         ['tbody td p', 'th p'], ['th p', 'td p'], ['.milkdown-code-block .cm-content', 'h2']]) {
-        await rich.locator(selector).first().click();
+        const target = rich.locator(selector).first();
+        await target.click(); await waitForFocusedBlock(target);
         expect(await opacity('#rich-root ' + selector)).toBe(1);
         expect(await opacity('#rich-root ' + dim)).toBeLessThan(0.6);
         if (selector.includes('td') || selector.includes('th')) expect(await opacity('tr.tx-focus-block > :nth-child(2) p')).toBe(1);
@@ -135,7 +139,8 @@ describe('writing modes through the application', () => {
   it('retains the composition DOM and scroll position, then centers committed text on the continuation line', async () => {
     await open();
     const paragraph = page.locator('#rich-root p').filter({ hasText: '晨光落在桥面。' });
-    await paragraph.click(); await page.keyboard.press('F8'); await page.keyboard.press('F9'); await center();
+    await paragraph.click(); await page.keyboard.press('F8'); await waitForFocusedBlock(paragraph);
+    await page.keyboard.press('F9'); await center();
     await page.evaluate(() => {
       const view = (window as any).fileApp.surface.richView();
       const p = document.querySelector('.tx-focus-block')!;

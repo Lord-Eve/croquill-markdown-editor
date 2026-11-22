@@ -506,7 +506,7 @@ export class MarkdownSurface {
     if (focused && this.find.root.contains(focused)) return this.find.composing;
     const root = this.currentMode === 'source' ? this.options.sourceRoot : this.options.richRoot;
     if (!focused || !root.contains(focused)) return false;
-    if (this.currentMode === 'source') return !!this.source?.composing;
+    if (this.currentMode === 'source') return !!this.source?.compositionStarted;
     return isFocusedHtmlSource(this.options.richRoot) ? isHtmlSourceComposing(this.options.richRoot) : !!this.crepe && this.richView().composing;
   }
 

@@ -9,6 +9,7 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
     const response = await route.fetch();
     const setup = `
       import {mockIPC,mockWindows} from '/node_modules/@tauri-apps/api/mocks.js';
+      import {visibleText} from '/src/inline-source-view.ts';
       window.isTauri=true;mockWindows('main');
       const h=window.fileApp={calls:[],writes:[],files:{[${JSON.stringify(currentFile)}]:${JSON.stringify(currentText)}},initial:${JSON.stringify(currentFile)},openSelected:null,saveSelected:null,...${JSON.stringify(config)}};
       const dropBridge=new EventTarget();h.drops=[];
@@ -32,7 +33,7 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
         }
         if(cmd==='write_document'){
           if(h.writeError)throw h.writeError;
-          h.writes.push(args);if(h.holdWrite)await new Promise(resolve=>h.releaseWrite=resolve);
+          h.writes.push(args);if(h.holdWrite)await new Promise((resolve,reject)=>{h.releaseWrite=resolve;h.rejectWrite=reject;});
           h.files[args.path]=args.text;return {revision:'saved-revision'};
         }
         if(cmd==='read_local_image'){
@@ -47,7 +48,7 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
       },{shouldMockEvents:true});
     `;
     await route.fulfill({ response, body: setup + await response.text() + `
-      Object.assign(h,{surface,session,fileSidebar,setSidebarTab,action,run,updateStats});
+      Object.assign(h,{surface,session,fileSidebar,setSidebarTab,action,run,updateStats,visibleText});
       h.captureCommands=()=>{action=async name=>{(h.commands||=[]).push(name);};};
       h.ready=true;
     ` });

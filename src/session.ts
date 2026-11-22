@@ -8,6 +8,7 @@ export interface FilePort {
   read(path: string): Promise<DocumentFile>;
   write(path: string, text: string, bom: boolean, newline: Newline, expectedRevision?: string): Promise<{revision: string}>;
   confirmSave(name: string): Promise<'save' | 'discard' | 'cancel'>;
+  saveBeforeLeave?(): Promise<boolean>;
   prepareSaveAs?(from: string, to: string, text: string): Promise<string>;
 }
 interface SessionEvents { opened?(file: DocumentFile): void; saved?(path: string): void; fresh?(): void }
@@ -45,6 +46,7 @@ export class DocumentSession {
   }
   async mayLeave(): Promise<boolean> {
     if (!this.dirty) return true;
+    if (await this.port.saveBeforeLeave?.() && !this.dirty) return true;
     const choice = await this.port.confirmSave(this.name);
     if (choice === 'cancel') return false;
     return choice === 'discard' || (await this.save() && !this.dirty);
