@@ -20,7 +20,7 @@ function matchesType(node: RootContent, rich: RichNode): boolean {
     case 'thematicBreak': return type === 'hr';
     case 'html': return type === 'croquill_html_comment';
     case 'code': return type === 'code_block';
-    case 'math': return type === 'math_block';
+    case 'math': return type === 'math_block' || type === 'code_block' && rich.attrs.language === 'LaTeX';
     case 'footnoteDefinition': return type === 'footnote_definition';
     default: return type === node.type;
   }
@@ -56,7 +56,7 @@ export function indexMarkdown(raw: string, doc: RichNode): BlockIndex | null {
 }
 
 type Serialize = (before: RichNode, after: RichNode, old: string, origin: string, plainExtension: boolean) => string;
-const supported = new Set(['paragraph', 'heading', 'table', 'bullet_list', 'ordered_list', 'blockquote']);
+const supported = new Set(['paragraph', 'heading', 'table', 'bullet_list', 'ordered_list', 'blockquote', 'croquill_alert', 'code_block', 'math_block']);
 
 function fragment(doc: RichNode, from: number, to: number): RichNode {
   return doc.copy(Fragment.fromArray(Array.from({ length: to - from }, (_, i) => doc.child(from + i))));
@@ -70,13 +70,8 @@ export function localMarkdown(index: BlockIndex, raw: string, before: RichNode, 
   while (first < oldEnd && first < newEnd && before.child(first) === after.child(first)) first++;
   while (first < oldEnd && first < newEnd && before.child(oldEnd - 1) === after.child(newEnd - 1)) { oldEnd--; newEnd--; }
   if (first === oldEnd || first === newEnd || (index.metadata && first === 0)) return null;
-  // With at most four source blocks, use the existing full writer (including
-  // its normalization of list markers and Setext/closing ATX headings).
-  const sourceCount = ranges.length - (ranges.at(-1)?.from === raw.length ? 1 : 0);
-  if (sourceCount <= 4) return null;
   const left = Math.max(0, first - 1), right = Math.min(ranges.length, oldEnd + 1);
-  // If the verification window is the whole file the full writer is cheaper.
-  if (left === 0 && right === ranges.length || ranges.slice(left, right).some(range => range.blocked)) return null;
+  if (ranges.slice(left, right).some(range => range.blocked)) return null;
   const oldDoc = fragment(before, first, oldEnd), newDoc = fragment(after, first, newEnd);
   for (const doc of [oldDoc, newDoc]) for (let i = 0; i < doc.childCount; i++) {
     if (!supported.has(doc.child(i).type.name) || !doc.child(i).content.size) return null;

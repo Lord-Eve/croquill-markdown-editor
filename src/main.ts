@@ -135,6 +135,7 @@ const imageImporter = new ImageImporter({
 });
 const surface = new MarkdownSurface({
   richRoot:$('rich-root'), sourceRoot:$('source-root'), scrollContainer:$('editor-scroll'),
+  isUntitled: () => !session.path,
   onChange: text => { session.edit(text); updateTitle(); scheduleStats(); },
   onEdit: () => { outlineController.notifyDocumentEdited(); autosave.changed(); },
   onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },

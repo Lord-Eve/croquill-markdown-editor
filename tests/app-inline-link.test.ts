@@ -786,6 +786,6 @@ describe('inline link source editing through the real app', () => {
     await caret('尾', 1);
     await page.keyboard.insertText('改');
     await settle();
-    expect(await markdown()).toBe('## a_b、www.h.com *斜*\n\n## *斜*、www.h.com &amp;\n\n# a_b、www.h2.com &amp;\n\n尾改\n');
+    expect(await markdown()).toBe('## a_b、www.h.com *斜* ##\n\n## *斜*、www.h.com &amp; ##\n\na_b、www.h2.com &amp;\n===\n\n尾改\n');
   }, 30000);
 });
