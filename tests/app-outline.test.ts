@@ -56,6 +56,69 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     return Array.from({ length: count }, (_, i) => `${prefix} 第 ${i + 1} 段较长占位文字，用于拉高页面并制造清晰滚动距离。`).join('\n\n');
   }
 
+  const themedSection = [
+    '# 章节', '开头文字', '| 甲 | 乙 |\n| --- | --- |\n| 表格 | 换<br>行 |',
+    '```text\n一行代码\n另一行代码\n```', '[TOC]',
+  ].join('\n\n');
+
+  it('remeasures offscreen tables and code after a theme change at the same width', async () => {
+    await page.setViewportSize({ width: 830, height: 680 });
+    await open(Array(24).fill(themedSection).join('\n\n'));
+    const readSizes = () => {
+      const box = document.querySelector('#editor-scroll')!;
+      const root = box.querySelector<HTMLElement>('.ProseMirror')!;
+      return {
+        width: root.clientWidth,
+        sizes: ['.table-wrapper', '.milkdown-code-block'].map(selector => {
+          const block = Array.from(root.querySelectorAll(selector)).at(-1)!;
+          return Number(block.getAttribute('data-layout-height'));
+        }),
+      };
+    };
+    const before = await page.evaluate(readSizes);
+    expect(before.sizes.every(height => height > 0)).toBe(true);
+    await page.evaluate(() => (window as any).fileApp.action('dark'));
+    await page.waitForFunction(old => {
+      const root = document.querySelector<HTMLElement>('#rich-root .ProseMirror')!;
+      return !root.parentElement!.style.getPropertyValue('--offscreen-layout') &&
+        ['.table-wrapper', '.milkdown-code-block'].every((selector, i) => {
+          const block = Array.from(root.querySelectorAll(selector)).at(-1)!;
+          return Number(block.getAttribute('data-layout-height')) !== old[i];
+        });
+    }, before.sizes);
+    expect((await page.evaluate(readSizes)).width).toBe(before.width);
+    const heights = await page.locator('#editor-scroll').evaluate(box => {
+      const measured = box.scrollHeight;
+      box.querySelector<HTMLElement>('.ProseMirror')!.parentElement!.style.setProperty('--offscreen-layout', 'visible');
+      return [measured, box.scrollHeight];
+    });
+    expect(heights[0]).toBe(heights[1]);
+  });
+
+  it('uses natural layout throughout when typed attr sizes are unsupported', async () => {
+    await page.addInitScript(() => {
+      const supports = CSS.supports.bind(CSS);
+      CSS.supports = (property: string, value?: string) => {
+        if (property === 'contain-intrinsic-block-size' && value?.includes('attr(')) return false;
+        return value === undefined ? supports(property) : supports(property, value);
+      };
+    });
+    await open(themedSection + '\n\n' + filler('普通正文', 130) + '\n\n[TOC]\n\n# 最后一章\n\n末段。');
+    const root = page.locator('#rich-root .ProseMirror');
+    expect(await root.evaluate(el => ({
+      active: el.classList.contains('long-document'),
+      measured: el.querySelectorAll('[data-layout-height]').length,
+      visible: Array.from(el.querySelectorAll('p,h1,.table-wrapper,.milkdown-code-block,nav'))
+        .every(block => getComputedStyle(block).contentVisibility === 'visible'),
+    }))).toEqual({ active: false, measured: 0, visible: true });
+    await page.locator('#outline').getByRole('button', { name: '最后一章', exact: true }).click();
+    await page.waitForFunction(() => {
+      const rect = document.querySelector('#rich-root .ProseMirror > h1:last-of-type')!.getBoundingClientRect();
+      const box = document.querySelector('#editor-scroll')!.getBoundingClientRect();
+      return rect.top >= box.top && rect.bottom <= box.bottom;
+    }, undefined, { timeout: 2000 });
+  });
+
   it.each([40, 400])('measures a logarithmic number of headings while typing among %i headings', async count => {
     await open(Array.from({ length: count }, (_, i) => '# 第' + i + '节\n\n编辑段落').join('\n\n'));
     await page.locator('#rich-root .ProseMirror > p').first().click();

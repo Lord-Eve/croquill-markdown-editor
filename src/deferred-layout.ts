@@ -9,8 +9,21 @@ const componentSelector = '.table-wrapper,.milkdown-code-block,.croquill-html-pr
  * block becomes eligible for offscreen containment. No editor transaction or
  * additional DOM around the caret is needed. */
 export function deferredLayout() {
+  if (!CSS.supports('content-visibility', 'auto') ||
+      !CSS.supports('contain-intrinsic-block-size', 'auto attr(data-layout-height px)')) return new Plugin({});
+
   const size = new ResizeObserver(entries => {
+    // A plain one-line block has no child elements whose layout we can skip.
+    // Read representative line heights before writing attributes to avoid
+    // interleaving style invalidation and measurement across thousands of nodes.
+    const lineHeights = new Map<string, number>();
+    for (const { target } of entries) {
+      if (!target.firstElementChild && !lineHeights.has(target.tagName))
+        lineHeights.set(target.tagName, parseFloat(getComputedStyle(target).lineHeight));
+    }
     for (const { target, contentRect } of entries) {
+      if (!target.firstElementChild && contentRect.height <= (lineHeights.get(target.tagName) ?? 0) + 1 &&
+          !target.hasAttribute('data-layout-height')) continue;
       if (contentRect.height > 0 && target.getAttribute('data-layout-height') !== String(contentRect.height))
         target.setAttribute('data-layout-height', String(contentRect.height));
     }
@@ -73,7 +86,7 @@ export function deferredLayout() {
       });
       viewport.observe(view.dom);
       const settings = new MutationObserver(remeasure);
-      settings.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+      settings.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] });
       document.fonts.addEventListener('loadingdone', remeasure);
       return {
         update(current, previous) {
