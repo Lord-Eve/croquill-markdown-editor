@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import type { Browser, Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
 import { createTestServer } from './server';
@@ -18,6 +18,13 @@ describe('long document publishing', () => {
     server = await createTestServer(); await server.listen();
     browser = await launchTestBrowser();
     page = await browser.newPage();
+    // Count the tokenizer entry point, including callers outside our AST cache.
+    await page.route('**/node_modules/.vite-tests/deps/*.js*', async route => {
+      const response = await route.fetch();
+      const body = (await response.text()).replace(/function fromMarkdown\(value, encoding, options\) \{/g,
+        '$&\nif (value === window.countedSource) window.fullParses++;');
+      await route.fulfill({ response, body });
+    });
     const address = server.httpServer!.address();
     if (!address || typeof address === 'string') throw Error('Missing test port');
     await page.goto('http://127.0.0.1:' + address.port + '/tests/harness.html');
@@ -25,6 +32,26 @@ describe('long document publishing', () => {
     await page.waitForFunction(() => !!(window as any).checks);
   },60000);
   afterAll(async () => { await browser?.close(); await server?.close(); });
+
+  it('tokenizes the original body once when opening the rich editor', async () => {
+    const source = '# 唯一解析\n\n' + '正文与 **标记**。\n\n'.repeat(150) + '$x+1$\n\n- 项目\n-\n';
+    const result = await page.evaluate(async text => {
+      (window as any).countedSource = text;
+      (window as any).fullParses = 0;
+      return (window as any).checks.checkOpening(text);
+    }, source);
+    expect(result).toEqual({ same: true, parses: 1 });
+  });
+
+  it('matches the complete opening gate and block index for every local example', async () => {
+    for (const dir of [examples, new URL('private/', examples)]) {
+      if (!existsSync(dir)) continue;
+      for (const name of readdirSync(dir).filter(n => n.endsWith('.md'))) {
+        const source = readFileSync(new URL(encodeURIComponent(name), dir), 'utf8');
+        expect(await page.evaluate(async text => (await (window as any).checks.checkOpening(text)).same, source)).toBe(true);
+      }
+    }
+  }, 60000);
 
   it.each(samples)('$name matches the complete writer across edit operations', async ({name,source}) => {
     const result = await page.evaluate(([n,s]) => (window as any).checks.corpus(n,s), [name,source]);

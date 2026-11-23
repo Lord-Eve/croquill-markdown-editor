@@ -1,5 +1,6 @@
 import { MarkdownSurface } from '../../src/editor';
-import { hasEquivalentMarkdownStructure, markdownOutline, markdownForWordCount, preservedMarkdownBlocks } from '../../src/fidelity';
+import { detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, markdownForWordCount, preservedMarkdownBlocks, splitFrontmatter } from '../../src/fidelity';
+import { indexMarkdown } from '../../src/local-markdown';
 import { parseMarkdownAst, retainMarkdown } from '../../src/markdown-ast';
 import { parsePositionedRichMarkdown } from '../../src/rich-markdown';
 import { preserveEmptyListSource } from '../../src/empty-list';
@@ -18,6 +19,31 @@ function makeSurface() {
 }
 function check(condition: unknown, message: string) {
   if (!condition) throw Error(message);
+}
+
+/** Compare the published decision, reason and every original range with the
+ * complete pre-optimization writer, including when the gate rejects the file. */
+export async function checkOpening(source: string) {
+  const surface = makeSurface();
+  try {
+    await surface.load(source);
+    const parses = (window as any).fullParses;
+    const { body, frontmatter } = splitFrontmatter(source);
+    let reason = detectUnsafeMarkdown(source);
+    let index = null, notice = null;
+    if (!reason) {
+      const document = surface.richView().state.doc;
+      const written = surface.serializeRichDocument(document, source, source);
+      if (hasEquivalentMarkdownStructure(source, written)) {
+        index = indexMarkdown(source, document);
+        notice = [frontmatter && '本文含元数据，可在源码模式中编辑',
+          preservedMarkdownBlocks(body).length ? '部分语法以原文块保留，可在源码模式中编辑这些块' : ''].filter(Boolean).join('；') || null;
+      } else reason = '此文档的部分结构无法可靠往返转换，已保留原文并启用源码保护';
+    }
+    const same = surface.mode === (reason ? 'source' : 'rich') && surface.getSafetyReason() === reason &&
+      surface.getRichNotice() === notice && JSON.stringify(surface.blockIndex) === JSON.stringify(index);
+    return { same, parses };
+  } finally { await surface.destroy(); }
 }
 
 // Exercise the production publishing path and compare it to the complete writer on

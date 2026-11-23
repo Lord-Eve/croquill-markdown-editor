@@ -79,6 +79,41 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     expect(await page.evaluate(() => (window as any).headingMeasurements)).toBeLessThanOrEqual(Math.ceil(Math.log2(count)) + 2);
   });
 
+  it('jumps to the last heading with measured offscreen paragraphs and keeps the full scroll extent', async () => {
+    const section = [filler('长文', 16), '换行文字'.repeat(100), '> 引用\n>\n> 第二段',
+      '- 列表一\n- 列表二', '| 甲 | 乙 |\n| --- | --- |\n| 表格 | 换<br>行 |', '[TOC]'].join('\n\n');
+    await open('# 开头\n\n' + Array(12).fill(section).join('\n\n') + '\n\n# 末章\n\n最后一段。');
+    const scroller = page.locator('#editor-scroll');
+    await page.waitForFunction(() => {
+      return Array.from(document.querySelectorAll('#rich-root .ProseMirror > p[data-layout-height]'))
+        .some(p => getComputedStyle(p).contentVisibility === 'auto');
+    }, undefined, { timeout: 2000 });
+    const height = await scroller.evaluate(el => el.scrollHeight);
+    await page.locator('#outline .outline-item').last().click();
+    const visible = () => {
+      const rect = document.querySelector('#rich-root h1:last-of-type')!.getBoundingClientRect();
+      const viewport = document.querySelector('#editor-scroll')!.getBoundingClientRect();
+      return rect.top >= viewport.top && rect.bottom <= viewport.bottom;
+    };
+    await page.waitForFunction(visible, undefined, { timeout: 2000 });
+    for (const end of [true, false, true]) {
+      await scroller.evaluate((el, end) => { el.scrollTop = end ? el.scrollHeight : 0; }, end);
+      await settleFrames();
+      expect(await scroller.evaluate(el => el.scrollHeight)).toBe(height);
+    }
+    expect(await page.evaluate(visible)).toBe(true);
+    expect(await scroller.evaluate(el => el.querySelector('.ProseMirror > p:last-child')!.getBoundingClientRect().bottom <= el.getBoundingClientRect().bottom)).toBe(true);
+    await page.setViewportSize({ width: 780, height: 500 });
+    await settleFrames();
+    const measured = await scroller.evaluate(el => el.scrollHeight);
+    const natural = await scroller.evaluate(el => {
+      const parent = el.querySelector<HTMLElement>('.ProseMirror')!.parentElement!;
+      parent.style.setProperty('--offscreen-layout', 'visible');
+      return el.scrollHeight;
+    });
+    expect(measured).toBe(natural);
+  });
+
   it('follows viewport headings in rich and source modes under topmost/above/none rules with aria-current', async () => {
     const doc = [
       filler('前置引子', 24),

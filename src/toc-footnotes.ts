@@ -149,7 +149,7 @@ export function handleTocFootnoteKey(view: EditorView, event: KeyboardEvent): bo
 
 interface HeadingTarget { pos: number; level: number; text: string }
 interface DefinitionTarget { pos: number; text: string }
-interface DocumentIndex { headings: HeadingTarget[]; definitions: Map<string, DefinitionTarget> }
+interface DocumentIndex { headings: HeadingTarget[]; headingSignature: string; definitions: Map<string, DefinitionTarget> }
 const rawIndexes = new WeakMap<RichNode, { headings: Omit<HeadingTarget, 'pos'>[]; definitions: { label: string; text: string }[] }>();
 function syntaxText(node: DocumentSyntaxNode): string { return node.value || node.children?.map(syntaxText).join('') || ''; }
 function indexOf(doc: RichNode): DocumentIndex {
@@ -169,7 +169,8 @@ function indexOf(doc: RichNode): DocumentIndex {
         }
         const raw = String(node.attrs.value);
         if (node.attrs.kind !== 'html') index.headings = markdownOutline(raw);
-        visit(parseMarkdownAst(raw, 'gfm') as unknown as DocumentSyntaxNode); rawIndexes.set(node, index);
+        if (raw.includes('[^')) visit(parseMarkdownAst(raw) as unknown as DocumentSyntaxNode);
+        rawIndexes.set(node, index);
       }
       const index = rawIndexes.get(node)!;
       index.headings.forEach(heading => headings.push({ ...heading, pos }));
@@ -177,7 +178,7 @@ function indexOf(doc: RichNode): DocumentIndex {
     }
     return true;
   });
-  return { headings, definitions };
+  return { headings, headingSignature: JSON.stringify(headings.map(({ level, text }) => [level, text])), definitions };
 }
 
 function jumpTo(view: EditorView, position: number): void {
@@ -194,6 +195,7 @@ export const tocFootnotePlugin = $prose(() => {
   // A document without a TOC or a footnote consumer needs no index on input.
   // All consumers of the same immutable snapshot share one traversal.
   let cached: { doc: RichNode; index: DocumentIndex } | undefined;
+  let tocTemplate: { signature: string; fragment: DocumentFragment } | undefined;
   function currentIndex(view: EditorView): DocumentIndex {
     const doc = view.state.doc;
     if (cached?.doc !== doc) cached = { doc, index: indexOf(doc) };
@@ -204,20 +206,32 @@ export const tocFootnotePlugin = $prose(() => {
       nodeViews: {
         croquill_toc(node, view) {
           const dom = document.createElement('nav'); dom.dataset.croquillToc = String(node.attrs.value); dom.contentEditable = 'false'; dom.setAttribute('aria-label', '文章目录');
+          dom.onmousedown = event => { if (view.composing) event.preventDefault(); };
+          dom.onclick = event => {
+            if (!(event.target instanceof HTMLButtonElement)) return;
+            event.preventDefault(); hidePreview();
+            const target = currentIndex(view).headings[Number(event.target.dataset.index)];
+            if (target) jumpTo(view, target.pos);
+          };
           let signature = '';
           const instance = { refresh: () => {
-            const headings = currentIndex(view).headings;
-            const next = JSON.stringify(headings.map(({ level, text }) => ({ level, text })));
+            const { headings, headingSignature: next } = currentIndex(view);
             if (next === signature) return; signature = next;
-            const fragment = document.createDocumentFragment();
-            headings.forEach((heading, index) => {
-              const button = document.createElement('button'); button.type = 'button'; button.textContent = heading.text || '（空标题）'; button.dataset.level = String(heading.level); button.style.setProperty('--toc-level', String(heading.level));
-              button.onmousedown = event => { if (view.composing) event.preventDefault(); };
-              button.onclick = event => { event.preventDefault(); hidePreview(); const target = currentIndex(view).headings[index]; if (target) jumpTo(view, target.pos); };
-              fragment.append(button);
-            });
-            if (!headings.length) { const empty = document.createElement('span'); empty.textContent = '暂无标题'; fragment.append(empty); }
-            dom.replaceChildren(fragment);
+            dom.removeAttribute('data-toc-sized');
+            dom.style.setProperty('--toc-rows', String(Math.max(1, headings.length)));
+            if (tocTemplate?.signature !== next) {
+              const fragment = document.createDocumentFragment();
+              headings.forEach((heading, index) => {
+                const button = document.createElement('button');
+                button.type = 'button'; button.textContent = heading.text || '（空标题）';
+                button.dataset.index = String(index); button.dataset.level = String(heading.level);
+                button.style.setProperty('--toc-level', String(heading.level));
+                fragment.append(button);
+              });
+              if (!headings.length) { const empty = document.createElement('span'); empty.textContent = '暂无标题'; fragment.append(empty); }
+              tocTemplate = { signature: next, fragment };
+            }
+            dom.replaceChildren(tocTemplate.fragment.cloneNode(true));
           } };
           live.add(instance); instance.refresh();
           return { dom, ignoreMutation: () => true, stopEvent: () => true, destroy: () => { live.delete(instance); } } satisfies NodeView;

@@ -29,7 +29,8 @@ import { orderedVisibleHeading, pickVisibleHeadingIndex } from './outline-tree';
 import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, createSourceSegmentLookup, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
-import { retainMarkdown } from './markdown-ast';
+import { retainMarkdown, sharedRichParser } from './markdown-ast';
+import { deferredLayout } from './deferred-layout';
 import { indexMarkdown, localMarkdown } from './local-markdown';
 import { matchesRichDocument, preserveUntouchedSource } from './untouched-source';
 import { preserveTableSource } from './table-source';
@@ -773,10 +774,14 @@ export class MarkdownSurface {
     return result;
   }
 
-  private serializeRichDocument(document: RichNode, input: string, origin: string): string {
+  private writeRichBody(document: RichNode): string {
+    return this.inlineRaw!.serialize(() => this.crepe!.editor.action(ctx => ctx.get(serializerCtx)(document)));
+  }
+
+  private serializeRichDocument(document: RichNode, input: string, origin: string, written = this.writeRichBody(document)): string {
     // The previous save also covers removal of the last newly inserted <br>.
     const { body: previousBody, prefix } = splitFrontmatter(input);
-    const serialized = preserveRenderedSource(previousBody, preserveTableSource(previousBody, this.inlineRaw!.serialize(() => this.crepe!.editor.action(ctx => ctx.get(serializerCtx)(document)))));
+    const serialized = preserveRenderedSource(previousBody, preserveTableSource(previousBody, written));
     const originBody = splitFrontmatter(origin).body;
     const body = preserveRenderedSource(originBody, preserveEmptyListSource(originBody, preserveTableSource(originBody, serialized)));
     const separator = prefix && prefix !== '\uFEFF' && !/[\r\n]$/.test(prefix) && body ? '\n\n' : '';
@@ -860,6 +865,7 @@ export class MarkdownSurface {
           [Crepe.Feature.Latex]: true,
         },
         featureConfigs: {
+          [Crepe.Feature.Cursor]: { virtual: false },
           [Crepe.Feature.Placeholder]: { text: '从这里开始写作…', mode: 'doc' },
           [Crepe.Feature.ImageBlock]: {
             inlineUploadButton: '选择图片', inlineConfirmButton: '确定',
@@ -898,12 +904,13 @@ export class MarkdownSurface {
         configureAlerts(ctx);
         configureTocFootnotes(ctx);
         ctx.update(remarkPluginsCtx, plugins => [
-          ...richMarkdownTransforms.map(plugin => ({ plugin, options: {} })), ...plugins,
+          ...richMarkdownTransforms.map(plugin => ({ plugin, options: {} })), ...plugins, { plugin: sharedRichParser, options: {} },
         ]);
       });
       // Crepe's block-only drop indicator also handles text selections, snapping
       // them to block boundaries. Keep ProseMirror's native inline/block drops.
       await crepe.editor.remove(dropIndicatorPlugin);
+      crepe.editor.use($prose(deferredLayout));
       await crepe.editor.remove(wrapInHeadingInputRule);
       crepe.editor.use($inputRule(() => new InputRule(/^(#{1,6})\s$/, (state, match, from, to) => {
         const pos = state.doc.resolve(from), heading = state.schema.nodes.heading;
@@ -1024,7 +1031,15 @@ export class MarkdownSurface {
       this.richInput = this.raw;
       this.richSnapshot = this.richView().state.doc;
       this.richOriginDocument = this.richSnapshot;
-      if (!hasEquivalentMarkdownStructure(this.raw, this.serializeRichDocument(this.richSnapshot, this.raw, this.raw))) {
+      const written = this.writeRichBody(this.richSnapshot);
+      // The spelling restorers accept only equivalent trees. For ordinary
+      // bodies that already match, their work cannot change the verdict.
+      // Metadata boundaries and dollar delimiters also depend on literal source.
+      const plainBoundary = !parts.frontmatter && !/^(?:\uFEFF)?---[ \t]*(?:\r|\n|$)/.test(written) &&
+        !parts.body.includes('$') && !written.includes('$');
+      const equivalent = plainBoundary && hasEquivalentMarkdownStructure(this.raw, parts.prefix + written) ||
+        hasEquivalentMarkdownStructure(this.raw, this.serializeRichDocument(this.richSnapshot, this.raw, this.raw, written));
+      if (!equivalent) {
         this.safetyReason = UNRELIABLE_ROUND_TRIP; this.unreliableRich = this.raw;
         this.blockIndex = null;
       } else this.blockIndex = this.indexPublished(this.raw, this.richSnapshot);

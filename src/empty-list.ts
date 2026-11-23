@@ -53,7 +53,9 @@ function hasEmptyItem(node: ListNode): boolean {
 /** Restore unchanged empty item markers by AST offsets, including their spaces. */
 export function preserveEmptyListSource(original: string, serialized: string): string {
   if (original === serialized) return serialized;
-  const before = listsOf(parseMarkdownAst(original, 'gfm') as ListNode), after = listsOf(parseMarkdownAst(serialized, 'gfm') as ListNode);
+  // Match editable lists in the same grammar as the editor. List-looking
+  // lines inside a math block belong to the formula.
+  const before = listsOf(parseMarkdownAst(original) as ListNode), after = listsOf(parseMarkdownAst(serialized) as ListNode);
   if (before.length !== after.length) return serialized;
   const changes: { from: number; to: number; text: string }[] = [];
   for (let index = 0; index < before.length; index++) {

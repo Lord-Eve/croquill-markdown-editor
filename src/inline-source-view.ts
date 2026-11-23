@@ -402,12 +402,15 @@ export function inlineSourcePlugin(resolveImage: (src: string) => Promise<string
           return build(newState, preview);
         }
         if (!transaction.docChanged && oldState.selection.eq(newState.selection)) return value;
+        const changed = transaction.docChanged ? changedRange([transaction]) : null;
+        // A bulk transaction (including initial heading IDs) touches most of
+        // the tree. Rebuilding once avoids mapping and replacing each span.
+        if (changed && changed.to - changed.from >= newState.doc.content.size / 2) return build(newState, preview);
         let decorations = value.decorations.map(transaction.mapping, transaction.doc);
         const ranges = [
           { from: transaction.mapping.map(oldState.selection.from, -1), to: transaction.mapping.map(oldState.selection.to, 1) },
           { from: newState.selection.from, to: newState.selection.to },
         ];
-        const changed = transaction.docChanged ? changedRange([transaction]) : null;
         if (changed) ranges.push(changed);
         const refreshed = new Set<number>();
         for (const range of ranges) decorateRange(newState.doc, range.from, range.to, newState.selection, preview, (position, block, fresh) => {

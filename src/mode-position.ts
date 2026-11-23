@@ -407,8 +407,12 @@ function segmentsForBlock(body: string, prefixLength: number, ast: AstNodeLike, 
   return null;
 }
 
+const documentAlignments = new WeakMap<PMNode, { raw: string; alignment: DocumentAlignment }>();
+
 /** Builds a deterministic block-and-inline correspondence table between Markdown source and ProseMirror doc. */
 export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAlignment {
+  const cached = documentAlignments.get(richDoc);
+  if (cached?.raw === raw) return cached.alignment;
   const { prefix, body } = splitFrontmatter(raw);
   const prefixLen = prefix.length;
   const astRoot = editableAst(body);
@@ -543,7 +547,9 @@ export function buildDocumentAlignment(raw: string, richDoc: PMNode): DocumentAl
   }
 
   alignChildren(astRoot.children ?? [], null, richDoc, 0);
-  return { prefixLen, blocks, containers, unverifiedRanges };
+  const alignment = { prefixLen, blocks, containers, unverifiedRanges };
+  documentAlignments.set(richDoc, { raw, alignment });
+  return alignment;
 }
 
 function findDeepestRichBlock(alignment: DocumentAlignment, richPos: number): AlignedBlock | null {

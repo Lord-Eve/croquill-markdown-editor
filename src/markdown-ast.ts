@@ -1,4 +1,4 @@
-import { unified } from 'unified';
+import { unified, type Processor } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -26,6 +26,12 @@ export function parseMarkdownAst(text: string, dialect: 'math' | 'gfm' = 'math')
   // remark-math has only dollar delimiters. Without one, the trees coincide.
   if (dialect === 'gfm' && text.includes('$')) return entry.gfm ??= gfm.parse(text);
   return entry.math ??= math.parse(text);
+}
+
+/** Milkdown uses the same GFM + math grammar. Its remark transforms mutate
+ * their input, so give them a private copy while retaining the positioned tree. */
+export function sharedRichParser(this: Processor) {
+  this.parser = source => structuredClone(parseMarkdownAst(source));
 }
 
 /** The open document's original spelling outlives the short recent-text cache. */
