@@ -1,3 +1,4 @@
+import type { NodeSchema } from '@milkdown/kit/transformer';
 import { Crepe } from '@milkdown/crepe';
 import { uploadConfig } from '@milkdown/kit/plugin/upload';
 import { dropIndicatorPlugin } from '@milkdown/kit/plugin/cursor';
@@ -30,6 +31,7 @@ import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceC
 import { configureHtmlBreaks, handleHtmlBreakKey } from './html-break';
 import { retainMarkdown } from './markdown-ast';
 import { indexMarkdown, localMarkdown } from './local-markdown';
+import { matchesRichDocument, preserveUntouchedSource } from './untouched-source';
 import { preserveTableSource } from './table-source';
 import { configureEmptyListItems, preserveEmptyListSource } from './empty-list';
 import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableContent } from './inline-raw';
@@ -47,6 +49,23 @@ import { applySourceChanges, normalizedOffset, normalizedSource, replacementProb
 import { setSourceMatches, setSourceVersion, sourceSearchHighlights, sourceVersion, sourceVersionHistory } from './source-search-state';
 import { nextHeadingLevel, sourceHeadingChange } from './heading-level';
 import './rendered-syntax.css';
+
+function sourceCodeSchema(schema: NodeSchema): NodeSchema {
+  return {
+    ...schema,
+    attrs: { ...schema.attrs, info: { default: '', validate: 'string' } },
+    parseMarkdown: { match: schema.parseMarkdown.match, runner(state, node, type) {
+      state.openNode(type, { language: node.lang ?? '', info: node.meta ?? '' });
+      // The embedded CodeMirror uses a single position for each line break.
+      if (node.value) state.addText(String(node.value).replace(/\r\n?/g, '\n'));
+      state.closeNode();
+    } },
+    toMarkdown: { match: schema.toMarkdown.match, runner(state, node) {
+      if (!node.attrs.info) return schema.toMarkdown.runner(state, node);
+      state.addNode('code', undefined, node.textContent, { lang: node.attrs.language, meta: node.attrs.info });
+    } },
+  };
+}
 
 function insertBlockAfterRawSelection(view: RichView, node: RichNode): ProseTransaction {
   const { state } = view;
@@ -163,6 +182,7 @@ export interface MarkdownSurfaceOptions {
   richRoot: HTMLElement;
   sourceRoot: HTMLElement;
   scrollContainer?: HTMLElement;
+  isUntitled?: () => boolean;
   onChange: (markdown: string) => void;
   onEdit?: () => void;
   onDirty?: () => void;
@@ -683,6 +703,24 @@ export class MarkdownSurface {
 
   private richView(): RichView { return this.crepe!.editor.action((ctx) => ctx.get(editorViewCtx)); }
 
+  private joinIndentedParagraph(view: RichView, event: KeyboardEvent): boolean {
+    if (event.key !== 'Backspace' || view.composing || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
+    const { $from, empty } = view.state.selection;
+    if (!empty || $from.depth !== 1 || $from.parentOffset || $from.parent.type.name !== 'paragraph') return false;
+    const i = $from.index(0);
+    if (!i || view.state.doc.child(i - 1).type.name !== 'paragraph') return false;
+    // Once joined, the second paragraph's source indentation is ordinary text.
+    // Put it in the same undo step, so the editor and the saved file agree.
+    const raw = this.getMarkdown(), range = this.blockIndex?.ranges[i];
+    if (!range) return false;
+    const indent = /(?:^|[\r\n])([ \t]+)$/.exec(raw.slice(Math.max(0, range.from - 4), range.from))?.[1];
+    if (!indent) return false;
+    const boundary = $from.before(1);
+    view.dispatch(view.state.tr.join(boundary).insertText(indent, boundary - 1).scrollIntoView());
+    event.preventDefault();
+    return true;
+  }
+
   private setOriginText(text: string): void {
     this.releaseOrigin?.();
     this.releaseOrigin = retainMarkdown(splitFrontmatter(text).body);
@@ -704,15 +742,33 @@ export class MarkdownSurface {
 
   private serializeRich(): string {
     const doc = this.richView().state.doc;
+    const parse = (text: string) => this.crepe!.editor.action(ctx => ctx.get(parserCtx)(text));
     if (this.richSnapshot && this.blockIndex && !this.forceFullSerialization) {
       const local = localMarkdown(this.blockIndex, this.raw, this.richSnapshot, doc,
-        (before, after, old, origin, extensions) => preserveInlineEdit(old, before, after,
-          this.serializeRichDocument(after, old, origin), extensions),
-        text => this.crepe!.editor.action(ctx => ctx.get(parserCtx)(text)));
+        (before, after, old, origin, extensions) => {
+          const block = after.firstChild;
+          // For a single unadorned paragraph there are no container bytes to restore.
+          // localMarkdown still reparses it and checks both boundaries before publishing.
+          if (before.childCount === 1 && after.childCount === 1 && before.firstChild?.type.name === 'paragraph' &&
+              block?.type.name === 'paragraph' && block.childCount === 1 && block.firstChild?.isText &&
+              before.firstChild.textContent === old && /^[\p{L}\p{N} ，。！？、]+$/u.test(block.textContent)) return block.textContent;
+          const written = this.serializeRichDocument(after, old, origin);
+          return preserveUntouchedSource(old, preserveInlineEdit(old, before, after, written, extensions), before, after, () => true);
+        },
+        parse);
       if (local !== null) return local;
     }
     const serialized = this.serializeRichDocument(doc, this.richInput ?? this.raw, this.richOriginText);
-    const result = this.richSnapshot ? preserveInlineEdit(this.raw, this.richSnapshot, doc, serialized) : serialized;
+    const accepts = (candidate: string) => {
+      try { return matchesRichDocument(parse(splitFrontmatter(candidate).body), doc); } catch { return false; }
+    };
+    let result = serialized;
+    // A brand-new untitled document has no opening bytes and uses the writer's default ending.
+    if (this.richSnapshot && (this.raw || this.richOriginText || !this.options.isUntitled?.())) {
+      const inline = preserveInlineEdit(this.raw, this.richSnapshot, doc, serialized);
+      result = inline !== serialized && accepts(inline) ? inline :
+        preserveUntouchedSource(this.raw, serialized, this.richSnapshot, doc, accepts);
+    }
     this.blockIndex = this.indexPublished(result, doc);
     return result;
   }
@@ -864,7 +920,7 @@ export class MarkdownSurface {
         const run = docSchema(ctx);
         return async () => {
           const ready = run(); // $node registers its spec synchronously.
-          ctx.update(nodesCtx, nodes => nodes.map(([name, spec]) => [name, name === 'doc' ? { ...spec, attrs: { ...spec.attrs, croquillSourceVersion: { default: '', validate: 'string' } } } : spec]));
+          ctx.update(nodesCtx, nodes => nodes.map(([name, spec]) => [name, name === 'code_block' ? sourceCodeSchema(spec) : name === 'doc' ? { ...spec, attrs: { ...spec.attrs, croquillSourceVersion: { default: '', validate: 'string' } } } : spec]));
           const cleanup = await ready;
           return async () => { await cleanup?.(); };
         };
@@ -913,7 +969,7 @@ export class MarkdownSurface {
         },
         props: {
           handleDOMEvents: {
-            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || this.joinIndentedParagraph(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
             mousedown: (view, event) => {
               if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
               if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;

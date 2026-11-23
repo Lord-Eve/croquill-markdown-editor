@@ -177,6 +177,13 @@ describe('editor focus and history across application operations', () => {
     await page.keyboard.insertText('新文档'); expect(await text()).toBe('新文档\n');
   }, 30000);
 
+  it('preserves the absent ending when typing into an existing empty file', async () => {
+    await openFileApp(page, baseURL, { files: { [currentFile]: '' } });
+    await focusApp(page, 'rich');
+    await page.keyboard.insertText('原本是空文件');
+    expect(await text()).toBe('原本是空文件');
+  });
+
   it.each(['rich', 'source'])('retains %s focus on canceled native dialogs', async mode => {
     await openFileApp(page, baseURL); await focusApp(page, mode);
     for (const command of ['saveAs', 'open', 'image', 'folder']) {

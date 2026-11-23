@@ -45,7 +45,7 @@ describe('rich editor Markdown serialization', () => {
   }, 60000);
   afterEach(async () => { await page?.close(); });
 
-  it('uses hyphens for nested and task lists after a real rich editor edit', async () => {
+  it('keeps the original bullets for nested and task lists after a real rich editor edit', async () => {
     const output = await page.evaluate(async () => {
       const MarkdownSurface = (window as any).croqTestSurface;
       const richRoot = document.createElement('div');
@@ -59,12 +59,7 @@ describe('rich editor Markdown serialization', () => {
         return surface.getMarkdown();
       } finally { await surface.destroy(); }
     });
-    expect(output).toMatch(/^## 标题/m);
-    expect(output).toMatch(/^- 父项$/m);
-    expect(output).toMatch(/^  - 子项$/m);
-    expect(output).toMatch(/^- \[x\] 已完成$/m);
-    expect(output).toMatch(/^- \[ \] 待办$/m);
-    expect(output).not.toMatch(/^\s*[*+] /m);
+    expect(output).toBe('## 标题\n\n* 父项\n  * 子项\n\n* [x] 已完成\n* [ ] 待办\n');
   }, 30000);
 
   it('preserves untouched original syntax and CRLF across modes and undo', async () => {

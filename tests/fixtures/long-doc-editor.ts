@@ -8,6 +8,8 @@ import { preserveTableSource } from '../../src/table-source';
 import { canJoin, canSplit } from '@milkdown/kit/prose/transform';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import type { Transaction } from '@milkdown/kit/prose/state';
+import { TextSelection } from '@milkdown/kit/prose/state';
+import { addRowAfter } from '@milkdown/kit/prose/tables';
 
 function makeSurface() {
   const richRoot = document.createElement('div'), sourceRoot = document.createElement('div');
@@ -42,6 +44,8 @@ export async function corpus(name: string, source: string) {
       view.updateState(initial.apply(tr));
       surface.forceFullSerialization = true;
       const full = surface.serializeRich();
+      const canonical = surface.serializeRichDocument(view.state.doc, source, source);
+      check(hasEquivalentMarkdownStructure(full, canonical), name + ' / ' + action + ': full writer changed the structure');
       surface.blockIndex = structuredClone(baseIndex);
       const index = surface.blockIndex;
       surface.forceFullSerialization = false;
@@ -122,6 +126,10 @@ export async function fallback(prefix: string, suffix: string, insert: string, r
     v.state.doc.descendants((node,pos) => { if (node.isText && node.text === '编辑位置') at = pos; });
     check(at >= 0, 'missing edit point ' + reason);
     if (reason === 'missing index') s.blockIndex = null;
+    if (reason === 'mismatched source range') {
+      // Simulate a stale index pointing one character into the edited paragraph.
+      s.blockIndex.ranges[v.state.doc.resolve(at).index(0)].from++;
+    }
     if (reason === 'changed context') s.richContextVersion = 'old';
     const index = s.blockIndex;
     v.dispatch(v.state.tr.insertText(insert, at));
@@ -134,6 +142,7 @@ export async function fallback(prefix: string, suffix: string, insert: string, r
       return;
     }
     const actual = s.getMarkdown();
+    if (reason === 'mismatched source range') check(actual === source.replace('编辑位置', insert + '编辑位置'), 'Lost text after rejected splice');
     check(!index || s.blockIndex !== index, 'Expected fallback: ' + reason);
     check(actual.includes('编辑位置') && doc === v.state.doc, reason);
     const ref = makeSurface();
@@ -164,4 +173,53 @@ export function sharedTrees() {
     check(tree === parseMarkdownAst(original) && gfm === parseMarkdownAst(original, 'gfm'), 'Pinned trees evicted');
     check(snapshots[0] !== snapshots[1] && snapshots[0] === JSON.stringify(tree) && snapshots[1] === JSON.stringify(gfm), 'Shared tree mutated');
   } finally { release(); }
+}
+
+export async function editSource(source: string, target: string, action: string) {
+  const s = makeSurface();
+  try {
+    await s.load(source);
+    check(s.mode === 'rich', 'Sample opened in source mode');
+    const view: EditorView = s.richView();
+    let at = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (at >= 0 || !node.isText) return;
+      if (!target && node.text && source.split(node.text).length === 2) target = node.text;
+      if (target && node.text?.includes(target)) at = pos + node.text.indexOf(target) + target.length;
+    });
+    check(at >= 0, 'Missing target: ' + target);
+    const select = (pos: number) => view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
+    select(at);
+    const key = (key: string, shiftKey = false) => {
+      const event = new KeyboardEvent('keydown', { key, shiftKey, keyCode: key === 'Enter' ? 13 : 8, bubbles: true, cancelable: true });
+      view.dom.dispatchEvent(event);
+    };
+    if (action === 'split' || action === 'item') {
+      key('Enter');
+      if (action === 'item') view.dispatch(view.state.tr.insertText('新桨'));
+    }
+    else if (action === 'break') key('Enter', true);
+    else if (action === 'join') { select(at - target.length); key('Backspace'); }
+    else if (action === 'delete') {
+      const pos = view.state.doc.resolve(at);
+      view.dispatch(view.state.tr.delete(pos.before(1), pos.after(1)));
+    } else if (action === 'row') {
+      check(addRowAfter(view.state, view.dispatch), 'Could not add table row');
+      const cells: number[] = [];
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'table_row' && !node.textContent) node.forEach((_cell, offset) => cells.push(pos + offset + 3));
+      });
+      const tr = view.state.tr;
+      cells.reverse().forEach(pos => tr.insertText('新', pos));
+      view.dispatch(tr);
+    } else if (action === 'paste') view.pasteText('粘贴内容');
+    else {
+      if (action === 'composition') view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: 'zi' }));
+      view.dispatch(view.state.tr.insertText('字', at));
+      if (action === 'composition') view.dom.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '字' }));
+    }
+    const saved = s.getMarkdown();
+    s.format('undo');
+    return { target, saved, undone: s.getMarkdown() };
+  } finally { await s.destroy(); }
 }

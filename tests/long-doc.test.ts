@@ -36,6 +36,57 @@ describe('long document publishing', () => {
     await page.evaluate(() => (window as any).checks.sharedTrees());
   });
 
+  const sample = readFileSync(new URL('save-untouched.md', examples), 'utf8');
+  const edits = [
+    ...['河岸手记', '夜航', '潮汐记录', '船舷', '绳结', '灯芯', '春', '老桥', '星轮', '木桨', '放缆',
+      'echo tide', '蓝色浮标', '南岸灯塔', 'a+b', '船长', '礁石', '收起风帆'].map(target => ['insert', target, target, target + '字']),
+    ['split', '甲板上', '甲板上', '甲板上\n\n'],
+    ['break', '甲板上', '甲板上', '甲板上\n'],
+    ['join', '船舷投下了倒影。', '钟声。\n\n\n\n  船舷', '钟声。  船舷'],
+    ['delete', '物资清单', '物资清单\n\n', ''],
+    ['paste', '灯芯', '灯芯', '灯芯粘贴内容'],
+    ['row', '石滩', '| 石滩 | 三公里 |', '| 石滩 | 三公里 |\n| 新 | 新 |'],
+    ['item', '木桨', '+ 木桨', '+ 木桨\n+ 新桨'],
+    ['composition', '海图', '海图', '海图字'],
+  ];
+  for (const [action, target, old, replacement] of edits) {
+    it.each(['public', 'short'])('%s preserves exact bytes on ' + action + ' at ' + target, async size => {
+      const block = sample.split(/\n{2,}/).find(s => s.includes(target))!;
+      const short = action === 'join' ? '甲板上听见钟声。\n\n\n\n  船舷投下了倒影。' :
+        action === 'delete' ? block + '\n\n尾页' : '卷首\n====\n\n' + block + '\n\n尾页';
+      const source = size === 'public' ? sample : short;
+      const result = await page.evaluate(args => (window as any).checks.editSource(...args), [source, target, action]);
+      expect(source).toContain(old);
+      expect(result.saved).toBe(source.replace(old, replacement));
+    });
+  }
+  it.each(['CRLF', 'BOM', 'BOM + CRLF'])('preserves transport bytes and undo for %s', async format => {
+    let source = format.includes('CRLF') ? sample.replace(/\n/g, '\r\n') : sample;
+    if (format.includes('BOM')) source = '\uFEFF' + source;
+    for (const target of ['河岸手记', '老桥', 'echo tide', '收起风帆']) {
+      const result = await page.evaluate(args => (window as any).checks.editSource(...args), [source, target, 'insert']);
+      expect(result.saved).toBe(source.replace(target, target + '字'));
+      expect(result.undone).toBe(source);
+    }
+  });
+  it.each([
+    ['  首段\n\n  次段\n\n\n', '次段', 'insert', '  首段\n\n  次段字\n\n\n'],
+    ['  首段\n\n  次段\n\n\n', '首段', 'delete', '  次段\n\n\n'],
+    ['### 页首 ###\n\n尾页\n\n\n', '尾页', 'delete', '### 页首 ###\n\n\n'],
+    ['卷首\n====\n\n003)   上船\n004)   下船', '下船', 'insert', '卷首\n====\n\n003)   上船\n004)   下船字'],
+    ['卷首\n====\n\n003)   上船\n004)   下船', '下船', 'item', '卷首\n====\n\n003)   上船\n004)   下船\n004)   新桨'],
+    ['|春|秋|\n|:---|---:|\n|甲|乙|', '乙', 'row', '|春|秋|\n|:---|---:|\n|甲|乙|\n|新|新|'],
+    ['>  岸边\n>    空船\n>  灯火', '空船', 'insert', '>  岸边\n>    空船字\n>  灯火'],
+    ['~~~~text\r\n岸边\n空船\r灯火\r\n~~~~', '空船', 'insert', '~~~~text\r\n岸边\n空船字\r灯火\r\n~~~~'],
+  ])('preserves boundary spelling in %s', async (source, target, action, expected) => {
+    const result = await page.evaluate(args => (window as any).checks.editSource(...args), [source, target, action]);
+    expect(result.saved).toBe(expected);
+  });
+  it.each(samples.filter(s => s.name.endsWith('.md')))('$name keeps every other byte on typing', async ({source}) => {
+    const result = await page.evaluate(s => (window as any).checks.editSource(s, '', 'insert'), source);
+    expect(result.saved).toBe(source.replace(result.target, result.target + '字'));
+  });
+
   it('keeps every mapped block aligned over 50 seeded edits', async () => {
     await page.evaluate(() => (window as any).checks.repeated());
   });
@@ -52,6 +103,7 @@ describe('long document publishing', () => {
     ['exact source',before,after,'字'],
     ['missing index',before,after,'字'],
     ['changed context',before,after,'字'],
+    ['mismatched source range',before,after,'保留输入'],
   ])('falls back for %s', async (reason,prefix,suffix,insert) => {
     await page.evaluate(args => (window as any).checks.fallback(...args),[prefix,suffix,insert,reason]);
   });

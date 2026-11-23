@@ -422,14 +422,9 @@ describe('block HTML rendering and inline editing in the rich editor', () => {
       textarea.setSelectionRange(idx, idx + 2);
     });
     await page.keyboard.type('新行');
-    expect(await page.evaluate(() => (window as any).htmlHarness.surface.getMarkdown())).toBe(
-      '上段\n\n<div>\r\n新行\r\n</div>\r\n\r\n\r\n下段\n',
-    );
+    expect(await page.evaluate(() => (window as any).htmlHarness.surface.getMarkdown())).toBe(crlfDoc.replace('旧行', '新行'));
     await page.keyboard.press('Escape');
-    const crlfSaved = await page.evaluate(async () => {
-      const text = await (window as any).htmlHarness.save();
-      return text.replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n');
-    });
+    const crlfSaved = await page.evaluate(() => (window as any).htmlHarness.save());
     expect(crlfSaved).toBe(crlfDoc.replace('旧行', '新行'));
   });
 
