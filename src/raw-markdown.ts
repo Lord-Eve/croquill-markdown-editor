@@ -22,7 +22,7 @@ export interface HtmlBlockPluginOptions {
   defaultLineEnding?: () => string;
 }
 
-const RAW_BLOCK_NODE_NAME = 'croquill_raw_block';
+export const RAW_BLOCK_NODE_NAME = 'croquill_raw_block';
 const TRAILING_SPACE_RE = /([ \t\r\n]*)$/;
 const FIRST_NEWLINE_RE = /\r\n|\r|\n/;
 
@@ -37,7 +37,7 @@ function normalizeDisplayNewlines(text: string): string {
   return text.replace(/\r\n|\r/g, '\n');
 }
 
-function splitRawTail(value: string, fallbackLineEnding = '\n'): { body: string; tail: string; lineEnding: string } {
+export function splitRawTail(value: string, fallbackLineEnding = '\n'): { body: string; tail: string; lineEnding: string } {
   const match = TRAILING_SPACE_RE.exec(value);
   const tail = match ? match[1] : '';
   const body = tail ? value.slice(0, value.length - tail.length) : value;
@@ -193,7 +193,7 @@ class HtmlBlockNodeView implements NodeView {
     this.preview.replaceChildren(fragment);
   }
 
-  enterEdit(): void {
+  enterEdit(caret?: number): void {
     if (this.destroyed || this.editing) return;
     const pos = this.getPos();
     if (pos != null) {
@@ -214,7 +214,7 @@ class HtmlBlockNodeView implements NodeView {
     this.syncVisibility();
     this.autoResize();
     this.textarea.focus();
-    const end = this.textarea.value.length;
+    const end = caret ?? this.textarea.value.length;
     this.textarea.setSelectionRange(end, end);
   }
 
@@ -343,6 +343,7 @@ class HtmlBlockNodeView implements NodeView {
       event.preventDefault();
       if (event.shiftKey) richRedo(this.view.state, this.view.dispatch, this.view);
       else richUndo(this.view.state, this.view.dispatch, this.view);
+      if (!(this.view.state.selection instanceof NodeSelection) && this.editing) this.view.focus();
       return;
     }
     if (mod && !event.shiftKey && key === 'y') {
@@ -482,6 +483,11 @@ export function handleHtmlBlockKey(view: EditorView, event: KeyboardEvent): bool
   event.preventDefault();
   nodeView.enterEdit();
   return true;
+}
+
+export function openHtmlSourceAt(view: EditorView, position: number, caret: number): void {
+  const dom = view.nodeDOM(position);
+  if (dom instanceof HTMLElement) htmlViewsByDom.get(dom)?.enterEdit(caret);
 }
 
 /** Registers the ProseMirror node view plugin that renders pure HTML raw blocks in WYSIWYG mode. */

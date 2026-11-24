@@ -19,6 +19,12 @@ fn reveal_export(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn resolve_document_link(document_path: Option<String>, address: String) -> Result<documents::LinkTarget, String> {
+    tauri::async_runtime::spawn_blocking(move || documents::resolve_document_link(document_path.as_deref(), &address))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn document_exists(path: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || documents::document_exists(&path)).await.map_err(|e| e.to_string())?
 }
@@ -165,7 +171,7 @@ pub fn run() {
             #[cfg(not(windows))] let _ = app;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path, document_exists, rebase_image_paths, open_external_link, export_pdf, reveal_export])
+        .invoke_handler(tauri::generate_handler![read_document, write_document, read_local_image, import_image, list_document_folder, initial_path, resolve_document_link, document_exists, rebase_image_paths, open_external_link, export_pdf, reveal_export])
         .run(tauri::generate_context!())
         .expect("Croquill 桌面窗口启动失败");
 }

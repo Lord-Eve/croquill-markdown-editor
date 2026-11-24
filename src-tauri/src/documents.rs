@@ -98,6 +98,53 @@ pub fn read_document(path: &str) -> Result<Document, String> {
     })
 }
 
+#[derive(serde::Serialize, Debug)]
+pub struct LinkTarget {
+    pub path: String,
+    pub markdown: bool,
+}
+
+pub fn resolve_document_link(document_path: Option<&str>, address: &str) -> Result<LinkTarget, String> {
+    fn validate(value: &str) -> Result<(), String> {
+        if value.trim().is_empty() || value.len() > 32767 || value.chars().any(char::is_control) {
+            return Err("本地链接路径无效。".into());
+        }
+        Ok(())
+    }
+    validate(address)?;
+    let decoded = percent_decode_str(address).decode_utf8().map_err(|_| "链接路径编码无效。")?;
+    validate(&decoded)?;
+    let local = if address.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("file:")) {
+        tauri::Url::parse(address).ok().and_then(|url| url.to_file_path().ok())
+            .filter(|p| p.is_absolute()).ok_or("file 链接需要绝对路径。")?
+    } else {
+        PathBuf::from(decoded.as_ref())
+    };
+    let spelling = local.to_string_lossy().replace('/', "\\");
+    let drive = spelling.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && spelling.as_bytes().get(1) == Some(&b':');
+    if spelling.starts_with(r"\\?\") || spelling.starts_with(r"\\.\") ||
+        spelling[if drive { 2 } else { 0 }..].contains(':') || drive && !local.is_absolute() {
+        return Err("暂不支持打开此类链接".into());
+    }
+    let path = if local.is_absolute() { local } else {
+        Path::new(document_path.ok_or("请先保存文档，再打开相对路径链接。")?)
+            .parent().ok_or("当前文档没有所在目录。")?.join(local)
+    };
+    let mut candidate = path.clone();
+    if !path.try_exists().map_err(|e| e.to_string())? && path.extension().is_none() {
+        for ext in ["md", "markdown"] {
+            let fallback = path.with_extension(ext);
+            if fallback.is_file() { candidate = fallback; break; }
+        }
+    }
+    let resolved = fs::canonicalize(candidate).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("找不到文件：{}", path.file_name().unwrap_or(path.as_os_str()).to_string_lossy())
+        } else { format!("无法读取链接目标：{e}") }
+    })?;
+    Ok(LinkTarget { markdown: resolved.is_file() && crate::folders::is_markdown(&resolved), path: display_path(&resolved) })
+}
+
 pub fn document_exists(path: &str) -> Result<bool, String> {
     match fs::metadata(path) {
         Ok(metadata) => Ok(metadata.is_file()),
@@ -604,6 +651,37 @@ mod save_as_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_local_document_links_and_fallbacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let doc = sub.join("本页.md");
+        let other = tmp.path().join("Other File.MDOWN");
+        fs::write(&other, "").unwrap();
+        let resolve = |s: &str| resolve_document_link(doc.to_str(), s).unwrap();
+        assert!(resolve("../Other%20File.MDOWN").markdown);
+        assert!(resolve_document_link(None, tauri::Url::from_file_path(&other).unwrap().as_str()).unwrap().markdown);
+        assert!(resolve_document_link(None, other.to_str().unwrap()).unwrap().markdown);
+        for ext in ["markdown", "md"] {
+            fs::write(sub.join(format!("Readme.{ext}")), "").unwrap();
+            assert!(resolve("Readme").path.ends_with(&format!("Readme.{ext}")));
+        }
+        fs::write(sub.join("Readme"), "").unwrap();
+        assert!(!resolve("Readme").markdown);
+        assert!(!resolve("..").markdown);
+    }
+
+    #[test]
+    fn validates_local_document_link_paths() {
+        for bad in ["", " ", "a\nb", "%09", "%00", "other:scheme", r"\\.\pipe\test", &"x".repeat(32768)] {
+            assert!(resolve_document_link(Some("C:/doc.md"), bad).is_err());
+        }
+        assert!(resolve_document_link(None, "other.md").unwrap_err().contains("请先保存"));
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_document_link(tmp.path().join("doc.md").to_str(), "absent").unwrap_err(), "找不到文件：absent");
+    }
 
     fn file_path(directory: &tempfile::TempDir, name: &str) -> String {
         directory.path().join(name).to_string_lossy().into_owned()

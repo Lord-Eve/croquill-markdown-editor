@@ -11,13 +11,14 @@ import { imageBlockSchema } from '@milkdown/kit/component/image-block';
 import { $inputRule, $prose } from '@milkdown/kit/utils';
 import { InputRule } from '@milkdown/kit/prose/inputrules';
 import { Typewriter, writingDecorations } from './writing-modes';
+import { handleBlockBoundary } from './block-boundary';
 import { NodeSelection, Plugin, Selection, TextSelection, type Command, type Transaction as ProseTransaction } from '@milkdown/kit/prose/state';
 import type { EditorView as RichView } from '@milkdown/kit/prose/view';
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
 import { closeHistory, undo as richUndo, redo as richRedo } from '@milkdown/kit/prose/history';
 import type { Node as RichNode } from '@milkdown/kit/prose/model';
-import { EditorState, EditorSelection, Transaction } from '@codemirror/state';
+import { Prec, EditorState, EditorSelection, Transaction } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, undo, redo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
@@ -39,8 +40,9 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts } from './alerts';
 import { highlightMark } from './highlight';
 import { configureInlineSource } from './inline-source-markdown';
-import { blockSpans, deleteHeadingAttribute, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax } from './inline-source-view';
-import { hasExternalLinkScheme, INLINE_OBJECT } from './inline-source';
+import { blockSpans, deleteHeadingAttribute, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax, visibleText } from './inline-source-view';
+import { customHeadingId, matchHeading } from './heading-anchors';
+import { INLINE_OBJECT } from './inline-source';
 import { hasPlainExtension, preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import { richMarkdownTransforms } from './rich-markdown';
@@ -610,6 +612,31 @@ export class MarkdownSurface {
     return measured[index]?.index ?? -1;
   }
 
+  jumpToFragment(fragment: string): boolean {
+    if (this.currentMode === 'source' && this.source) {
+      const source = this.source;
+      const headings = this.getOutline().map(h => ({ text: h.text, custom: customHeadingId(source.state.doc.line(h.line).text) }));
+      const index = matchHeading(headings, fragment);
+      if (index < 0) return false;
+      this.scrollToHeading(index);
+    } else {
+      const view = this.richView();
+      const headings: { pos: number; text: string; custom?: string }[] = [];
+      view.state.doc.descendants((node, pos) => {
+        if (node.type.name !== 'heading') return !node.isTextblock;
+        const run = node.textBetween(0, node.content.size, '', INLINE_OBJECT);
+        headings.push({ pos, text: visibleText(run, true), custom: customHeadingId(run) });
+        return false;
+      });
+      const heading = headings[matchHeading(headings, fragment)];
+      if (!heading) return false;
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, heading.pos + 1)).scrollIntoView());
+      (view.nodeDOM(heading.pos) as HTMLElement)?.scrollIntoView({ block: 'start' });
+    }
+    this.focus();
+    return true;
+  }
+
   scrollToHeading(index: number): void {
     this.typewriter?.cancel();
     if (this.currentMode === 'source' && this.source) {
@@ -703,6 +730,22 @@ export class MarkdownSurface {
   }
 
   private richView(): RichView { return this.crepe!.editor.action((ctx) => ctx.get(editorViewCtx)); }
+
+  private handleBlockBoundaryKey(view: RichView, event: KeyboardEvent): boolean {
+    // Raw HTML owns its trailing separator. After joining, inherit the one
+    // following the removed paragraph (including a missing final newline).
+    return handleBlockBoundary(view, event, paragraph => {
+      const raw = this.getMarkdown(), { $from } = view.state.selection;
+      const i = $from.index(0), ranges = this.blockIndex?.ranges;
+      if ($from.depth === 1 && ranges?.[i]) {
+        const { from, to } = ranges[i];
+        return { text: raw.slice(from, to), tail: raw.slice(to, ranges[i + 1]?.from).match(/^[\r\n \t]*/)![0] };
+      }
+      const text = paragraph.content.content.every(child => child.isText && !child.marks.length) ? paragraph.textContent :
+        this.writeRichBody(view.state.doc.type.create(null, paragraph)).replace(/\n$/, '');
+      return { text };
+    });
+  }
 
   private joinIndentedParagraph(view: RichView, event: KeyboardEvent): boolean {
     if (event.key !== 'Backspace' || view.composing || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return false;
@@ -876,6 +919,22 @@ export class MarkdownSurface {
             onUpload: async (file: File) => (await this.options.uploadImage?.(file)) || '',
           },
           [Crepe.Feature.CodeMirror]: {
+            extensions: [Prec.highest(EditorView.domEventHandlers({
+              keydown: (event, cm) => {
+                if (event.isComposing || cm.composing) return false;
+                if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'z') {
+                  const view = this.richView();
+                  (event.shiftKey ? richRedo : richUndo)(view.state, view.dispatch);
+                  if (view.state.selection.$from.parent.type.name !== 'code_block') view.focus();
+                  event.preventDefault(); return true;
+                }
+                if (event.key !== 'Backspace' || !cm.state.selection.main.empty || cm.state.selection.main.head !== 0) return false;
+                const view = this.richView();
+                const block = cm.dom.closest('.milkdown-code-block');
+                if (!block || view.state.selection.$from.parent.attrs.language !== 'LaTeX') return false;
+                event.preventDefault(); return true;
+              },
+            }))],
             theme: [syntaxHighlighting(classHighlighter), syntaxHighlighting(tagHighlighter([
               { tag: tags.bracket, class: 'tok-bracket' },
               { tag: tags.tagName, class: 'tok-tagName' },
@@ -976,7 +1035,7 @@ export class MarkdownSurface {
         },
         props: {
           handleDOMEvents: {
-            keydown: (view, event) => handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || this.joinIndentedParagraph(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            keydown: (view, event) => this.handleBlockBoundaryKey(view, event) || handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || this.joinIndentedParagraph(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
             mousedown: (view, event) => {
               if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
               if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;
@@ -990,8 +1049,7 @@ export class MarkdownSurface {
                 if (!hit) return false;
                 event.preventDefault();
                 const href = hit.href ?? '';
-                if (hit.html?.tag === 'a' && !hasExternalLinkScheme(href)) this.options.onLinkHint?.('暂不支持打开此类链接');
-                else this.options.onOpenLink?.(href);
+                this.options.onOpenLink?.(href);
                 return true;
               }
               if (!event.ctrlKey && !event.metaKey && !event.altKey && !this.linkHintShown && view.state.selection.empty) {
@@ -1015,11 +1073,26 @@ export class MarkdownSurface {
           },
           decorations: writingDecorations,
         },
-        view: () => ({ update: (view, previous) => {
-          if (this.suppress || this.destroyed || this.currentMode !== 'rich' || view.state.doc.eq(previous.doc)) return;
-          this.options.onEdit?.();
-          this.notifyRichChange();
-        } }),
+        view: view => {
+          const reset = () => view.dom.classList.remove('ctrl-links');
+          const modifier = (event: KeyboardEvent) => {
+            if (!event.isComposing && !view.composing) view.dom.classList.toggle('ctrl-links', event.ctrlKey);
+          };
+          window.addEventListener('keydown', modifier, true);
+          window.addEventListener('keyup', modifier, true);
+          window.addEventListener('blur', reset);
+          view.dom.addEventListener('compositionstart', reset);
+          return { destroy() {
+            window.removeEventListener('keydown', modifier, true);
+            window.removeEventListener('keyup', modifier, true);
+            window.removeEventListener('blur', reset);
+            view.dom.removeEventListener('compositionstart', reset);
+          }, update: (view, previous) => {
+            if (this.suppress || this.destroyed || this.currentMode !== 'rich' || view.state.doc.eq(previous.doc)) return;
+            this.options.onEdit?.();
+            this.notifyRichChange();
+          } };
+        },
       })));
       if (rawOffset !== undefined) crepe.editor.use(initializeRichModePosition(this.raw, rawOffset));
       await crepe.create();

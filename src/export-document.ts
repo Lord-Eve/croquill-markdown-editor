@@ -6,6 +6,7 @@ import { LanguageDescription } from '@codemirror/language';
 import { classHighlighter, highlightTree } from '@lezer/highlight';
 import { parsePositionedRichMarkdown } from './rich-markdown';
 import { splitFrontmatter } from './fidelity';
+import { allocateIds, customHeadingId, headingId } from './heading-anchors';
 import { headingAttributes, INLINE_OBJECT, inlineSyntaxSpans, type InlineSpan } from './inline-source';
 import { inlineHtmlStyle, sanitizeHtmlFragment } from './html-sanitize';
 import { parseMarkdownAst } from './markdown-ast';
@@ -130,11 +131,9 @@ export async function exportDocument(markdown: string, name: string, activeTheme
       openings.get(span.from)!.push(span); closings.get(span.to)!.push(span);
       hide(span.from, span.innerFrom); hide(span.innerTo, span.to);
     }
-    for (const range of attributes) {
-      hide(range.from, range.to);
-      const id = /#([^\s}]+)/u.exec(run.slice(range.from, range.to))?.[1];
-      if (id && !preferredIds.has(parent)) preferredIds.set(parent, id);
-    }
+    for (const range of attributes) hide(range.from, range.to);
+    const custom = customHeadingId(run, attributes);
+    if (custom) preferredIds.set(parent, custom);
     for (const offset of objects.keys()) { points.add(offset); points.add(offset + 1); }
     const offsets = [...points].sort((a, b) => a - b);
     const active = new Set<InlineSpan>();
@@ -270,13 +269,7 @@ export async function exportDocument(markdown: string, name: string, activeTheme
   for (const child of tree.children ?? []) main.append(render(child, true));
   const elementsWithIds = Array.from(doc.querySelectorAll('[id]'));
   const usedIds = new Set(elementsWithIds.filter(el => !htmlSourceIds.has(el)).map(el => el.id));
-  const nextSuffix = new Map<string, number>();
-  function uniqueId(base: string) {
-    let id = base, suffix = nextSuffix.get(base) ?? 1;
-    while (usedIds.has(id)) id = base + '-' + suffix++;
-    usedIds.add(id); nextSuffix.set(base, suffix);
-    return id;
-  }
+  const uniqueId = allocateIds(usedIds);
   // Keep the sanitizer's ID on surviving HTML elements and redirect authored links to it.
   const htmlAnchors = new Map<string, string>();
   for (const el of elementsWithIds) {
@@ -296,7 +289,7 @@ export async function exportDocument(markdown: string, name: string, activeTheme
     for (const sup of entry.refs) sup.replaceWith('[^' + sup.textContent + ']');
   }
   for (const h of main.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')) {
-    if (!h.id) h.id = uniqueId(preferredIds.get(h) || h.textContent?.trim() || 'heading');
+    if (!h.id) h.id = headingId(h.textContent || '', preferredIds.get(h), uniqueId);
   }
   for (const toc of tocs) for (const h of headings) {
     const a = link('#' + h.id, h.textContent || '（空标题）'); a.style.setProperty('--level', h.tagName.slice(1)); toc.append(a);

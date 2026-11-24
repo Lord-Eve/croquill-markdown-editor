@@ -52,6 +52,9 @@ const ENTITY = /^&(?:#[xX][\da-fA-F]{1,6}|#\d{1,7}|[A-Za-z][A-Za-z\d]{1,31});/;
 
 const LINK_ENTITY_OR_BACKSLASH = new RegExp(`\\\\|${ENTITY.source.slice(1)}`, 'g');
 export const hasExternalLinkScheme = (url: string): boolean => /^(?:https?:\/\/|mailto:)/i.test(url);
+export const canOpenLink = (url: string): boolean => !!url.trim() && !/[\u0000-\u001f\u007f]/.test(url) &&
+  (hasExternalLinkScheme(url) || /^file:\/\/\/|^[a-z]:[\\/]/i.test(url) || !/^[a-z][a-z\d+.-]*:/i.test(url.trim()));
+
 /** Escape backslashes and Markdown-decodable entities inside link destinations/titles so they roundtrip verbatim. */
 export function escapeLinkValue(value: string): string {
   return value.replace(LINK_ENTITY_OR_BACKSLASH, match =>
