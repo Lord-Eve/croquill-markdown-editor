@@ -77,7 +77,8 @@ button:hover { background:var(--hover); }
 #rich-root.focus-mode .list-item:has(> .children > .content-dom > .tx-focus-block) > .label-wrapper { opacity:1; }
 .milkdown { --crepe-color-background:var(--bg); --crepe-color-on-background:var(--fg); --crepe-color-surface:var(--chrome); --crepe-color-surface-low:var(--code); --crepe-color-on-surface:var(--fg); --crepe-color-on-surface-variant:var(--quote); --crepe-color-outline:var(--border); --crepe-color-primary:var(--accent); --crepe-color-secondary:var(--soft-accent); --crepe-color-inline-code:var(--accent); --crepe-color-hover:var(--hover); --crepe-font-default:'Segoe UI','Microsoft YaHei',sans-serif; --crepe-font-title:'Segoe UI','Microsoft YaHei',sans-serif; --crepe-font-code:'Cascadia Code',Consolas,monospace; background:transparent!important; color:var(--fg); }
 .milkdown .ProseMirror { max-width:var(--editor-width); margin:0 auto; padding:30px 30px 100px; min-height:calc(100vh - 100px); font-family:'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif; font-size:var(--editor-font-size); line-height:1.6; color:var(--fg); caret-color:var(--fg); outline:none; word-wrap:break-word; }
-.milkdown .ProseMirror > :first-child { margin-top:0; }
+.milkdown .long-document [data-layout-height]:not(.tx-active-block,td *,th *,:focus-within,:hover) { content-visibility:var(--offscreen-layout, auto); contain-intrinsic-block-size:auto attr(data-layout-height px); }
+.milkdown .long-document:not([data-toc-reflow]) > nav[data-croquill-toc]:is(:not(:first-of-type),[data-toc-sized]) { content-visibility:var(--offscreen-layout, auto); contain-intrinsic-block-size:auto var(--toc-height, calc(var(--toc-rows, 1) * 2.1em)); }
 .milkdown .ProseMirror p { margin:.8em 0; line-height:1.6; }
 .milkdown .ProseMirror :is(h1,h2,h3,h4,h5,h6) { font-family:inherit; color:var(--fg); font-weight:700; font-size:var(--heading-size); line-height:var(--heading-leading,1.4); margin:1rem 0; letter-spacing:0; position:relative; }
 .milkdown .ProseMirror :is(h1,h2) { padding-bottom:.3em; border-bottom:1px solid var(--border); }
@@ -130,6 +131,10 @@ button:hover { background:var(--hover); }
 .milkdown .milkdown-code-block .milkdown-code-block-placeholder { padding:0 4px; font-size:inherit; }
 /* CodeMirror 6 semantic classes, using the official CodeMirror 5 palette. */
 .milkdown .ProseMirror table { border-collapse:collapse; width:100%; font-size:1em; line-height:var(--table-line-height); margin:1em 0; }
+/* The table's margins normally collapse through this wrapper. Keep them on
+   the outside when offscreen containment establishes a formatting context. */
+.milkdown .long-document .table-wrapper:has(> table.children) { margin:1em 0; }
+.milkdown .long-document .table-wrapper > table.children { margin:0; }
 .milkdown .ProseMirror table th, .milkdown .ProseMirror table td { border:1px solid var(--table-border); padding:var(--table-cell-padding); min-width:65px; }
 .milkdown .ProseMirror table :is(th, td) > p { margin:0; padding:0; line-height:inherit; }
 .milkdown .ProseMirror table th { font-weight:700; background:var(--table-stripe); }
