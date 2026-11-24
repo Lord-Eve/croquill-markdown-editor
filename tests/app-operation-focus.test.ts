@@ -28,10 +28,18 @@ describe('editor focus and history across application operations', () => {
       document.activeElement!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
     }, value);
   }
-  // Ctrl+Home / Ctrl+End moves the rich DOM caret first; ProseMirror's model follows on a
-  // later selectionchange. A paste dispatched in between lands at the old model position.
+  // Setup only: put the caret at a document edge. In rich mode ProseMirror's focus handler
+  // re-applies its model selection to the DOM 20 ms after focus; a key pressed right after
+  // focusApp() can move the DOM caret before the model catches up, and that timer then puts
+  // the caret back. Set the model selection directly instead. Source mode keeps the keys.
   async function caretTo(edge: 'start' | 'end') {
-    await page.keyboard.press(edge === 'start' ? 'Control+Home' : 'Control+End');
+    const rich = await page.evaluate(edge => {
+      const s = (window as any).fileApp.surface; if (s.mode === 'source') return false;
+      const view = s.richView(), Selection = view.state.selection.constructor;
+      view.dispatch(view.state.tr.setSelection(edge === 'start' ? Selection.atStart(view.state.doc) : Selection.atEnd(view.state.doc)));
+      return true;
+    }, edge);
+    if (!rich) await page.keyboard.press(edge === 'start' ? 'Control+Home' : 'Control+End');
     await page.waitForFunction(edge => {
       const s = (window as any).fileApp.surface;
       if (s.mode === 'source') {
@@ -70,7 +78,12 @@ describe('editor focus and history across application operations', () => {
     const original = '原文尾巴\n';
     await openFileApp(page, baseURL, { files: { [currentFile]: original } });
     await focusApp(page, mode); await caretTo('start'); await paste();
-    await page.keyboard.press('Shift+ArrowRight');
+    // Setup only; see caretTo() for why rich mode sets the selection directly.
+    if (mode === 'rich') await page.evaluate(() => {
+      const view = (window as any).fileApp.surface.richView(), head = view.state.selection.head;
+      view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, head, head + 1)));
+    });
+    else await page.keyboard.press('Shift+ArrowRight');
     await page.waitForFunction(() => {
       const s = (window as any).fileApp.surface, r = s.mode === 'source' ? s.source.state.selection.main : s.richView().state.selection;
       return r.to > r.from;
@@ -145,7 +158,12 @@ describe('editor focus and history across application operations', () => {
     it(`restores ${mode} focus after the native ${command} dialog completes`, async () => {
       const next = command === 'folder' ? 'D:/验收' : command === 'image' ? 'D:/图片.png' : 'D:/下一篇.md';
       await openFileApp(page, baseURL, { files: { [currentFile]: '原文尾巴\n', [next]: '新文件\n' } }); await focusApp(page, mode);
-      await page.keyboard.press('Control+Home'); await page.keyboard.press('ArrowRight');
+      // Setup only; see caretTo() for why rich mode sets the selection directly.
+      if (mode === 'rich') await page.evaluate(() => {
+        const view = (window as any).fileApp.surface.richView();
+        view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.near(view.state.doc.resolve(2))));
+      });
+      else { await page.keyboard.press('Control+Home'); await page.keyboard.press('ArrowRight'); }
       await page.waitForFunction(() => { const s = (window as any).fileApp.surface; return s.mode === 'source' ? s.source.state.selection.main.from === 1 : s.richView().state.selection.from === 2; });
       const before = await page.evaluate(() => { const s = (window as any).fileApp.surface; const r = s.mode === 'source' ? s.source.state.selection.main : s.richView().state.selection; return { from: r.from, to: r.to }; });
       await page.evaluate(({ command, next }) => {
