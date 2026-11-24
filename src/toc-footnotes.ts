@@ -196,6 +196,7 @@ export const tocFootnotePlugin = $prose(() => {
   // All consumers of the same immutable snapshot share one traversal.
   let cached: { doc: RichNode; index: DocumentIndex } | undefined;
   let tocTemplate: { signature: string; fragment: DocumentFragment } | undefined;
+  let tocLayoutFrame = 0;
   function currentIndex(view: EditorView): DocumentIndex {
     const doc = view.state.doc;
     if (cached?.doc !== doc) cached = { doc, index: indexOf(doc) };
@@ -217,9 +218,17 @@ export const tocFootnotePlugin = $prose(() => {
           const instance = { refresh: () => {
             const { headings, headingSignature: next } = currentIndex(view);
             if (next === signature) return; signature = next;
-            dom.removeAttribute('data-toc-sized');
             dom.style.setProperty('--toc-rows', String(Math.max(1, headings.length)));
             if (tocTemplate?.signature !== next) {
+              if (tocTemplate && view.dom.classList.contains('long-document')) {
+                // A visited offscreen TOC remembers its own size. Give every
+                // copy a natural layout pass when their shared contents change.
+                view.dom.setAttribute('data-toc-reflow', '');
+                cancelAnimationFrame(tocLayoutFrame);
+                tocLayoutFrame = requestAnimationFrame(() => {
+                  tocLayoutFrame = requestAnimationFrame(() => view.dom.removeAttribute('data-toc-reflow'));
+                });
+              }
               const fragment = document.createDocumentFragment();
               headings.forEach((heading, index) => {
                 const button = document.createElement('button');
@@ -292,7 +301,10 @@ export const tocFootnotePlugin = $prose(() => {
       view.dom.addEventListener('mouseover', enter); view.dom.addEventListener('focusin', enter); view.dom.addEventListener('mouseout', leave); view.dom.addEventListener('focusout', leave);
       return {
         update(current, previous) { if (current.state.doc === previous.doc) return; live.forEach(instance => instance.refresh()); if (hovered?.isConnected) show(hovered); else hide(); },
-        destroy() { view.dom.removeEventListener('mouseover', enter); view.dom.removeEventListener('focusin', enter); view.dom.removeEventListener('mouseout', leave); view.dom.removeEventListener('focusout', leave); tooltip.remove(); live.clear(); },
+        destroy() {
+          cancelAnimationFrame(tocLayoutFrame); view.dom.removeAttribute('data-toc-reflow');
+          view.dom.removeEventListener('mouseover', enter); view.dom.removeEventListener('focusin', enter); view.dom.removeEventListener('mouseout', leave); view.dom.removeEventListener('focusout', leave); tooltip.remove(); live.clear();
+        },
       };
     },
   });

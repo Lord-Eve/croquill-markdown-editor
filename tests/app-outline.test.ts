@@ -61,6 +61,30 @@ describe('outline follow, folding, and top-level alignment in real app', () => {
     '```text\n一行代码\n另一行代码\n```', '[TOC]',
   ].join('\n\n');
 
+  it('refreshes the remembered height of three visited TOCs after adding a heading', async () => {
+    await open(['# 开头', '新增章节', '[TOC]', filler('上半篇', 130), '[TOC]',
+      filler('下半篇', 130), '[TOC]', '末段'].join('\n\n'));
+    const tocs = page.locator('#rich-root .long-document > nav[data-croquill-toc]');
+    expect(await tocs.count()).toBe(3);
+    for (const index of [1, 2, 0]) {
+      await tocs.nth(index).evaluate(nav => nav.scrollIntoView({ block: 'center' }));
+      await settleFrames();
+    }
+    await page.locator('#rich-root .ProseMirror > p').first().click();
+    await page.keyboard.press('Control+2');
+    await page.waitForFunction(() => {
+      const navs = document.querySelectorAll('#rich-root nav[data-croquill-toc]');
+      return Array.from(navs).every(nav => nav.querySelectorAll('button').length === 2 &&
+        getComputedStyle(nav).contentVisibility === 'auto');
+    });
+    const heights = await page.locator('#editor-scroll').evaluate(box => {
+      const measured = box.scrollHeight;
+      box.querySelector<HTMLElement>('.ProseMirror')!.parentElement!.style.setProperty('--offscreen-layout', 'visible');
+      return [measured, box.scrollHeight];
+    });
+    expect(heights[0]).toBe(heights[1]);
+  });
+
   it('remeasures offscreen tables and code after a theme change at the same width', async () => {
     await page.setViewportSize({ width: 830, height: 680 });
     await open(Array(24).fill(themedSection).join('\n\n'));
