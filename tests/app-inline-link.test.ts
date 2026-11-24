@@ -170,7 +170,7 @@ describe('inline link source editing through the real app', () => {
       };
     });
     expect(collapsed.text).toBe('前 文字 后');
-    expect(collapsed.link).toEqual({ text: '文字', href: 'https://example.com', title: '链接标题', className: 'md-link' });
+    expect(collapsed.link).toEqual({ text: '文字', href: 'https://example.com', title: '链接标题', className: 'md-link md-openable-link' });
     expect(collapsed.shown).toBe(0);
     expect(collapsed.hidden).toEqual(['[', '](https://example.com "链接标题")']);
 
