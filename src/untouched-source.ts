@@ -29,6 +29,9 @@ export function matchesRichDocument(parsed: RichNode, edited: RichNode): boolean
       edited.lastChild?.type.name === 'paragraph' && !edited.lastChild.content.size)) return false;
   function same(a: RichNode, b: RichNode): boolean {
     if (a.eq(b)) return true;
+    // Empty paragraphs serialize as `<br />`, which `parseHtmlBreaks` reparses as a bare-break paragraph.
+    if (a.type.name === 'paragraph' && b.type.name === 'paragraph' && b.childCount === 0 && a.childCount === 1 &&
+        a.firstChild!.type.name === 'hardbreak' && a.firstChild!.attrs.croquillHtmlBreak === '<br />') return true;
     if (a.type !== b.type || a.isText || a.childCount !== b.childCount) return false;
     if (!sameNodeMarkup(a, b)) return false;
     for (let i = 0; i < a.childCount; i++) if (!same(a.child(i), b.child(i))) return false;
@@ -39,8 +42,9 @@ export function matchesRichDocument(parsed: RichNode, edited: RichNode): boolean
 }
 
 /** Match unchanged siblings first, then pair replacements between those anchors.
- * Rich node identity distinguishes insertion/deletion among identically worded blocks. */
-function correspondence(oldKeys: unknown[], newKeys: unknown[]): (number | undefined)[] {
+ * Rich node identity distinguishes insertion/deletion among identically worded blocks;
+ * within an unmatched gap, source signatures re-anchor split-recreated siblings past inserted breaks. */
+function correspondence(oldKeys: unknown[], newKeys: unknown[], fallbackOld?: unknown[], fallbackNew?: unknown[]): (number | undefined)[] {
   const positions = new Map<unknown, number[]>();
   for (let i = oldKeys.length - 1; i >= 0; i--) {
     const queue = positions.get(oldKeys[i]);
@@ -54,7 +58,12 @@ function correspondence(oldKeys: unknown[], newKeys: unknown[]): (number | undef
     while (queue?.length && queue.at(-1)! < left) queue.pop();
     const anchor = i === newKeys.length ? oldKeys.length : queue?.pop();
     if (anchor === undefined) continue;
-    for (let j = 0; j < Math.min(anchor - left, i - right); j++) result[right + j] = left + j;
+    if (fallbackOld && fallbackNew && anchor > left && i > right) {
+      const sub = correspondence(fallbackOld.slice(left, anchor), fallbackNew.slice(right, i));
+      for (let j = 0; j < sub.length; j++) if (sub[j] !== undefined) result[right + j] = left + sub[j]!;
+    } else {
+      for (let j = 0; j < Math.min(anchor - left, i - right); j++) result[right + j] = left + j;
+    }
     if (i < newKeys.length) result[i] = anchor;
     left = anchor + 1;
     right = i + 1;
@@ -268,6 +277,8 @@ function renderParagraphEdit(
   return joinParts(parts, eols, eol);
 }
 
+const isEmptyBreakHtml = (node: SourceNode) => node.type === 'html' && node.value === '<br />';
+
 function renderSplitParagraphs(
   oldNode: SourceNode,
   newNodes: SourceNode[],
@@ -310,6 +321,10 @@ function renderSplitParagraphs(
 
   for (let p = 1; p < typedNew.length; p++) {
     out += quoteSep ?? containerGap(newNodes[p - 1], newNodes[p]);
+    if (isEmptyBreakHtml(newNodes[p])) {
+      out += (quoteDepth > 0 ? (linePrefix ?? typedNew[p][0].prefix) : '') + '<br />';
+      continue;
+    }
     const lines = typedNew[p];
     if (p === typedNew.length - 1 && lineBoundary) {
       const carried0 = oldLines[splitIdx + 1];
@@ -401,9 +416,11 @@ export function preserveUntouchedSource(original: string, serialized: string, be
     const sequence = ['root', 'list', 'table', 'blockquote', 'listItem'].includes(a.type);
     const aligned = sequence && oldRich?.type.name !== 'croquill_alert' && newRich?.type.name !== 'croquill_alert' &&
       richChildren(oldRich, left.length) && richChildren(newRich, right.length);
-    const keys = (nodes: SourceNode[], text: string, rich?: RichNode) => nodes.map((node, i) =>
-      aligned ? rich!.child(i) : markdownNodeSignature(node, text));
-    const map = correspondence(keys(left, old.body, oldRich), keys(right, next.body, newRich));
+    const sigs = (nodes: SourceNode[], text: string) => nodes.map(node => markdownNodeSignature(node, text));
+    const map = aligned
+      ? correspondence(Array.from({ length: left.length }, (_, i) => oldRich!.child(i)),
+          Array.from({ length: right.length }, (_, i) => newRich!.child(i)), sigs(left, old.body), sigs(right, next.body))
+      : correspondence(sigs(left, old.body), sigs(right, next.body));
     if (!sequence && left.length !== right.length) {
       // Keep the fences of a heading or the padding and pipes of a table cell.
       if (['heading', 'tableCell'].includes(a.type)) return old.body.slice(start(a), start(left[0])) +
@@ -434,7 +451,8 @@ export function preserveUntouchedSource(original: string, serialized: string, be
       if (!wholeBlocksOnly && at !== undefined && ['root', 'blockquote', 'listItem'].includes(a.type) &&
           left[at].type === 'paragraph' && right[i].type === 'paragraph') {
         let k = i;
-        while (k + 1 < right.length && map[k + 1] === undefined && right[k + 1].type === 'paragraph') k++;
+        while (k + 1 < right.length && map[k + 1] === undefined &&
+            (right[k + 1].type === 'paragraph' || isEmptyBreakHtml(right[k + 1]))) k++;
         if (k > i) {
           const splitText = renderSplitParagraphs(
             left[at], right.slice(i, k + 1), old.body, next.body, nextQuoteDepth, eol, a.type,

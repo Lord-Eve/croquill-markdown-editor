@@ -854,16 +854,8 @@ export class MarkdownSurface {
       if (local !== null) return local;
     }
     const serialized = this.serializeRichDocument(doc, this.richInput ?? this.raw, this.richOriginText);
-    let parsedSerialized: RichNode | null | undefined;
     const accepts = (candidate: string) => {
-      try {
-        const parsed = parse(splitFrontmatter(candidate).body);
-        if (matchesRichDocument(parsed, doc)) return true;
-        if (parsedSerialized === undefined) {
-          try { parsedSerialized = parse(splitFrontmatter(serialized).body); } catch { parsedSerialized = null; }
-        }
-        return !!parsedSerialized && !matchesRichDocument(parsedSerialized, doc) && matchesRichDocument(parsed, parsedSerialized);
-      } catch { return false; }
+      try { return matchesRichDocument(parse(splitFrontmatter(candidate).body), doc); } catch { return false; }
     };
     let result = serialized;
     // A brand-new untitled document has no opening bytes and uses the writer's default ending.

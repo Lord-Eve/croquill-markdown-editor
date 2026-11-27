@@ -77,8 +77,8 @@ describe('splitting multiline paragraphs through the real app', () => {
     ['引用内两个空格硬换行（拆分点上）', '> 甲  \n> 乙\n', '> 甲\n>\n> 乙\n', '> 甲\n>\n> 丙乙\n'],
     ['非拆分点两个空格硬换行保留', '甲\n乙  \n丁\n', '甲\n\n乙  \n丁\n', '甲\n\n丙乙  \n丁\n'],
     ['引用内非拆分点两个空格硬换行保留', '> 甲\n> 乙  \n> 丁\n', '> 甲\n>\n> 乙  \n> 丁\n', '> 甲\n>\n> 丙乙  \n> 丁\n'],
-    ['双层引用行尾回车', '>> 甲\n', '>> 甲\n', '>> 甲\n>>\n>> 丙\n'],
-    ['单行紧贴引用行尾回车', '>甲\n', '>甲\n', '>甲\n>\n>丙\n'],
+    ['双层引用行尾回车', '>> 甲\n', '>> 甲\n>>\n>> <br />\n', '>> 甲\n>>\n>> 丙\n'],
+    ['单行紧贴引用行尾回车', '>甲\n', '>甲\n>\n><br />\n', '>甲\n>\n>丙\n'],
     ['混合空格引用写法', '> 甲\n>乙\n', '> 甲\n>\n>乙\n', '> 甲\n>\n>丙乙\n'],
     ['行中间拆段', '>甲乙\n>丁\n', '>甲\n>\n>乙\n>丁\n', '>甲\n>\n>丙乙\n>丁\n', '甲'],
     ['带空格嵌套引用', '> >甲\n> >乙\n', '> >甲\n> >\n> >乙\n', '> >甲\n> >\n> >丙乙\n'],
@@ -86,8 +86,8 @@ describe('splitting multiline paragraphs through the real app', () => {
     ['提示块硬换行', '> [!NOTE]\n> 甲\n> 乙  \n> 丁\n', '> [!NOTE]\n> 甲\n>\n> 乙  \n> 丁\n', '> [!NOTE]\n> 甲\n>\n> 丙乙  \n> 丁\n'],
     ['列表项多行段落缩进', '- 项\n\n  甲\n    乙\n    丁\n', '- 项\n\n  甲\n- 乙\n    丁\n', '- 项\n\n  甲\n- 丙乙\n    丁\n'],
     ['列表项硬换行', '- 甲  \n  乙\n', '- 甲\n- 乙\n', '- 甲\n- 丙乙\n'],
-    ['已有空引用段落隔开', '>甲\n>\n>乙\n', '>甲\n>\n>乙\n', '>甲\n>\n>丙\n>\n>乙\n'],
-    ['带空格单行引用', '> 甲\n', '> 甲\n', '> 甲\n>\n> 丙\n'],
+    ['已有空引用段落隔开', '>甲\n>\n>乙\n', '>甲\n>\n><br />\n>\n>乙\n', '>甲\n>\n>丙\n>\n>乙\n'],
+    ['带空格单行引用', '> 甲\n', '> 甲\n>\n> <br />\n', '> 甲\n>\n> 丙\n'],
     ['列表懒续行（行尾回车）', '- 甲\n乙\n', '- 甲\n- 乙\n', '- 甲\n- 丙乙\n'],
     ['列表懒续行（行中间拆段）', '- 甲乙\n丁\n', '- 甲\n- 乙\n丁\n', '- 甲\n- 丙乙\n丁\n', '甲'],
     ['引用里表格后的多行段落', '> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n>\n>甲\n>乙\n', '> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n>\n>甲\n>\n>乙\n', '> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n>\n>甲\n>\n>丙乙\n'],
@@ -106,40 +106,49 @@ describe('splitting multiline paragraphs through the real app', () => {
     await assertThreeMoments(original, afterEnter, afterType, pos);
   });
 
-  it('never emits <br /> or rewrites existing lines on double Enter at end of line', async () => {
+  it('keeps existing lines and writes a standalone <br /> on double Enter at end of line', async () => {
     await openAt('>甲\n>乙\n>丁\n', '甲', false);
     await page.keyboard.press('Enter');
     await waitAutoSerialize();
     await page.keyboard.press('Enter');
     await waitAutoSerialize();
-    const quoteSaved = await text();
-    expect(quoteSaved).not.toContain('<br');
-    expect(quoteSaved).toContain('>甲\n');
-    expect(quoteSaved).toContain('>乙\n>丁\n');
-    expect(quoteSaved).not.toContain('> 甲');
-    expect(quoteSaved).not.toContain('> 乙');
+    expect(await text()).toBe('>甲\n>\n><br />\n>\n>乙\n>丁\n');
 
     // Also test rapid consecutive double Enter before the idle serializer runs.
     await openAt('>甲\n>乙\n>丁\n', '甲', false);
     await page.keyboard.press('Enter');
     await page.keyboard.press('Enter');
     await waitAutoSerialize();
-    const rapidQuoteSaved = await text();
-    expect(rapidQuoteSaved).not.toContain('<br');
-    expect(rapidQuoteSaved).toContain('>甲\n');
-    expect(rapidQuoteSaved).toContain('>乙\n>丁\n');
-    expect(rapidQuoteSaved).not.toContain('> 甲');
-    expect(rapidQuoteSaved).not.toContain('> 乙');
+    expect(await text()).toBe('>甲\n>\n><br />\n>\n>乙\n>丁\n');
 
     await openAt('甲\n乙\n', '甲', false);
     await page.keyboard.press('Enter');
     await waitAutoSerialize();
     await page.keyboard.press('Enter');
     await waitAutoSerialize();
-    const plainSaved = await text();
-    expect(plainSaved).not.toContain('<br');
-    expect(plainSaved).toContain('甲\n');
-    expect(plainSaved).toContain('\n乙\n');
+    expect(await text()).toBe('甲\n\n<br />\n\n乙\n');
+
+    await openAt('甲\n乙\n', '甲', false);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await waitAutoSerialize();
+    expect(await text()).toBe('甲\n\n<br />\n\n乙\n');
+  });
+
+  it('keeps main empty-paragraph <br /> behavior in ordinary documents', async () => {
+    const original = '甲\n\n乙\n';
+    const pos = await openAt(original, '甲', false);
+    await assertThreeMoments(original, '甲\n\n<br />\n\n乙\n', '甲\n\n丙\n\n乙\n', pos);
+
+    await openAt(original, '甲', false);
+    await page.keyboard.press('Enter');
+    await waitAutoSerialize();
+    await page.keyboard.press('Enter');
+    await waitAutoSerialize();
+    expect(await text()).toBe('甲\n\n<br />\n\n<br />\n\n乙\n');
+    await page.keyboard.insertText('丙');
+    await waitAutoSerialize();
+    expect(await text()).toBe('甲\n\n<br />\n\n丙\n\n乙\n');
   });
 
   it('preserves CRLF line endings across Enter, Ctrl+z, and typing', async () => {
