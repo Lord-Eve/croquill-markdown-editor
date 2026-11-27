@@ -2,6 +2,7 @@ import { Fragment, type Node as RichNode } from '@milkdown/kit/prose/model';
 import type { RootContent } from 'mdast';
 import { parseMarkdownAst, preservedMarkdownBlocks, splitFrontmatter, markdownNodeSignature } from './fidelity';
 import { hasPlainExtension } from './rendered-source';
+import { matchesRichDocument } from './untouched-source';
 
 interface BlockRange { from: number; to: number; blocked: boolean; origin: string | null }
 interface BlockIndex { ranges: BlockRange[]; metadata: boolean; definitions: boolean; plainExtension: boolean }
@@ -102,12 +103,7 @@ export function localMarkdown(index: BlockIndex, raw: string, before: RichNode, 
       ((previousType === 'bullet_list' || previousType === 'ordered_list') && /^\s*[-+*]\s/.test(firstText))) return null;
   let parsed: RichNode;
   try { parsed = parseRich(text); } catch { return null; }
-  if (parsed.childCount !== newDoc.childCount) return null;
-  for (let i = 0; i < parsed.childCount; i++) {
-    const a = parsed.child(i), b = newDoc.child(i);
-    // Crepe assigns presentation IDs to headings after parsing.
-    if (!a.eq(b) && !(a.type.name === 'heading' && b.type === a.type && a.attrs.level === b.attrs.level && a.content.eq(b.content))) return null;
-  }
+  if (!matchesRichDocument(parsed, newDoc)) return null;
 
   // Include indentation before the first node and trailing spaces after the last.
   // Either can affect Markdown parsing at the edge of a verification window.

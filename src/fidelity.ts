@@ -1,6 +1,7 @@
 import { parseMarkdownAst } from './markdown-ast';
 export { parseMarkdownAst } from './markdown-ast';
 import { headingAttributes, headingContentRange, inlineSourceText, withoutHeadingAttributes } from './inline-source';
+import { customHeadingId } from './heading-anchors';
 import { inlineHtmlRanges, isInlineHtmlRun, renderedHtmlTagRanges, type InlineHtmlRange } from './inline-html-ranges';
 import { isHtmlComment } from './html-comments';
 import { alertTypeOf } from './alert-types';
@@ -10,7 +11,7 @@ interface SyntaxNode {
   type: string;
   value?: string;
   children?: SyntaxNode[];
-  position?: { start: { offset?: number }; end: { offset?: number } };
+  position?: { start: { offset?: number; line?: number }; end: { offset?: number } };
 }
 export interface PreservedBlock { from: number; to: number; raw: string; categories: string[] }
 export interface MarkdownParts { prefix: string; frontmatter: string; body: string; incomplete: boolean }
@@ -233,13 +234,21 @@ export function countTopLevelAstHeadings(markdown: string): number {
   return count;
 }
 
-export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
+export interface MarkdownHeadingTarget {
+  level: number;
+  text: string;
+  custom?: string;
+  line: number;
+}
+
+function bodyWithLineOffset(markdown: string): { source: string; lines: number } {
   const parts = splitFrontmatter(markdown);
   if (parts.frontmatter && !/\r(?!\n)/.test(parts.prefix)) {
-    const lines = parts.prefix.split('\n').length - 1;
-    return outlineOfBody(parts.body, lines);
+    return { source: parts.body, lines: parts.prefix.split('\n').length - 1 };
   }
-  if (!parts.frontmatter && !/^\s*(?:---|\+\+\+)[^\S\n]*(?:\n|$)/.test(parts.body)) return outlineOfBody(parts.body, 0);
+  if (!parts.frontmatter && !/^\s*(?:---|\+\+\+)[^\S\n]*(?:\n|$)/.test(parts.body)) {
+    return { source: parts.body, lines: 0 };
+  }
   const rows = markdown.split('\n');
   const first = rows[0]?.replace(/^\uFEFF/, '').trim();
   if (first === '---' || first === '+++') {
@@ -247,8 +256,51 @@ export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
     const length = closing < 0 ? rows.length : closing + 1;
     for (let index = 0; index < length; index++) rows[index] = '';
   }
-  const source = rows.join('\n').replace(/^\uFEFF/, '');
-  return outlineOfBody(source, 0);
+  return { source: rows.join('\n').replace(/^\uFEFF/, ''), lines: 0 };
+}
+
+export function markdownOutline(markdown: string): MarkdownOutlineItem[] {
+  const { source, lines } = bodyWithLineOffset(markdown);
+  return outlineOfBody(source, lines);
+}
+
+/** Collect headings at every nesting level in document order for fragment matching. */
+export function astHeadings(source: string, lineOffset = 0, skipHtmlBlocks = false): MarkdownHeadingTarget[] {
+  const ast = parseMarkdownAst(source);
+  const htmlBlocks = skipHtmlBlocks
+    ? preservedMarkdownBlocks(source).filter(block => block.categories.length === 1 && block.categories[0] === 'HTML')
+    : [];
+  const headings: MarkdownHeadingTarget[] = [];
+  function visit(node: SyntaxNode & { depth?: number }): void {
+    if (node.type === 'heading') {
+      const ranges = inlineHtmlRanges(node, source);
+      const hidden = ranges?.length ? new Set(renderedHtmlTagRanges(ranges).map(tag => tag.from)) : undefined;
+      const start = node.position?.start.offset, end = node.position?.end.offset;
+      const raw = start != null && end != null ? source.slice(start, end) : '';
+      const range = raw ? headingContentRange(raw) : { from: 0, to: 0 };
+      const custom = raw ? customHeadingId(raw.slice(range.from, range.to)) : undefined;
+      headings.push({
+        level: node.depth ?? 1,
+        text: astNodeVisibleText(node, hidden, source, headingAttributeOffsets(node, source)),
+        custom,
+        line: lineOffset + (node.position?.start.line ?? 1),
+      });
+      return;
+    }
+    if (node.type === 'code' || node.type === 'math' || node.type === 'html') return;
+    node.children?.forEach(visit);
+  }
+  for (const child of ast.children as (SyntaxNode & { depth?: number })[]) {
+    const start = child.position?.start.offset;
+    if (start != null && htmlBlocks.some(block => start >= block.from && start < block.to)) continue;
+    visit(child);
+  }
+  return headings;
+}
+
+export function markdownAllHeadings(markdown: string): MarkdownHeadingTarget[] {
+  const { source, lines } = bodyWithLineOffset(markdown);
+  return astHeadings(source, lines, true);
 }
 
 function outlineOfBody(source: string, lines: number): MarkdownOutlineItem[] {

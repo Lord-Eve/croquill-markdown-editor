@@ -486,6 +486,19 @@ export function handleSourceArrow(view: EditorView, event: KeyboardEvent): boole
   return true;
 }
 
+/** Markers that must be closed before a break and reopened after it to keep split halves formatted. */
+export function sourceEnterMarkers(block: RichNode, offset: number): { closing: string; opening: string } | null {
+  if (!isSourceBlock(block)) return null;
+  const open = blockSpans(block).filter(span => !['escape', 'entity', 'autolink'].includes(span.kind) && span.innerFrom < offset && offset < span.innerTo);
+  if (!open.length) return null;
+  const text = (from: number, to: number) => block.textBetween(from, to, '\n', INLINE_OBJECT);
+  // Outer spans come first: close inner-to-outer, reopen outer-to-inner.
+  return {
+    closing: open.map(span => text(span.innerTo, span.to)).reverse().join(''),
+    opening: open.map(span => text(span.from, span.innerFrom)).join(''),
+  };
+}
+
 /**
  * Enter inside formatted text: close the open markers before the break and reopen them
  * after it, so both halves keep their formatting instead of two dangling `**`.
@@ -494,16 +507,12 @@ export function handleSourceArrow(view: EditorView, event: KeyboardEvent): boole
 export function handleSourceEnter(view: EditorView, event: KeyboardEvent): boolean {
   if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || view.composing) return false;
   const { selection } = view.state, { $from } = selection;
-  if (!selection.empty || !isSourceBlock($from.parent)) return false;
-  const block = $from.parent, offset = $from.parentOffset;
-  const open = blockSpans(block).filter(span => !['escape', 'entity', 'autolink'].includes(span.kind) && span.innerFrom < offset && offset < span.innerTo);
-  if (!open.length) return false;
-  const text = (from: number, to: number) => block.textBetween(from, to, '\n', INLINE_OBJECT);
-  // Outer spans come first: close inner-to-outer, reopen outer-to-inner.
-  const closing = open.map(span => text(span.innerTo, span.to)).reverse().join(''), opening = open.map(span => text(span.from, span.innerFrom)).join('');
+  if (!selection.empty) return false;
+  const markers = sourceEnterMarkers($from.parent, $from.parentOffset);
+  if (!markers) return false;
   const position = $from.pos;
-  const tr = view.state.tr.insertText(closing + opening, position);
-  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, position + closing.length)));
+  const tr = view.state.tr.insertText(markers.closing + markers.opening, position);
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, position + markers.closing.length)));
   return false;
 }
 

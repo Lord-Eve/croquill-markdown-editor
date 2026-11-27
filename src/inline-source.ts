@@ -54,6 +54,9 @@ const LINK_ENTITY_OR_BACKSLASH = new RegExp(`\\\\|${ENTITY.source.slice(1)}`, 'g
 export const hasExternalLinkScheme = (url: string): boolean => /^(?:https?:\/\/|mailto:)/i.test(url);
 export const canOpenLink = (url: string): boolean => !!url.trim() && !/[\u0000-\u001f\u007f]/.test(url) &&
   (hasExternalLinkScheme(url) || /^file:\/\/\/|^[a-z]:[\\/]/i.test(url) || !/^[a-z][a-z\d+.-]*:/i.test(url.trim()));
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+export const isOpenLinkClick = (event: MouseEvent): boolean =>
+  (isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) && !event.altKey && !event.shiftKey;
 
 /** Escape backslashes and Markdown-decodable entities inside link destinations/titles so they roundtrip verbatim. */
 export function escapeLinkValue(value: string): string {
