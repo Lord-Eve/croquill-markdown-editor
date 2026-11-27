@@ -121,4 +121,44 @@ describe('block boundary keys through the real app', () => {
     });
     expect(prevented).toBe(false); expect(await text()).toBe(original);
   });
+
+  const liftCases: [string, string, string, string, string, string][] = [
+    ['代码块后接无序列表', '```js\nconst a = 1;\n```', '- 项甲\n- 项乙\n', '项甲',
+      '```js\nconst a = 1;\n```\n\n项甲\n\n- 项乙\n', '```js\nconst a = 1;项甲\n```\n\n- 项乙\n'],
+    ['代码块后接有序列表', '```js\nconst a = 1;\n```', '1. 项甲\n2. 项乙\n', '项甲',
+      '```js\nconst a = 1;\n```\n\n项甲\n\n1. 项乙\n', '```js\nconst a = 1;项甲\n```\n\n1. 项乙\n'],
+    ['代码块后接引用', '```js\nconst a = 1;\n```', '> 引用甲\n', '引用甲',
+      '```js\nconst a = 1;\n```\n\n引用甲\n', '```js\nconst a = 1;引用甲\n```\n'],
+    ['表格后接无序列表', '| a | b |\n| --- | --- |\n| 1 | 2 |', '- 项甲\n', '项甲',
+      '| a | b |\n| --- | --- |\n| 1 | 2 |\n\n项甲\n', '| a | b |\n| --- | --- |\n| 1 | 2项甲 |\n'],
+    ['公式后接任务列表', '$$\nx^2\n$$', '- [ ] 任务甲\n', '任务甲',
+      '$$\nx^2\n$$\n\n任务甲\n', '$$\nx^2任务甲\n$$\n'],
+    ['表格后接提示块', '| a | b |\n| --- | --- |\n| 1 | 2 |', '> [!NOTE]\n> 提示甲\n', '提示甲',
+      '| a | b |\n| --- | --- |\n| 1 | 2 |\n\n提示甲\n', '| a | b |\n| --- | --- |\n| 1 | 2提示甲 |\n'],
+  ];
+  it.each(liftCases)('lifts first item before joining (%s)', async (_name, block, suffix, label, afterFirst, afterSecond) => {
+    await open('段落\n\n' + suffix, label);
+    await page.keyboard.press('Backspace');
+    const control = await text();
+    await open(block + '\n\n' + suffix, label);
+    await press('Backspace', afterFirst);
+    expect(afterFirst).toBe(block + control.slice('段落'.length));
+    await press('Backspace', afterSecond);
+  });
+
+  it('lifts first item inside a blockquote above a nested table before joining', async () => {
+    await open('> 段落\n>\n> - 项甲\n', '项甲');
+    await page.keyboard.press('Backspace');
+    const control = await text();
+    expect(control).toBe('> 段落\n>\n> 项甲\n');
+    const original = '> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n>\n> - 项甲\n';
+    await open(original, '项甲');
+    const lifted = '> | a | b |\n> | --- | --- |\n> | 1 | 2 |\n>\n> 项甲\n';
+    await press('Backspace', lifted);
+    expect(lifted).toBe('> | a | b |\n> | --- | --- |\n> | 1 | 2 |' + control.slice('> 段落'.length));
+    await press('Control+z', original);
+    await press('Backspace', lifted);
+    await press('Backspace', '> | a | b   |\n> | - | --- |\n> | 1 | 2项甲 |\n');
+    await press('Control+z', '> | a | b |\n> | - | - |\n> | 1 | 2 |\n>\n> 项甲\n');
+  });
 });

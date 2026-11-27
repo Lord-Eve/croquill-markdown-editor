@@ -1,5 +1,6 @@
 import { closeHistory } from '@milkdown/kit/prose/history';
 import { NodeSelection, TextSelection } from '@milkdown/kit/prose/state';
+import { canJoin, liftTarget } from '@milkdown/kit/prose/transform';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import type { Node } from '@milkdown/kit/prose/model';
 import { openHtmlSourceAt, RAW_BLOCK_NODE_NAME, splitRawTail } from './raw-markdown';
@@ -31,11 +32,27 @@ export function handleBlockBoundary(view: EditorView, event: KeyboardEvent,
     return handled();
   }
 
+  // Milkdown overrides Backspace to joinTextblockBackward and only lifts list_item.
+  // Unwrap the first paragraph of a blockquote or alert before any cross-block join.
+  if (back && $from.depth > 1 && $from.index($from.depth - 1) === 0 &&
+      ['blockquote', 'croquill_alert'].includes($from.node($from.depth - 1).type.name)) {
+    const range = $from.blockRange();
+    const target = range ? liftTarget(range) : null;
+    if (range && target != null) {
+      view.dispatch(tr.lift(range, target).scrollIntoView());
+      return handled();
+    }
+  }
+
   let edge = $from.depth;
   while (edge > 0) {
     const boundary = doc.resolve(back ? $from.before(edge) : $from.after(edge));
     const other = back ? boundary.nodeBefore : boundary.nodeAfter;
-    if (!other) { edge--; continue; }
+    if (!other) {
+      if ($from.node(edge - 1).type.spec.isolating) return false;
+      edge--;
+      continue;
+    }
     const pos = back ? boundary.pos - other.nodeSize : boundary.pos;
     // At different nesting depths let normal paragraph/list joins work, but never
     // feed an atom, table or code block on the facing edge to the generic keymap.
@@ -43,6 +60,13 @@ export function handleBlockBoundary(view: EditorView, event: KeyboardEvent,
     while (!protectedBlock(facing) && !facing.isTextblock && facing.childCount)
       facing = (back ? facing.lastChild : facing.firstChild)!;
     if (!protectedBlock(facing)) return false;
+    if (back && edge < $from.depth) {
+      const range = $from.blockRange();
+      const target = range && liftTarget(range);
+      if (target != null && target >= boundary.depth) return false;
+      if (facing !== other && !other.type.spec.isolating && !$from.node(edge).type.spec.isolating &&
+          other.type.compatibleContent($from.node(edge).type) && canJoin(doc, boundary.pos)) return false;
+    }
     if (!back || edge !== $from.depth || facing !== other) return handled();
 
     const name = other.type.name;

@@ -115,15 +115,26 @@ pub fn resolve_document_link(document_path: Option<&str>, address: &str) -> Resu
     let decoded = percent_decode_str(address).decode_utf8().map_err(|_| "链接路径编码无效。")?;
     validate(&decoded)?;
     let local = if address.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("file:")) {
-        tauri::Url::parse(address).ok().and_then(|url| url.to_file_path().ok())
-            .filter(|p| p.is_absolute()).ok_or("file 链接需要绝对路径。")?
+        let after_scheme = decoded[5..].replace('/', "\\");
+        let url = tauri::Url::parse(address).map_err(|_| "file 链接需要绝对路径。")?;
+        if after_scheme.starts_with(r"\\\\")
+            || url.host_str().is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+        {
+            return Err("暂不支持打开网络路径链接".into());
+        }
+        url.to_file_path().ok().filter(|p| p.is_absolute()).ok_or("file 链接需要绝对路径。")?
     } else {
         PathBuf::from(decoded.as_ref())
     };
     let spelling = local.to_string_lossy().replace('/', "\\");
     let drive = spelling.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) && spelling.as_bytes().get(1) == Some(&b':');
-    if spelling.starts_with(r"\\?\") || spelling.starts_with(r"\\.\") ||
-        spelling[if drive { 2 } else { 0 }..].contains(':') || drive && !local.is_absolute() {
+    if spelling.starts_with(r"\\?\") || spelling.starts_with(r"\\.\") {
+        return Err("暂不支持打开此类链接".into());
+    }
+    if spelling.starts_with(r"\\") {
+        return Err("暂不支持打开网络路径链接".into());
+    }
+    if spelling[if drive { 2 } else { 0 }..].contains(':') || drive && !local.is_absolute() {
         return Err("暂不支持打开此类链接".into());
     }
     let path = if local.is_absolute() { local } else {
@@ -681,6 +692,21 @@ mod tests {
         assert!(resolve_document_link(None, "other.md").unwrap_err().contains("请先保存"));
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(resolve_document_link(tmp.path().join("doc.md").to_str(), "absent").unwrap_err(), "找不到文件：absent");
+    }
+
+    #[test]
+    fn rejects_network_share_document_links_before_fs_access() {
+        for network in [
+            r"\\nonexistent-host.invalid\share\a.md",
+            "//nonexistent-host.invalid/share/a.md",
+            "file://nonexistent-host.invalid/share/a.md",
+            "%5C%5Cnonexistent-host.invalid%5Cshare%5Ca.md",
+            "%2F%2Fnonexistent-host.invalid/share/a.md",
+            "file:////nonexistent-host.invalid/share/a.md",
+        ] {
+            assert_eq!(resolve_document_link(Some("C:/doc.md"), network).unwrap_err(), "暂不支持打开网络路径链接", "{network}");
+            assert_eq!(resolve_document_link(None, network).unwrap_err(), "暂不支持打开网络路径链接", "{network}");
+        }
     }
 
     fn file_path(directory: &tempfile::TempDir, name: &str) -> String {
