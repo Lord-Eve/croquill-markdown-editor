@@ -22,12 +22,13 @@ export function headingId(text: string, custom: string | undefined, allocate: (b
 }
 
 export function matchHeading(headings: { text: string; custom?: string }[], fragment: string): number {
+  if (!fragment) return -1;
   const allocate = allocateIds(), textId = allocateIds(), slugId = allocateIds();
   const targets = headings.map(({ text, custom }) => ({
     id: headingId(text, custom, allocate), custom, text: textId(text.trim()),
     slug: slugId(text.trim().toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, '').replace(/\s+/g, '-')),
   }));
-  for (const key of ['custom', 'id', 'text', 'slug'] as const) {
+  for (const key of ['id', 'custom', 'text', 'slug'] as const) {
     const index = targets.findIndex(h => h[key] === fragment);
     if (index >= 0) return index;
   }

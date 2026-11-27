@@ -6,6 +6,7 @@ import { NodeSelection, Plugin, Selection, TextSelection } from '@milkdown/kit/p
 import type { EditorView, NodeView } from '@milkdown/kit/prose/view';
 import { preservedMarkdownBlocks } from './fidelity';
 import { sanitizeHtmlFragment } from './html-sanitize';
+import { canOpenLink, isOpenLinkClick } from './inline-source';
 
 export type RawBlockKind = '' | 'html';
 
@@ -20,6 +21,7 @@ interface RawTreeNode {
 export interface HtmlBlockPluginOptions {
   resolveImage?: (src: string) => Promise<string>;
   defaultLineEnding?: () => string;
+  onOpenLink?: (href: string) => void;
 }
 
 export const RAW_BLOCK_NODE_NAME = 'croquill_raw_block';
@@ -110,6 +112,7 @@ class HtmlBlockNodeView implements NodeView {
   private readonly getPos: () => number | undefined;
   private readonly resolveImage?: (src: string) => Promise<string>;
   private readonly getDefaultLineEnding?: () => string;
+  private readonly onOpenLink?: (href: string) => void;
   private savedTail: string;
   private lineEnding: string;
   private editing = false;
@@ -124,12 +127,14 @@ class HtmlBlockNodeView implements NodeView {
     getPos: () => number | undefined,
     resolveImage?: (src: string) => Promise<string>,
     getDefaultLineEnding?: () => string,
+    onOpenLink?: (href: string) => void,
   ) {
     this.node = node;
     this.view = view;
     this.getPos = getPos;
     this.resolveImage = resolveImage;
     this.getDefaultLineEnding = getDefaultLineEnding;
+    this.onOpenLink = onOpenLink;
 
     const split = splitRawTail(String(node.attrs.value ?? ''), this.defaultLineEnding());
     this.savedTail = split.tail;
@@ -190,6 +195,9 @@ class HtmlBlockNodeView implements NodeView {
       resolveImage: this.resolveImage,
       isStale: () => this.destroyed || token !== this.renderToken,
     });
+    for (const anchor of fragment.querySelectorAll('a[href]')) {
+      if (canOpenLink(anchor.getAttribute('href') ?? '')) anchor.classList.add('md-openable-link');
+    }
     this.preview.replaceChildren(fragment);
   }
 
@@ -293,6 +301,11 @@ class HtmlBlockNodeView implements NodeView {
 
   private onPreviewMouseDown = (event: MouseEvent): void => {
     if (event.button !== 0) return;
+    const anchor = (event.target as Element | null)?.closest('a');
+    if (anchor && isOpenLinkClick(event) && !this.view.composing) {
+      event.preventDefault();
+      return;
+    }
     this.suppressPreviewClick = this.editing;
     if (this.editing) {
       window.addEventListener('mouseup', () => {
@@ -303,8 +316,14 @@ class HtmlBlockNodeView implements NodeView {
 
   private onPreviewClick = (event: MouseEvent): void => {
     const target = event.target as Element | null;
-    if (target?.closest('a')) event.preventDefault();
+    const anchor = target?.closest('a');
+    if (anchor) event.preventDefault();
     if (event.button !== 0) return;
+    if (anchor && isOpenLinkClick(event) && !this.view.composing) {
+      const href = anchor.getAttribute('href');
+      if (href != null) this.onOpenLink?.(href);
+      return;
+    }
     if (this.suppressPreviewClick) {
       this.suppressPreviewClick = false;
       return;
@@ -497,7 +516,7 @@ export function htmlBlockPlugin(options: HtmlBlockPluginOptions = {}) {
       nodeViews: {
         [RAW_BLOCK_NODE_NAME]: (node, view, getPos) => (
           rawBlockKind(node.attrs.kind) === 'html'
-            ? new HtmlBlockNodeView(node, view, getPos, options.resolveImage, options.defaultLineEnding)
+            ? new HtmlBlockNodeView(node, view, getPos, options.resolveImage, options.defaultLineEnding, options.onOpenLink)
             // Fall back to default NodeViewDesc / toDOM for non-HTML preserved blocks.
             : (undefined as unknown as NodeView)
         ),

@@ -121,6 +121,7 @@ button:hover { background:var(--hover); }
 .milkdown .ProseMirror [data-croquill-html].ProseMirror-selectednode:not(.croquill-html-editing) { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
 .milkdown .ProseMirror .croquill-html-source { display:block; box-sizing:border-box; width:100%; margin:0 0 8px; padding:10px 12px; border:1px solid var(--accent); border-radius:5px; background:var(--code); color:var(--fg); font-family:'Cascadia Code',Consolas,'Microsoft YaHei',monospace; font-size:.88em; line-height:1.55; overflow:hidden; resize:none; outline:none; white-space:pre-wrap; overflow-wrap:anywhere; }
 .milkdown .ProseMirror .croquill-html-preview { position:relative; overflow:hidden; contain:paint; min-height:1.6em; cursor:text; }
+.milkdown .ProseMirror .croquill-html-preview a { cursor:inherit; }
 .milkdown .ProseMirror .croquill-html-preview summary { cursor:pointer; }
 .milkdown .milkdown-code-block { background:var(--code-block-bg); border:var(--code-block-border-width) solid var(--code-block-border); border-radius:3px; margin:1.2em 0; padding:var(--code-block-padding); font-size:var(--code-block-font-size); }
 .milkdown .milkdown-code-block .cm-editor { background:transparent; color:var(--syntax-variable); }

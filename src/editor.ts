@@ -25,7 +25,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching } from '@codemirror/language';
 import { classHighlighter, tagHighlighter, tags } from '@lezer/highlight';
 import { highlightSelectionMatches } from '@codemirror/search';
-import { countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
+import { astHeadings, countTopLevelAstHeadings, detectUnsafeMarkdown, hasEquivalentMarkdownStructure, markdownAllHeadings, markdownOutline, type MarkdownOutlineItem, preservedMarkdownBlocks, splitFrontmatter } from './fidelity';
 import { orderedVisibleHeading, pickVisibleHeadingIndex } from './outline-tree';
 import { applyRichSelectionFromRaw, applySourceSelectionFromRaw, captureModePosition, createSourceSegmentLookup, initializeRichModePosition, modeNodeSelectionGuardPlugin, scheduleModeScrollRestore } from './mode-position';
 import { handleHtmlBlockKey, htmlBlockPlugin, isFocusedHtmlSource, isHtmlSourceComposing, rawMarkdownBlock } from './raw-markdown';
@@ -42,7 +42,7 @@ import { highlightMark } from './highlight';
 import { configureInlineSource } from './inline-source-markdown';
 import { blockSpans, deleteHeadingAttribute, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax, visibleText } from './inline-source-view';
 import { customHeadingId, matchHeading } from './heading-anchors';
-import { INLINE_OBJECT } from './inline-source';
+import { INLINE_OBJECT, isOpenLinkClick } from './inline-source';
 import { hasPlainExtension, preserveRenderedSource } from './rendered-source';
 import { configureTocFootnotes, footnoteInputRule, handleTocFootnoteKey, tocBlock, tocFootnotePlugin } from './toc-footnotes';
 import { richMarkdownTransforms } from './rich-markdown';
@@ -196,9 +196,6 @@ export interface MarkdownSurfaceOptions {
   onOpenLink?: (href: string) => void;
   onLinkHint?: (message: string) => void;
 }
-
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
-const isOpenLinkClick = (event: MouseEvent) => (isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) && !event.altKey && !event.shiftKey;
 
 /** Two mature editing surfaces, with the unmodified Markdown kept independently. */
 export class MarkdownSurface {
@@ -614,26 +611,40 @@ export class MarkdownSurface {
 
   jumpToFragment(fragment: string): boolean {
     if (this.currentMode === 'source' && this.source) {
-      const source = this.source;
-      const headings = this.getOutline().map(h => ({ text: h.text, custom: customHeadingId(source.state.doc.line(h.line).text) }));
-      const index = matchHeading(headings, fragment);
-      if (index < 0) return false;
-      this.scrollToHeading(index);
-    } else {
-      const view = this.richView();
-      const headings: { pos: number; text: string; custom?: string }[] = [];
-      view.state.doc.descendants((node, pos) => {
-        if (node.type.name !== 'heading') return !node.isTextblock;
-        const run = node.textBetween(0, node.content.size, '', INLINE_OBJECT);
-        headings.push({ pos, text: visibleText(run, true), custom: customHeadingId(run) });
-        return false;
-      });
+      const headings = markdownAllHeadings(this.source.state.doc.toString());
       const heading = headings[matchHeading(headings, fragment)];
       if (!heading) return false;
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, heading.pos + 1)).scrollIntoView());
-      (view.nodeDOM(heading.pos) as HTMLElement)?.scrollIntoView({ block: 'start' });
+      this.typewriter?.cancel();
+      const position = this.source.state.doc.line(Math.min(heading.line, this.source.state.doc.lines)).from;
+      this.source.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: 'start' }) });
+      this.source.focus();
+      return true;
     }
+    const view = this.richView();
+    const headings: { pos: number; raw: boolean; text: string; custom?: string }[] = [];
+    view.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'heading') {
+        const run = node.textBetween(0, node.content.size, '', INLINE_OBJECT);
+        headings.push({ pos, raw: false, text: visibleText(run, true), custom: customHeadingId(run) });
+        return false;
+      }
+      if (node.type.name === 'croquill_raw_block' && node.attrs.kind !== 'html') {
+        for (const item of astHeadings(String(node.attrs.value ?? ''))) {
+          headings.push({ pos, raw: true, text: item.text, custom: item.custom });
+        }
+        return false;
+      }
+      return !node.isTextblock;
+    });
+    const heading = headings[matchHeading(headings, fragment)];
+    if (!heading) return false;
+    this.typewriter?.cancel();
+    const targetSelection = heading.raw
+      ? TextSelection.near(view.state.doc.resolve(Math.min(heading.pos + 1, view.state.doc.content.size)), 1)
+      : TextSelection.create(view.state.doc, heading.pos + 1);
+    view.dispatch(view.state.tr.setSelection(targetSelection).scrollIntoView());
     this.focus();
+    (view.nodeDOM(heading.pos) as HTMLElement)?.scrollIntoView({ block: 'start' });
     return true;
   }
 
@@ -954,6 +965,7 @@ export class MarkdownSurface {
       crepe.editor.use(rawMarkdownBlock).use(htmlBlockPlugin({
         resolveImage: this.options.resolveImage,
         defaultLineEnding: () => this.richDefaultNewline,
+        onOpenLink: this.options.onOpenLink,
       })).use(this.inlineRaw.node).use(this.inlineRaw.commentNode).use(alertBlock).use(highlightMark).use($prose(() => inlineSourcePlugin(this.options.resolveImage))).use($prose(() => modeNodeSelectionGuardPlugin())).use(tocBlock).use(tocFootnotePlugin).use(footnoteInputRule);
       crepe.editor.config(ctx => {
         ctx.update(headingKeymap.key, keys => ({ ...keys, DowngradeHeading: { shortcuts: [] } }));
