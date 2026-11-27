@@ -85,12 +85,12 @@ describe('block boundary keys through the real app', () => {
   it('joins the last cell inside a quote', async () => {
     const quote = (s: string) => s.split('\n').map(line => '> ' + line).join('\n');
     const original = quote(table) + '\n>\n> 乙\n';
-    await open(original); await press('Backspace', quote('| 甲 | 乙   |\n| - | --- |\n| 丙 | 末尾乙 |') + '\n');
+    await open(original); await press('Backspace', quote(table.replace('末尾', '末尾乙')) + '\n');
     await press('Control+z', original);
   });
   it('joins a code block in the same list item', async () => {
     const original = '- 项\n\n  ~~~\n  末尾\n  ~~~\n\n  乙\n';
-    await open(original); await press('Backspace', '- 项\n\n  ```\n  末尾乙\n  ```\n');
+    await open(original); await press('Backspace', '- 项\n\n  ~~~\n  末尾乙\n  ~~~\n');
     await press('Control+z', original);
   });
   it.each(['\n', '\r\n'])('saves only the affected blocks (%j)', async eol => {
@@ -158,7 +158,24 @@ describe('block boundary keys through the real app', () => {
     expect(lifted).toBe('> | a | b |\n> | --- | --- |\n> | 1 | 2 |' + control.slice('> 段落'.length));
     await press('Control+z', original);
     await press('Backspace', lifted);
-    await press('Backspace', '> | a | b   |\n> | - | --- |\n> | 1 | 2项甲 |\n');
-    await press('Control+z', '> | a | b |\n> | - | - |\n> | 1 | 2 |\n>\n> 项甲\n');
+    await press('Backspace', '> | a | b |\n> | --- | --- |\n> | 1 | 2项甲 |\n');
+    await press('Control+z', lifted);
+    await press('Control+z', original);
+  });
+
+  const nestedTableCases: [string, string, string][] = [
+    ['引用里的表格', '> | a | b |\n> | :-- | --: |\n> | 1 | 2 |\n> | 3 | 4 |\n>\n> 段落乙\n',
+      '> | a | b |\n> | :-- | --: |\n> | 1 | 2 |\n> | 3 | 4段落乙 |\n'],
+    ['列表项里的表格', '- 项\n\n  | a | b |\n  | :-- | --: |\n  | 1 | 2 |\n  | 3 | 4 |\n\n  段落乙\n',
+      '- 项\n\n  | a | b |\n  | :-- | --: |\n  | 1 | 2 |\n  | 3 | 4段落乙 |\n'],
+    ['提示块里的表格', '> [!NOTE]\n> | a | b |\n> | :-- | --: |\n> | 1 | 2 |\n> | 3 | 4 |\n>\n> 段落乙\n',
+      '> [!NOTE]\n> | a | b |\n> | :-- | --: |\n> | 1 | 2 |\n> | 3 | 4段落乙 |\n'],
+  ];
+  it.each(nestedTableCases.flatMap(([name, before, after]) =>
+    (['\n', '\r\n'] as const).map(eol => [name, eol, before.replaceAll('\n', eol), after.replaceAll('\n', eol)] as const)
+  ))('preserves table formatting when joining into %s (%j)', async (_name, _eol, original, merged) => {
+    await open(original, '段落乙');
+    await press('Backspace', merged);
+    await press('Control+z', original);
   });
 });

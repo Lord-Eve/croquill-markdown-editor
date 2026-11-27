@@ -142,8 +142,9 @@ export function preserveUntouchedSource(original: string, serialized: string, be
     if (markdownNodeSignature({ ...a, children: [] }, old.body) !== markdownNodeSignature({ ...b, children: [] }, next.body)) return fresh(b);
     const richChildren = (rich: RichNode | undefined, count: number) => rich && (rich.childCount === count ||
       a.type === 'root' && rich.childCount === count + 1 && rich.lastChild?.type.name === 'paragraph' && !rich.lastChild.content.size);
-    const sequence = ['root', 'list', 'table'].includes(a.type);
-    const aligned = sequence && richChildren(oldRich, left.length) && richChildren(newRich, right.length);
+    const sequence = ['root', 'list', 'table', 'blockquote', 'listItem'].includes(a.type);
+    const aligned = sequence && oldRich?.type.name !== 'croquill_alert' && newRich?.type.name !== 'croquill_alert' &&
+      richChildren(oldRich, left.length) && richChildren(newRich, right.length);
     const keys = (nodes: SourceNode[], text: string, rich?: RichNode) => nodes.map((node, i) =>
       aligned ? rich!.child(i) : markdownNodeSignature(node, text));
     const map = correspondence(keys(left, old.body, oldRich), keys(right, next.body, newRich));
@@ -166,8 +167,12 @@ export function preserveUntouchedSource(original: string, serialized: string, be
           if (left.length === 1) tail = '';
         } else if (a.type === 'table') result += at !== undefined && at > 1 ? gap(at) : eol;
         else if (at !== undefined && at > 0) result += gap(at);
-        else if (sequence && left.length > 1) result += gap(Math.min((map[i - 1] ?? 0) + 1, left.length - 1));
-        else result += next.body.slice(end(right[i - 1]), start(right[i])).replace(/\r\n|\r|\n/g, eol);
+        else {
+          const nextGap = next.body.slice(end(right[i - 1]), start(right[i])).replace(/\r\n|\r|\n/g, eol);
+          const sampleGap = sequence && left.length > 1 ? gap(Math.min((map[i - 1] ?? 0) + 1, left.length - 1)) : undefined;
+          const newlines = (s: string) => s.match(/\r\n|\r|\n/g)?.length ?? 0;
+          result += sampleGap !== undefined && (a.type === 'list' || newlines(sampleGap) >= newlines(nextGap)) ? sampleGap : nextGap;
+        }
       }
       const template = at ?? (a.type === 'table' || a.type === 'list' ? map[i - 1] ?? 0 : undefined);
       if (at !== undefined) result += indent(at);
