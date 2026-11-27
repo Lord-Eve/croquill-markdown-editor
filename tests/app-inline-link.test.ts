@@ -170,7 +170,7 @@ describe('inline link source editing through the real app', () => {
       };
     });
     expect(collapsed.text).toBe('前 文字 后');
-    expect(collapsed.link).toEqual({ text: '文字', href: 'https://example.com', title: '链接标题', className: 'md-link' });
+    expect(collapsed.link).toEqual({ text: '文字', href: 'https://example.com', title: '链接标题', className: 'md-link md-openable-link' });
     expect(collapsed.shown).toBe(0);
     expect(collapsed.hidden).toEqual(['[', '](https://example.com "链接标题")']);
 
@@ -626,11 +626,11 @@ describe('inline link source editing through the real app', () => {
     expect(await look()).toEqual(caretBeforeUrl);
     expect(await page.evaluate(() => (window as any).fileApp.calls.filter((c: any) => c.cmd === 'open_external_link').length)).toBe(2);
 
-    // 4. Ctrl+Click relative link -> toast unsupported, does NOT call open_external_link
+    // 4. Ctrl+Click missing relative file -> toast, does NOT call open_external_link
     const relBox = await page.locator('#rich-root a').nth(1).boundingBox();
     await ctrlClick(relBox!.x + relBox!.width / 2, relBox!.y + relBox!.height / 2);
     await settle();
-    expect(await page.locator('#toast').textContent()).toBe('暂不支持打开此类链接');
+    expect(await page.locator('#toast').textContent()).toBe('找不到文件：other.md');
     expect(await page.evaluate(() => (window as any).fileApp.calls.filter((c: any) => c.cmd === 'open_external_link').length)).toBe(2);
 
     // 5. Ctrl+Click plain text -> does NOT call open_external_link

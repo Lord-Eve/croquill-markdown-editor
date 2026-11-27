@@ -41,7 +41,7 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     false
 }
 
-fn is_markdown(path: &Path) -> bool {
+pub(crate) fn is_markdown(path: &Path) -> bool {
     path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| {
         matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown" | "mdown" | "mkd")
     })

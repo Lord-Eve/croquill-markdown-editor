@@ -26,6 +26,12 @@ export async function openFileApp(page: Page, baseURL: string, config: Record<st
           return cmd==='plugin:dialog|open'?h.openSelected:h.saveSelected;
         }
         if(cmd==='document_exists')return Object.hasOwn(h.files,args.path);
+        if(cmd==='resolve_document_link'){
+          const target=h.linkTargets?.[args.address];
+          if(target)return target;
+          if(!args.documentPath)throw '请先保存文档，再打开相对路径链接。';
+          throw '找不到文件：'+args.address;
+        }
         if(cmd==='read_document'){
           if(h.readError)throw h.readError;
           if(!Object.hasOwn(h.files,args.path))throw '文件不存在';

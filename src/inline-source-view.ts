@@ -1,7 +1,7 @@
 import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
 import { Fragment, type Mark, type Node as RichNode } from '@milkdown/kit/prose/model';
-import { INLINE_OBJECT, headingAttributes, withoutHeadingAttributes, type HeadingAttribute, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
+import { INLINE_OBJECT, canOpenLink, headingAttributes, withoutHeadingAttributes, type HeadingAttribute, escapeLinkValue, inlineMarkers, inlineSourceText, inlineSyntaxSpans, type InlineKind, type InlineSpan } from './inline-source';
 import { createInlineHtmlImage, inlineHtmlStyle, type InlineHtmlImage } from './html-sanitize';
 
 interface BlockSyntax { run: string; map: number[]; spans: InlineSpan[]; attributes: HeadingAttribute[] }
@@ -72,10 +72,11 @@ const isUnsafeHref = (href: string) => UNSAFE_HREF.test(href.replace(/[\u0000-\u
 
 function decorateLink(block: RichNode, base: number, span: InlineSpan, active: boolean, decorations: Decoration[]): void {
   const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
-  const marker = { class: active ? 'md-marker' : 'md-marker md-hidden' };
+  const cursor = canOpenLink(span.href || '') ? ' md-openable-link' : '';
+  const marker = { class: (active ? 'md-marker' : 'md-marker md-hidden') + cursor };
   if (innerFrom > from) decorations.push(Decoration.inline(from, innerFrom, marker));
   if (innerTo > innerFrom) {
-    const attrs: Record<string, string> = { class: 'md-link' };
+    const attrs: Record<string, string> = { class: 'md-link' + cursor };
     const href = span.href ?? '';
     if (isUnsafeHref(href)) attrs['data-href'] = href;
     else attrs.href = href;
@@ -89,14 +90,14 @@ function decorateLink(block: RichNode, base: number, span: InlineSpan, active: b
   const urlFrom = base + span.urlFrom, urlTo = base + span.urlTo;
   const bracketed = span.urlFrom > span.innerTo + 2 && span.urlTo + 1 < span.to &&
     block.textBetween(span.urlFrom - 1, span.urlFrom) === '<' && block.textBetween(span.urlTo, span.urlTo + 1) === '>';
-  if (innerTo + 2 <= to) decorations.push(Decoration.inline(innerTo, innerTo + 2, { class: 'md-marker' }));
-  if (bracketed) decorations.push(Decoration.inline(urlFrom - 1, urlFrom, { class: 'md-marker' }));
-  if (urlTo > urlFrom) decorations.push(Decoration.inline(urlFrom, urlTo, { class: 'md-link-url' }, { inclusiveStart: true, inclusiveEnd: true }));
-  if (bracketed) decorations.push(Decoration.inline(urlTo, urlTo + 1, { class: 'md-marker' }));
+  if (innerTo + 2 <= to) decorations.push(Decoration.inline(innerTo, innerTo + 2, marker));
+  if (bracketed) decorations.push(Decoration.inline(urlFrom - 1, urlFrom, marker));
+  if (urlTo > urlFrom) decorations.push(Decoration.inline(urlFrom, urlTo, { class: 'md-link-url' + cursor }, { inclusiveStart: true, inclusiveEnd: true }));
+  if (bracketed) decorations.push(Decoration.inline(urlTo, urlTo + 1, marker));
   if (span.titleFrom != null && span.titleTo != null && span.titleTo > span.titleFrom) {
-    decorations.push(Decoration.inline(base + span.titleFrom, base + span.titleTo, { class: 'md-link-title' }, { inclusiveStart: true, inclusiveEnd: true }));
+    decorations.push(Decoration.inline(base + span.titleFrom, base + span.titleTo, { class: 'md-link-title' + cursor }, { inclusiveStart: true, inclusiveEnd: true }));
   }
-  if (to - 1 > innerTo) decorations.push(Decoration.inline(to - 1, to, { class: 'md-marker' }));
+  if (to - 1 > innerTo) decorations.push(Decoration.inline(to - 1, to, marker));
 }
 
 type ImagePreview = (image: InlineHtmlImage) => string | undefined;
@@ -104,7 +105,8 @@ type ImagePreview = (image: InlineHtmlImage) => string | undefined;
 function decorateHtml(block: RichNode, base: number, span: InlineSpan, active: boolean, preview: ImagePreview, decorations: Decoration[]): void {
   const html = span.html!;
   const from = base + span.from, to = base + span.to, innerFrom = base + span.innerFrom, innerTo = base + span.innerTo;
-  const marker = { class: 'md-marker md-html-marker' };
+  const cursor = html.tag === 'a' && canOpenLink(span.href || '') ? ' md-openable-link' : '';
+  const marker = { class: 'md-marker md-html-marker' + cursor };
   if (html.tag === 'img') {
     const src = active ? undefined : preview(html);
     decorations.push(Decoration.inline(from, to, src ? { class: marker.class + ' md-hidden' } : marker));
@@ -132,7 +134,7 @@ function decorateHtml(block: RichNode, base: number, span: InlineSpan, active: b
     // Navigation is handled by the editor. A span also keeps nested Markdown
     // links valid DOM, and unsupported protocols never become DOM attributes.
     attrs.nodeName = 'span';
-    attrs.class += ' md-html-link';
+    attrs.class += ' md-html-link' + cursor;
   }
   if (html.title) attrs.title = html.title;
   const style = html.styles?.length ? inlineHtmlStyle(html.styles) : '';

@@ -91,6 +91,7 @@ button:hover { background:var(--hover); }
   h5, h6, .label-wrapper:has(+ .children > .content-dom > :is(h5,h6):first-child) { --heading-size:1em; }
 }
 .milkdown .ProseMirror :is(a, .md-html-link) { color:var(--accent); text-decoration:none; }
+.milkdown .ProseMirror.ctrl-links .md-openable-link, .milkdown .ProseMirror.ctrl-links .md-openable-link * { cursor:pointer; }
 .milkdown .ProseMirror :is(a, .md-html-link):hover { text-decoration:underline; }
 .milkdown .ProseMirror strong { font-weight:650; }
 .milkdown .ProseMirror blockquote { color:var(--quote); border-left:4px solid var(--border); padding:0 15px; margin:.8em 0; font-size:inherit; }

@@ -17,7 +17,7 @@ import { imageDestinations, rebaseImageSources } from './image-paths';
 import { installGlobalShortcuts } from './shortcuts';
 import { droppedDocumentPath } from './dropped-document';
 import { markdownForWordCount } from './fidelity';
-import { hasExternalLinkScheme } from './inline-source';
+import { canOpenLink, hasExternalLinkScheme } from './inline-source';
 import './style.css';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -141,11 +141,7 @@ const surface = new MarkdownSurface({
   onDirty: () => { clearTimeout(statsTimer); const wasDirty=session.dirty; session.markPending(); if(!wasDirty)updateTitle(); },
   onWarning: toast,
   onLinkHint: toast,
-  onOpenLink: (href) => {
-    if (!hasExternalLinkScheme(href)) { toast('暂不支持打开此类链接'); return; }
-    if (!desktop) return;
-    void invoke('open_external_link', { url: href }).catch(error => toast(String(error)));
-  },
+  onOpenLink: href => { void openLink(href); },
   onImageFiles: (files, clipboard) => { void insertImages(files.map(file => ({ file, clipboard }))); },
   uploadImage: async file => {
     let src: string | null = null;
@@ -183,7 +179,7 @@ const fileSidebar = new FileSidebar({
   },
   listFolder: (root, path) => invoke<FolderListing>('list_document_folder', {root, path:path ?? null}),
   openFile: async path => {
-    await run(() => openDocument(path));
+    await run(async () => { await openDocument(path); });
   },
   onError: toast,
 });
@@ -306,9 +302,31 @@ async function run(operation:()=>Promise<void>) {
     if (requested) queueMicrotask(() => { void action(requested); });
   }
 }
-async function openDocument(path?: string): Promise<void> {
-  if (path && sameDocumentPath(path, session.path)) return;
-  if (await session.open(path)) { imageCache.clear(); outlineController.resetDocument(); await surface.load(session.text); surface.focus(); }
+async function openLink(href: string): Promise<void> {
+  if (!canOpenLink(href)) { toast('暂不支持打开此类链接'); return; }
+  const hash = href.indexOf('#');
+  let fragment = hash < 0 ? '' : href.slice(hash + 1);
+  try { fragment = decodeURIComponent(fragment); } catch { /* A literal percent can occur in a heading. */ }
+  const jump = () => { if (fragment && !surface.jumpToFragment(fragment)) toast('找不到标题：' + fragment); };
+  if (hash === 0) { jump(); return; }
+  if (!desktop) return;
+  if (hasExternalLinkScheme(href)) {
+    await invoke('open_external_link', { url: href }).catch(error => toast(String(error)));
+    return;
+  }
+  await run(async () => {
+    let target: { path: string; markdown: boolean };
+    try { target = await invoke('resolve_document_link', { documentPath: session.path, address: hash < 0 ? href : href.slice(0, hash) }); }
+    catch (error) { toast(String(error)); return; }
+    if (!target.markdown) await invoke('reveal_export', { path: target.path });
+    else if (await openDocument(target.path)) jump();
+  });
+}
+
+async function openDocument(path?: string): Promise<boolean> {
+  if (path && sameDocumentPath(path, session.path)) return true;
+  if (await session.open(path)) { imageCache.clear(); outlineController.resetDocument(); await surface.load(session.text); surface.focus(); return true; }
+  return false;
 }
 async function requireRecentFile(path: string): Promise<void> {
   if (await invoke<boolean>('document_exists', {path})) return;

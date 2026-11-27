@@ -301,12 +301,14 @@ describe('rendered inline HTML in the app', () => {
     await links.filter({ hasText: '安全链接' }).click({ modifiers: ['Control'] });
     const opened = () => page.evaluate(() => (window as any).fileApp.calls.filter((call: any) => call.cmd === 'open_external_link').map((call: any) => call.args.url));
     expect(await opened()).toEqual(['https://example.com/?a=1&b=2']);
-    for (const text of ['危险链接', '相对链接', '空链接']) {
+    for (const text of ['危险链接', '空链接']) {
       const link = links.filter({ hasText: text });
       expect(await link.getAttribute('href')).toBeNull();
       await link.click({ modifiers: ['Control'] });
       expect(await page.locator('#toast').textContent()).toBe('暂不支持打开此类链接');
     }
+    await links.filter({ hasText: '相对链接' }).click({ modifiers: ['Control'] });
+    expect(await page.locator('#toast').textContent()).toBe('找不到文件：local.md');
     expect(await opened()).toEqual(['https://example.com/?a=1&b=2']);
   });
 
