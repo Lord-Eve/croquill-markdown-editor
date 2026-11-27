@@ -94,6 +94,7 @@ export function configureHtmlBreaks(ctx: Ctx): void {
       toMarkdown: {
         ...schema.toMarkdown,
         runner: (state, node) => {
+          if (!node.content.size) { state.openNode('paragraph').closeNode(); return; }
           let content = node.content;
           let trailing = true;
           // A line containing only leading break tags can open a CommonMark HTML block.

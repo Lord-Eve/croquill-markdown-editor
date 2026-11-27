@@ -226,16 +226,18 @@ function renderParagraphEdit(
   nextSrc: string,
   quoteDepth: number,
   eol: string,
-  splitHint?: number,
+  splitAnchor?: number,
 ): string | null {
   const oldLines = paragraphLines(oldNode, oldSrc, quoteDepth);
   const newLines = paragraphLines(newNode, nextSrc, quoteDepth);
   if (!oldLines?.length || !newLines?.length) return null;
-  if (splitHint !== undefined) {
-    const anchor = oldLines[splitHint];
-    const line0 = newLines[0].content + (newLines[0].hardBreak ? (anchor?.hardBreak || newLines[0].hardBreak) : '');
+  if (splitAnchor !== undefined) {
+    const anchor = oldLines[splitAnchor];
+    const line0 = anchor && sameLine(anchor, newLines[0])
+      ? anchor.content + anchor.hardBreak
+      : newLines[0].content + (newLines[0].hardBreak ? (anchor?.hardBreak || newLines[0].hardBreak) : '');
     if (newLines.length === 1) return line0;
-    const carried = renderCarriedLines(oldLines.slice(splitHint + 1), newLines.slice(1), null, eol);
+    const carried = renderCarriedLines(oldLines.slice(splitAnchor + 1), newLines.slice(1), null, eol);
     return joinParts([line0, ...carried.parts], [anchor?.eol || eol, ...carried.eols], eol);
   }
   const map = correspondence(oldLines.map(normalizeLineContent), newLines.map(normalizeLineContent));
@@ -273,6 +275,7 @@ function renderSplitParagraphs(
   nextSrc: string,
   quoteDepth: number,
   eol: string,
+  containerType: string,
   containerGap: (prevRight: SourceNode, nextRight: SourceNode) => string,
 ): string | null {
   const oldLines = paragraphLines(oldNode, oldSrc, quoteDepth);
@@ -283,11 +286,16 @@ function renderSplitParagraphs(
   const splitIdx = firstLines.length - 1;
   if (splitIdx >= oldLines.length) return null;
 
+  const lineBoundary = splitIdx + 1 < oldLines.length &&
+    normalizeLineContent(firstLines[splitIdx]) === normalizeLineContent(oldLines[splitIdx]);
+
   const firstParts: string[] = [];
   const firstEols: string[] = [];
   for (let j = 0; j < firstLines.length; j++) {
     const oldLine = oldLines[j], newLine = firstLines[j];
-    if (j < firstLines.length - 1 && sameLine(oldLine, newLine)) {
+    if (j === splitIdx && lineBoundary && !newLine.hardBreak) {
+      firstParts.push((j === 0 ? '' : oldLine.prefix) + oldLine.content);
+    } else if (j < firstLines.length - 1 && sameLine(oldLine, newLine)) {
       firstParts.push(j === 0 ? oldLine.content + oldLine.hardBreak : oldLine.raw);
     } else {
       const prefix = j === 0 ? '' : oldLine.prefix;
@@ -298,14 +306,35 @@ function renderSplitParagraphs(
   let out = joinParts(firstParts, firstEols, eol);
 
   const linePrefix = quoteMarkerPrefix(oldLines, splitIdx, quoteDepth);
-  const quoteGap = linePrefix !== null ? eol + linePrefix.replace(/[ \t]+$/, '') + eol + linePrefix : null;
+  const quoteSep = linePrefix !== null ? eol + linePrefix.replace(/[ \t]+$/, '') + eol : null;
 
   for (let p = 1; p < typedNew.length; p++) {
-    out += quoteGap ?? containerGap(newNodes[p - 1], newNodes[p]);
+    out += quoteSep ?? containerGap(newNodes[p - 1], newNodes[p]);
     const lines = typedNew[p];
-    if (p === typedNew.length - 1) {
+    if (p === typedNew.length - 1 && lineBoundary) {
+      const carried0 = oldLines[splitIdx + 1];
+      let prefix0 = '';
+      if (quoteDepth > 0) {
+        prefix0 = /^[ \t>]*$/.test(carried0.prefix) && (carried0.prefix.match(/>/g)?.length ?? 0) >= quoteDepth
+          ? carried0.prefix
+          : (linePrefix ?? lines[0].prefix);
+      } else if (containerType === 'root') {
+        prefix0 = /^ {0,3}$/.test(carried0.prefix) ? carried0.prefix : '';
+      }
+      const body0 = sameLine(carried0, lines[0])
+        ? carried0.content + carried0.hardBreak
+        : lines[0].content + (lines[0].hardBreak ? (carried0.hardBreak || lines[0].hardBreak) : '');
+      const line0 = prefix0 + body0;
+      if (lines.length === 1) {
+        out += line0;
+      } else {
+        const carried = renderCarriedLines(oldLines.slice(splitIdx + 2), lines.slice(1), linePrefix, eol);
+        out += joinParts([line0, ...carried.parts], [carried0.eol || eol, ...carried.eols], eol);
+      }
+    } else if (p === typedNew.length - 1) {
+      const prefix0 = quoteDepth > 0 ? (linePrefix ?? lines[0].prefix) : '';
       const carriedHardBreak = !firstLines[splitIdx].hardBreak ? oldLines[splitIdx].hardBreak : '';
-      const line0 = lines[0].content + (lines[0].hardBreak ? (carriedHardBreak || lines[0].hardBreak) : '');
+      const line0 = prefix0 + lines[0].content + (lines[0].hardBreak ? (carriedHardBreak || lines[0].hardBreak) : '');
       if (lines.length === 1) {
         out += line0;
       } else {
@@ -313,7 +342,11 @@ function renderSplitParagraphs(
         out += joinParts([line0, ...carried.parts], [oldLines[splitIdx].eol || eol, ...carried.eols], eol);
       }
     } else {
-      const midParts = [lines[0].content + lines[0].hardBreak, ...lines.slice(1).map(l => (linePrefix ?? l.prefix) + l.content + l.hardBreak)];
+      const prefix0 = quoteDepth > 0 ? (linePrefix ?? lines[0].prefix) : '';
+      const midParts = [
+        prefix0 + lines[0].content + lines[0].hardBreak,
+        ...lines.slice(1).map(l => (linePrefix ?? l.prefix) + l.content + l.hardBreak),
+      ];
       out += midParts.join(eol);
     }
   }
@@ -404,7 +437,7 @@ export function preserveUntouchedSource(original: string, serialized: string, be
         while (k + 1 < right.length && map[k + 1] === undefined && right[k + 1].type === 'paragraph') k++;
         if (k > i) {
           const splitText = renderSplitParagraphs(
-            left[at], right.slice(i, k + 1), old.body, next.body, nextQuoteDepth, eol,
+            left[at], right.slice(i, k + 1), old.body, next.body, nextQuoteDepth, eol, a.type,
             (prevR, nextR) => insertedGap(i + 1, prevR, nextR),
           );
           if (splitText !== null) {
@@ -425,10 +458,14 @@ export function preserveUntouchedSource(original: string, serialized: string, be
             prevOld.children[splitChildIdx].type === 'paragraph' &&
             prevNew.children![splitChildIdx].type === 'paragraph' &&
             curNew.children[0].type === 'paragraph') {
+          const prevOldLines = paragraphLines(prevOld.children[splitChildIdx], old.body, nextQuoteDepth);
           const prevFirst = paragraphLines(prevNew.children![splitChildIdx], next.body, nextQuoteDepth);
           const splitHint = prevFirst ? prevFirst.length - 1 : 0;
+          const listLineBoundary = !!prevOldLines && !!prevFirst && splitHint + 1 < prevOldLines.length &&
+            normalizeLineContent(prevFirst[splitHint]) === normalizeLineContent(prevOldLines[splitHint]);
+          const anchorIdx = listLineBoundary ? splitHint + 1 : splitHint;
           const marker = old.body.slice(start(prevOld), start(prevOld.children[0]));
-          const body = renderParagraphEdit(prevOld.children[splitChildIdx], curNew.children[0], old.body, next.body, nextQuoteDepth, eol, splitHint);
+          const body = renderParagraphEdit(prevOld.children[splitChildIdx], curNew.children[0], old.body, next.body, nextQuoteDepth, eol, anchorIdx);
           if (body !== null) {
             result += marker + body + old.body.slice(end(prevOld.children.at(-1)!), end(prevOld));
             continue;

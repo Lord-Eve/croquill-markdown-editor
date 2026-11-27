@@ -13,6 +13,7 @@ import { InputRule } from '@milkdown/kit/prose/inputrules';
 import { Typewriter, writingDecorations } from './writing-modes';
 import { handleBlockBoundary } from './block-boundary';
 import { NodeSelection, Plugin, Selection, TextSelection, type Command, type Transaction as ProseTransaction } from '@milkdown/kit/prose/state';
+import { canSplit } from '@milkdown/kit/prose/transform';
 import type { EditorView as RichView } from '@milkdown/kit/prose/view';
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands';
 import { wrapInList, liftListItem, sinkListItem } from '@milkdown/kit/prose/schema-list';
@@ -40,7 +41,7 @@ import { createInlineRawMarkdown, handleInlineRawKey, hasUnsafeInlineTableConten
 import { alertBlock, configureAlerts } from './alerts';
 import { highlightMark } from './highlight';
 import { configureInlineSource } from './inline-source-markdown';
-import { blockSpans, deleteHeadingAttribute, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, toggleInlineSyntax, visibleText } from './inline-source-view';
+import { blockSpans, deleteHeadingAttribute, handleSourceArrow, handleSourceEnter, inlineSourcePlugin, insertOrEditLink, linkAtCoords, sourceEnterMarkers, toggleInlineSyntax, visibleText } from './inline-source-view';
 import { customHeadingId, matchHeading } from './heading-anchors';
 import { INLINE_OBJECT, isOpenLinkClick } from './inline-source';
 import { hasPlainExtension, preserveRenderedSource } from './rendered-source';
@@ -122,6 +123,45 @@ function handleListHeadingEnter(view: RichView, event: KeyboardEvent): boolean {
   const pos = $from.after();
   tr.insert(pos, schema.nodes.paragraph.create());
   view.dispatch(tr.setSelection(TextSelection.create(tr.doc, pos + 1)).scrollIntoView());
+  event.preventDefault();
+  return true;
+}
+
+const isMarkdownBreak = (node: RichNode | null | undefined) => !!node && node.type.name === 'hardbreak' && !node.attrs.croquillHtmlBreak;
+
+/** Eat a soft or hard Markdown line break right at the split point in the same undo step. */
+function handleSplitLineBreakEnter(view: RichView, event: KeyboardEvent): boolean {
+  if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || view.composing) return false;
+  const { selection, schema } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  const { $from } = selection;
+  if ($from.parent.type !== schema.nodes.paragraph) return false;
+  for (let depth = $from.depth - 1; depth > 0; depth--) {
+    if (['table_cell', 'table_header'].includes($from.node(depth).type.name)) return false;
+  }
+  const delFrom = isMarkdownBreak($from.nodeAfter) ? $from.pos : isMarkdownBreak($from.nodeBefore) ? $from.pos - 1 : -1;
+  if (delFrom < 0) return false;
+
+  const tr = view.state.tr.delete(delFrom, delFrom + 1);
+  let splitPos = delFrom;
+  const $split = tr.doc.resolve(splitPos);
+  const markers = sourceEnterMarkers($split.parent, $split.parentOffset);
+  if (markers) {
+    tr.insertText(markers.closing + markers.opening, splitPos);
+    splitPos += markers.closing.length;
+    tr.setSelection(TextSelection.create(tr.doc, splitPos));
+  }
+  const $target = tr.doc.resolve(splitPos);
+  if ($target.depth >= 2 && $target.node(-1).type === schema.nodes.list_item) {
+    const nextType = splitPos === $target.end() ? $target.node(-1).contentMatchAt(0).defaultType : null;
+    const types = nextType ? [null, { type: nextType }] : undefined;
+    if (!canSplit(tr.doc, splitPos, 2, types)) return false;
+    tr.split(splitPos, 2, types);
+  } else {
+    if (!canSplit(tr.doc, splitPos, 1)) return false;
+    tr.split(splitPos, 1);
+  }
+  view.dispatch(tr.scrollIntoView());
   event.preventDefault();
   return true;
 }
@@ -814,8 +854,16 @@ export class MarkdownSurface {
       if (local !== null) return local;
     }
     const serialized = this.serializeRichDocument(doc, this.richInput ?? this.raw, this.richOriginText);
+    let parsedSerialized: RichNode | null | undefined;
     const accepts = (candidate: string) => {
-      try { return matchesRichDocument(parse(splitFrontmatter(candidate).body), doc); } catch { return false; }
+      try {
+        const parsed = parse(splitFrontmatter(candidate).body);
+        if (matchesRichDocument(parsed, doc)) return true;
+        if (parsedSerialized === undefined) {
+          try { parsedSerialized = parse(splitFrontmatter(serialized).body); } catch { parsedSerialized = null; }
+        }
+        return !!parsedSerialized && !matchesRichDocument(parsedSerialized, doc) && matchesRichDocument(parsed, parsedSerialized);
+      } catch { return false; }
     };
     let result = serialized;
     // A brand-new untitled document has no opening bytes and uses the writer's default ending.
@@ -1047,7 +1095,7 @@ export class MarkdownSurface {
         },
         props: {
           handleDOMEvents: {
-            keydown: (view, event) => this.handleBlockBoundaryKey(view, event) || handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || this.joinIndentedParagraph(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            keydown: (view, event) => this.handleBlockBoundaryKey(view, event) || handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || this.joinIndentedParagraph(view, event) || handleSplitLineBreakEnter(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
             mousedown: (view, event) => {
               if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
               if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;
