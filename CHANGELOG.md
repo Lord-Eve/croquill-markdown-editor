@@ -4,8 +4,16 @@
 
 ## [未发布]
 
-- 在段首按退格，正文会接到上方表格的最后一格、公式源码或 HTML 源码末尾。一次撤销即可还原。空代码块和分割线按一次退格即可移除。
+## [0.10.0] - 2026-11-27
+
+### 新增
+
 - 在正文按住 Ctrl 单击链接，可以在本窗口打开 Markdown 文件、跳到指定标题，或在资源管理器中选中其他文件及文件夹。指向可打开的链接时显示手形光标。网络共享路径链接暂不打开。
+
+### 修复
+
+- 在段首按退格，正文会接到上方表格的最后一格、公式源码或 HTML 源码末尾。一次撤销即可还原。空代码块和分割线按一次退格即可移除。
+- 在 `package.json` 里补上公式（KaTeX）和代码块语言高亮用到的两个依赖声明，干净安装后构建不再依赖碰巧装上的间接依赖。程序行为不变。
 
 ## [0.9.0] - 2026-11-24
 
@@ -248,7 +256,7 @@
 - 自动测试：TypeScript 类型检查通过，Vitest 31 项通过
 - 桌面实测（2026-10-27，Windows 11）：输入、保存为中文加空格的文件名、未保存关闭提示（取消 / 保存）、重新打开、源码模式往返编辑、打开含表格 / 代码块 / 图片的示例文档，全部正常
 
-[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.9.0...HEAD
+[未发布]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.10.0...HEAD
 [0.2.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lord-Eve/croquill-markdown-editor/releases/tag/v0.1.0
@@ -260,3 +268,4 @@
 [0.7.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.6.0...v0.7.0
 [0.8.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.7.0...v0.8.0
 [0.9.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.8.0...v0.9.0
+[0.10.0]: https://github.com/Lord-Eve/croquill-markdown-editor/compare/v0.9.0...v0.10.0
