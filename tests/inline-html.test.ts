@@ -326,9 +326,10 @@ describe('inline HTML source fragments through the production editor', () => {
       view.dom.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
       h.selectText('粘贴处', 3);
       view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
-      return { saved: await h.save(), literals: Array.from(h.richRoot.querySelectorAll('[data-croquill-inline-raw]')).map((node: any) => node.textContent), clipboardHTML: data.getData('text/html') };
+      return { saved: await h.save(), literals: Array.from(h.richRoot.querySelectorAll('[data-croquill-inline-raw]')).map((node: any) => node.textContent), clipboardHTML: data.getData('text/html'), internalHTML: data.getData('application/x-croquill-html') };
     }, original);
-    expect(result.clipboardHTML).toContain('data-croquill-inline-raw');
+    expect(result.internalHTML).toContain('data-croquill-inline-raw');
+    expect(result.clipboardHTML).not.toContain('data-croquill-inline-raw');
     expect(result.literals).toEqual([raw, raw]);
     expect(result.saved).toBe(original.replace('粘贴处', '粘贴处' + raw));
   }, 30000);

@@ -52,6 +52,7 @@ import { RichSearchPainter } from './rich-search';
 import { applySourceChanges, normalizedOffset, normalizedSource, replacementProblem, sourceOffset, type SearchMatch, type SearchOptions, type SourceChange } from './search-core';
 import { setSourceMatches, setSourceVersion, sourceSearchHighlights, sourceVersion, sourceVersionHistory } from './source-search-state';
 import { nextHeadingLevel, sourceHeadingChange } from './heading-level';
+import { CROQUILL_CLIPBOARD_MIME, handleRichCopyCut } from './rich-copy';
 import './rendered-syntax.css';
 
 function sourceCodeSchema(schema: NodeSchema): NodeSchema {
@@ -1088,6 +1089,22 @@ export class MarkdownSurface {
         props: {
           handleDOMEvents: {
             keydown: (view, event) => this.handleBlockBoundaryKey(view, event) || handleHtmlBlockKey(view, event) || handleTocFootnoteKey(view, event) || handleInlineRawKey(view, event) || handleHtmlBreakKey(view, event) || handleListHeadingEnter(view, event) || deleteHeadingAttribute(view, event) || handleHeadingStart(view, event) || this.joinIndentedParagraph(view, event) || handleSplitLineBreakEnter(view, event) || handleSourceEnter(view, event) || handleSourceArrow(view, event),
+            copy: (view, event) => handleRichCopyCut(view, event, doc => this.writeRichBody(doc), this.raw),
+            cut: (view, event) => handleRichCopyCut(view, event, doc => this.writeRichBody(doc), this.raw),
+            paste: (view, event) => {
+              if (view.composing || !view.editable || !event.clipboardData) return false;
+              if (event.target instanceof Element && event.target.closest('textarea, input, .cm-editor, .croquill-html-source')) return false;
+              if (view.state.selection.$from.parent.type.spec.code) return false;
+              const input = (view as unknown as { input?: { shiftKey?: boolean; lastKeyCode?: number } }).input;
+              if (input?.shiftKey && input.lastKeyCode !== 45) return false;
+              const internal = event.clipboardData.getData(CROQUILL_CLIPBOARD_MIME);
+              if (!internal) return false;
+              if (view.pasteHTML(internal)) {
+                event.preventDefault();
+                return true;
+              }
+              return false;
+            },
             mousedown: (view, event) => {
               if (view.composing || event.button !== 0 || !isOpenLinkClick(event)) return false;
               if (!linkAtCoords(view, event.clientX, event.clientY, event.target)) return false;
