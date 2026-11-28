@@ -18,9 +18,50 @@ interface Block {
   identifier?: string; label?: string; data?: Record<string, unknown>;
 }
 
+export interface ReferenceDefinition {
+  label: string;
+  url: string;
+  title?: string | null;
+}
+
+export interface ReferenceDefinitions {
+  map: ReadonlyMap<string, ReferenceDefinition>;
+  /** Compact GFM definition lines built once from the full document for resolving `[text][id]` in partial renders. */
+  block: string;
+}
+
+const EMPTY_REFERENCE_DEFINITIONS: ReferenceDefinitions = { map: new Map(), block: '' };
+
+function indexReferenceDefinitions(node: Nodes, target: Map<string, ReferenceDefinition>): void {
+  if (node.type === 'definition' && !target.has(node.identifier)) {
+    target.set(node.identifier, { label: node.label || node.identifier, url: node.url, title: node.title });
+  }
+  if ('children' in node) node.children.forEach(child => indexReferenceDefinitions(child, target));
+}
+
+function formatDefinitionLine(def: ReferenceDefinition): string {
+  const label = def.label.replace(/[\r\n]+/g, ' ').replace(/([\\[\]])/g, '\\$1');
+  const url = `<${def.url.replace(/[<>\\\r\n]/g, ch => encodeURIComponent(ch))}>`;
+  const title = def.title ? ` "${def.title.replace(/[\\"]/g, '\\$&').replace(/[\r\n]+/g, ' ')}"` : '';
+  return `[${label}]: ${url}${title}`;
+}
+
+/** Collect link/image reference definitions from a Markdown document once for reuse across partial renders. */
+export function collectReferenceDefinitions(markdown: string): ReferenceDefinitions {
+  if (!markdown.includes(']:')) return EMPTY_REFERENCE_DEFINITIONS;
+  const map = new Map<string, ReferenceDefinition>();
+  indexReferenceDefinitions(parseMarkdownAst(splitFrontmatter(markdown).body), map);
+  if (!map.size) return EMPTY_REFERENCE_DEFINITIONS;
+  const lines: string[] = [];
+  for (const def of map.values()) lines.push(formatDefinitionLine(def));
+  return { map, block: lines.join('\n') };
+}
+
 export interface RenderMarkdownOptions {
   /** Synchronous light-mode HTML suitable for pasting into external rich text apps. */
   forCopy?: boolean;
+  /** Pre-collected link/image reference definitions shared across blocks and table cells in one copy operation. */
+  referenceDefinitions?: ReferenceDefinitions;
   /** Optional full-document Markdown used to resolve link/image reference definitions in partial copies. */
   referenceSource?: string;
   /** Optional code syntax highlighter callback (used asynchronously by export). */
@@ -60,7 +101,10 @@ export function applyClipboardStyles(container: HTMLElement): void {
   for (const mark of container.querySelectorAll<HTMLElement>('mark')) {
     mark.setAttribute('style', 'background-color: #fff3a3; color: #333333;');
   }
-  for (const table of container.querySelectorAll<HTMLElement>('table')) {
+  const tables = container.tagName === 'TABLE'
+    ? [container, ...Array.from(container.querySelectorAll<HTMLElement>('table'))]
+    : Array.from(container.querySelectorAll<HTMLElement>('table'));
+  for (const table of tables) {
     table.setAttribute('style', 'border-collapse: collapse; width: 100%;');
   }
   for (const th of container.querySelectorAll<HTMLElement>('th')) {
@@ -86,15 +130,20 @@ export function renderMarkdownDom(doc: Document, container: HTMLElement, markdow
     return el;
   };
   const { body } = splitFrontmatter(markdown);
-  const tree: Block = parsePositionedRichMarkdown(body) as Block;
-  const destinations = new Map<string, { url: string; title?: string | null }>();
+  const externalDefs = options.referenceDefinitions ??
+    (options.referenceSource && options.referenceSource !== markdown ? collectReferenceDefinitions(options.referenceSource) : undefined);
+  const candidate = externalDefs?.block && body.includes('[') ? `${body}\n\n${externalDefs.block}` : null;
+  const candidateAst = candidate ? parseMarkdownAst(candidate) : null;
+  const swallowed = candidateAst?.children.some(child =>
+    (child.position?.start.offset ?? 0) < body.length && (child.position?.end.offset ?? 0) > body.length,
+  );
+  const parseInput = candidate && candidateAst && !swallowed ? candidate : body;
+  const ast = candidate && candidateAst && !swallowed ? candidateAst : parseMarkdownAst(body);
+  const tree: Block = parsePositionedRichMarkdown(parseInput) as Block;
+  const destinations = new Map<string, ReferenceDefinition>();
   const notes = new Map<string, { refs: HTMLElement[]; target?: HTMLElement }>();
   const comments: { from: number; to: number }[] = [];
 
-  function indexDefinitions(node: Nodes) {
-    if (node.type === 'definition' && !destinations.has(node.identifier)) destinations.set(node.identifier, node);
-    if ('children' in node) node.children.forEach(indexDefinitions);
-  }
   function indexComments(node: Nodes) {
     if (node.type === 'html' && isHtmlComment(node.value)) {
       const from = node.position?.start.offset, to = node.position?.end.offset;
@@ -102,12 +151,8 @@ export function renderMarkdownDom(doc: Document, container: HTMLElement, markdow
     }
     if ('children' in node) node.children.forEach(indexComments);
   }
-  const ast = parseMarkdownAst(body);
-  indexDefinitions(ast);
+  indexReferenceDefinitions(ast, destinations);
   indexComments(ast);
-  if (options.referenceSource && options.referenceSource !== markdown) {
-    indexDefinitions(parseMarkdownAst(splitFrontmatter(options.referenceSource).body));
-  }
 
   // Protected fragments retain their original spelling, including code examples.
   // Remove only the ranges the Markdown parser identified as actual comments.
@@ -336,7 +381,7 @@ export function renderMarkdownDom(doc: Document, container: HTMLElement, markdow
         phrasing(el, node);
         return el;
       }
-      case 'croquillHtmlComment': return doc.createTextNode('');
+      case 'croquillHtmlComment': case 'definition': return doc.createTextNode('');
       case 'croquillInlineRaw': {
         if (isHtmlComment(value)) return doc.createTextNode('');
         const el = element('span', rawText(node, value));

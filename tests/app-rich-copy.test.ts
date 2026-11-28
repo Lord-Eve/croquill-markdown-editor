@@ -291,6 +291,53 @@ describe('formatted clipboard copy and cut through the real app', () => {
     expect(clip.html).toBe('<strong>格</strong>');
   });
 
+  it('resolves reference links inside table cells from definitions outside the table', async () => {
+    await open('| 列头一 | 列头二 |\n| --- | --- |\n| 占位 | 格二 |\n\n<div>\n\n[r]: https://r.com\n\n</div>\n');
+    expect(await page.evaluate(() => (window as any).fileApp.surface.mode)).toBe('rich');
+
+    // Type/insert a reference link `[文][r]` into the first body cell, matching real rich editing.
+    await selectRange('占位', 0, '占位', 2);
+    await page.keyboard.insertText('[文][r]');
+    await page.evaluate(() => (window as any).fileApp.surface.getMarkdown());
+
+    const selectCells = (fromIdx: number, toIdx: number) => page.evaluate(({ fromIdx, toIdx }) => {
+      const v = (window as any).fileApp.surface.richView();
+      const cells: number[] = [];
+      v.state.doc.descendants((node: any, pos: number) => {
+        if (node.type.name === 'table_cell' || node.type.name === 'table_header') cells.push(pos);
+      });
+      const BaseSelection = Object.getPrototypeOf(v.state.selection.constructor);
+      const sel = BaseSelection.fromJSON(v.state.doc, { type: 'cell', anchor: cells[fromIdx], head: cells[toIdx] });
+      v.dispatch(v.state.tr.setSelection(sel));
+      v.focus();
+    }, { fromIdx, toIdx });
+
+    // Copying only the cell containing `[文][r]` (and multi-cell row) keeps the external href.
+    await selectCells(2, 2);
+    let clip = await dispatchClipboard('copy');
+    expect(clip.html).toContain('<a href="https://r.com">文</a>');
+    expect(clip.html).toContain('<table');
+    expect(clip.html).toContain('1px solid #dfe2e5');
+
+    await selectCells(2, 3);
+    clip = await dispatchClipboard('copy');
+    expect(clip.html).toContain('<a href="https://r.com">文</a>');
+
+    // Copying the whole table preserves `<a href="https://r.com">文</a>` with table headers and borders.
+    await page.evaluate(() => {
+      const v = (window as any).fileApp.surface.richView();
+      const table = v.state.doc.firstChild;
+      const BaseSelection = Object.getPrototypeOf(v.state.selection.constructor);
+      v.dispatch(v.state.tr.setSelection(BaseSelection.fromJSON(v.state.doc, { type: 'text', anchor: 0, head: table.nodeSize })));
+      v.focus();
+    });
+    clip = await dispatchClipboard('copy');
+    expect(clip.html).toContain('<a href="https://r.com">文</a>');
+    expect(clip.html).toContain('<table');
+    expect(clip.html).toContain('<th');
+    expect(clip.html).toContain('<td');
+  });
+
   it('keeps plain text Markdown identical for representative selections', async () => {
     await open('前__粗__与*斜*\n\n# 标题 {#id}\n\n> 引一\n>\n> 引二\n\n| 甲 | 乙 |\n| --- | --- |\n| 一 | 二 |\n');
     await selectRange('前', 0, '*斜*', 3);

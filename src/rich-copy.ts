@@ -2,7 +2,7 @@ import { Fragment, Slice, type Node as RichNode, type Schema } from '@milkdown/k
 import { TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView as RichView } from '@milkdown/kit/prose/view';
 import { selectionSourceMarkers } from './inline-source-view';
-import { applyClipboardStyles, renderMarkdownDom } from './render-markdown';
+import { applyClipboardStyles, collectReferenceDefinitions, renderMarkdownDom, type ReferenceDefinitions } from './render-markdown';
 
 /** Carries ProseMirror's original lossless slice HTML for internal Croquill paste. */
 export const CROQUILL_CLIPBOARD_MIME = 'application/x-croquill-html';
@@ -89,12 +89,12 @@ function unwrapOpenSingleBlock(slice: Slice): Fragment {
 }
 
 function renderCellContent(doc: Document, cell: RichNode, schema: Schema,
-  writeRichBody: (doc: RichNode) => string, referenceSource: string): Node[] {
+  writeRichBody: (doc: RichNode) => string, referenceDefinitions: ReferenceDefinitions): Node[] {
   const tempDoc = schema.topNodeType.createAndFill(null, cell.content);
   if (!tempDoc) return [doc.createTextNode(cell.textContent)];
   const md = writeRichBody(tempDoc);
   const holder = doc.createElement('div');
-  renderMarkdownDom(doc, holder, md, { forCopy: true, referenceSource });
+  renderMarkdownDom(doc, holder, md, { forCopy: true, referenceDefinitions });
   if (holder.childElementCount === 1 && holder.firstElementChild?.tagName === 'P') {
     return Array.from(holder.firstElementChild.childNodes);
   }
@@ -102,7 +102,7 @@ function renderCellContent(doc: Document, cell: RichNode, schema: Schema,
 }
 
 function renderTableRowsForCopy(doc: Document, rows: RichNode[], schema: Schema,
-  writeRichBody: (doc: RichNode) => string, referenceSource: string): HTMLTableElement {
+  writeRichBody: (doc: RichNode) => string, referenceDefinitions: ReferenceDefinitions): HTMLTableElement {
   const table = doc.createElement('table');
   let thead: HTMLTableSectionElement | null = null;
   let tbody: HTMLTableSectionElement | null = null;
@@ -115,10 +115,11 @@ function renderTableRowsForCopy(doc: Document, rows: RichNode[], schema: Schema,
       if (cell.attrs.colspan > 1) el.colSpan = Number(cell.attrs.colspan);
       if (cell.attrs.rowspan > 1) el.rowSpan = Number(cell.attrs.rowspan);
       if (cell.attrs.alignment) el.style.textAlign = String(cell.attrs.alignment);
-      el.append(...renderCellContent(doc, cell, schema, writeRichBody, referenceSource));
+      el.append(...renderCellContent(doc, cell, schema, writeRichBody, referenceDefinitions));
       tr.append(el);
     });
   }
+  applyClipboardStyles(table);
   return table;
 }
 
@@ -132,6 +133,7 @@ export function buildRichClipboardHtml(view: RichView, slice: Slice,
   const content = unwrapOpenSingleBlock(repaired);
   const doc = document.implementation.createHTMLDocument('');
   const container = doc.createElement('div');
+  const referenceDefinitions = collectReferenceDefinitions(fullMarkdown);
 
   const blocks: RichNode[] = [];
   content.forEach(node => blocks.push(node));
@@ -143,12 +145,12 @@ export function buildRichClipboardHtml(view: RichView, slice: Slice,
       : pending;
     const tempDoc = schema.topNodeType.createAndFill(null, Fragment.fromArray(nodes));
     if (tempDoc) {
-      renderMarkdownDom(doc, container, writeRichBody(tempDoc), { forCopy: true, referenceSource: fullMarkdown });
+      renderMarkdownDom(doc, container, writeRichBody(tempDoc), { forCopy: true, referenceDefinitions });
       return;
     }
     for (const block of pending) {
       const single = schema.topNodeType.createAndFill(null, block);
-      if (single) renderMarkdownDom(doc, container, writeRichBody(single), { forCopy: true, referenceSource: fullMarkdown });
+      if (single) renderMarkdownDom(doc, container, writeRichBody(single), { forCopy: true, referenceDefinitions });
       else {
         const p = doc.createElement('p');
         p.textContent = block.textContent;
@@ -160,16 +162,11 @@ export function buildRichClipboardHtml(view: RichView, slice: Slice,
   let pending: RichNode[] = [];
   for (let i = 0; i < blocks.length; i++) {
     const node = blocks[i];
-    if (node.type.name === 'table') {
-      flushBlocks(pending); pending = [];
-      const rows: RichNode[] = [];
-      node.forEach(row => rows.push(row));
-      container.append(renderTableRowsForCopy(doc, rows, schema, writeRichBody, fullMarkdown));
-    } else if (ROW_TYPES.has(node.type.name)) {
+    if (ROW_TYPES.has(node.type.name)) {
       flushBlocks(pending); pending = [];
       const rows: RichNode[] = [node];
       while (i + 1 < blocks.length && ROW_TYPES.has(blocks[i + 1].type.name)) rows.push(blocks[++i]);
-      container.append(renderTableRowsForCopy(doc, rows, schema, writeRichBody, fullMarkdown));
+      container.append(renderTableRowsForCopy(doc, rows, schema, writeRichBody, referenceDefinitions));
     } else {
       pending.push(node);
     }
@@ -185,7 +182,6 @@ export function buildRichClipboardHtml(view: RichView, slice: Slice,
     const inlineOnly = container.firstElementChild;
     container.replaceChildren(...inlineOnly.childNodes);
   }
-  applyClipboardStyles(container);
   return container.innerHTML;
 }
 
