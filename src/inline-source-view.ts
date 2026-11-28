@@ -499,6 +499,43 @@ export function sourceEnterMarkers(block: RichNode, offset: number): { closing: 
   };
 }
 
+const FLANKING_SPANS = new Set<InlineKind>(['strong', 'em', 'strike', 'highlight']);
+
+/** Opening/closing syntax markers needed to reconstruct a partial selection `[selFrom, selTo]` as valid Markdown. */
+export function selectionSourceMarkers(block: RichNode, selFrom: number, selTo: number): { prefix: string; suffix: string; trimLead: number; trimTrail: number } {
+  if (!isSourceBlock(block) || selTo <= selFrom) return { prefix: '', suffix: '', trimLead: 0, trimTrail: 0 };
+  const text = (from: number, to: number) => block.textBetween(from, to, '\n', INLINE_OBJECT);
+  const selected = text(selFrom, selTo);
+  const hasVisibleText = selected.trim().length > 0;
+  const leadWs = /^\s*/.exec(selected)![0].length;
+  const trailWs = hasVisibleText ? /\s*$/.exec(selected)![0].length : 0;
+  const spans = blockSpans(block);
+
+  const canWrap = (span: InlineSpan) => {
+    if (span.kind === 'entity' || span.html?.tag === 'img') return false;
+    if (span.kind === 'autolink') return span.from < span.innerFrom && selFrom <= span.innerFrom && selTo >= span.innerTo;
+    if (span.kind === 'escape') return span.from < selFrom && selFrom === span.innerFrom && selTo >= span.innerTo;
+    if (FLANKING_SPANS.has(span.kind) && !hasVisibleText) return false;
+    return true;
+  };
+
+  // Spans are sorted outer-to-inner.
+  const needPrefix = spans.filter(span =>
+    canWrap(span) && span.from < selFrom && selFrom < span.to &&
+    (span.kind === 'escape' || (selFrom <= span.innerFrom ? span.innerFrom < selTo : selFrom < span.innerTo)),
+  );
+  const needSuffix = spans.filter(span =>
+    canWrap(span) && span.from < selTo && selTo < span.to &&
+    (span.innerTo <= selTo ? selFrom < span.innerTo : span.innerFrom < selTo),
+  );
+
+  const prefix = needPrefix.map(span => text(span.from, Math.min(selFrom, span.innerFrom))).join('');
+  const suffix = needSuffix.map(span => text(Math.max(selTo, span.innerTo), span.to)).reverse().join('');
+  const trimLead = prefix && needPrefix.some(span => FLANKING_SPANS.has(span.kind)) ? leadWs : 0;
+  const trimTrail = suffix && needSuffix.some(span => FLANKING_SPANS.has(span.kind)) ? trailWs : 0;
+  return { prefix, suffix, trimLead, trimTrail };
+}
+
 /**
  * Enter inside formatted text: close the open markers before the break and reopen them
  * after it, so both halves keep their formatting instead of two dangling `**`.
